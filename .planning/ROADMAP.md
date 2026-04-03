@@ -1,4 +1,4 @@
-# Roadmap: Authenticated Pressure API Support
+# Roadmap: Pressure API Evolution
 
 ## Phase 1: Add Authenticated Pressure API CLI Flags
 
@@ -47,6 +47,35 @@
 2. If auth flags present, create AuthenticatedPressureFetcher
 3. Otherwise, use SimplePressureFetcher (existing behavior)
 
+## Phase 3: Multi-Source Pressure Inputs and Cross-Platform Run Scripts
+
+**Goal**: Expand pressure control from single source to multiple sources and provide runnable examples for Linux/Windows
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Deliver PRESSURE-03 by adding multi-source config contract, aggregation policy, and runtime wiring.
+- [ ] 03-02-PLAN.md — Deliver OPS-01 by adding Linux/Windows runnable scripts plus verification/doc updates.
+
+### Requirements
+
+- [ ] **PRESSURE-03**: Support multiple pressure sources in one scan run
+- [ ] **OPS-01**: Provide example run scripts for Linux Bash and Windows BAT
+
+### Success Criteria
+
+1. CLI can receive multiple pressure source definitions in a single run.
+2. Runtime can evaluate pressure from multiple sources with explicit selection policy.
+3. Existing single-source behavior remains backward compatible.
+4. Example scripts are provided and runnable on Linux (`.sh`) and Windows (`.bat`).
+
+### Tasks
+
+1. Extend config/CLI contract to accept multiple pressure source inputs.
+2. Refactor pressure fetch path in `pkg/scanapp` to aggregate multiple source fetchers.
+3. Define policy for combining multiple pressure readings (pause/resume decisions).
+4. Add cross-platform sample scripts demonstrating multi-source configuration.
+
 ---
 
 ## Traceability
@@ -55,8 +84,11 @@
 |-------------|-------|--------|
 | AUTH-01 | Phase 1 | Pending |
 | AUTH-02 | Phase 2 | Pending |
+| PRESSURE-03 | Phase 3 | Pending |
+| OPS-01 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 2 total
-- Mapped to phases: 2
+- v2 requirements: 2 total
+- Mapped to phases: 4
 - Unmapped: 0 ✓
