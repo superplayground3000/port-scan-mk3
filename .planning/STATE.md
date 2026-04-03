@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-03-19)
 
 **Core value:** Reliable, configurable TCP port scanning with rate limiting and pressure-aware pause control
-**Current focus:** Phase 1: Add Authenticated Pressure API CLI Flags
+**Current focus:** Phase 3: Multi-Source Pressure Inputs and Cross-Platform Run Scripts
 
 ## Roadmap
 
@@ -13,13 +13,14 @@ See: .planning/PROJECT.md (updated 2026-03-19)
 |-------|--------|----------|
 | Phase 1: Add Authenticated Pressure API CLI Flags | ○ Pending | 0% |
 | Phase 2: Wire AuthenticatedPressureFetcher in Run | ○ Pending | 0% |
+| Phase 3: Multi-Source Pressure Inputs and Cross-Platform Run Scripts | ○ Pending | 0% |
 
 ## Context
 
 - Brownfield project (existing codebase)
-- Already has: SimplePressureFetcher, AuthenticatedPressureFetcher struct, RunOptions.PressureFetcher
-- Need: CLI flags for auth configuration
+- Already has: single-source pressure flow and authenticated fetcher path
+- Need now: multi-source pressure aggregation + Linux/Windows runnable examples
 
 ---
 
-*Last updated: 2026-03-19 after initialization*
+*Last updated: 2026-04-03 for Phase 3 planning kickoff*

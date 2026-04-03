@@ -12,7 +12,10 @@
 
 ## v2 Requirements
 
-(None currently)
+### Multi-Source Pressure Control
+
+- [ ] **PRESSURE-03**: Support multiple pressure sources in one scan run (config + runtime aggregation)
+- [ ] **OPS-01**: Provide example execution scripts for Linux (bash) and Windows (bat) for multi-source pressure mode
 
 ## Out of Scope
 
@@ -28,10 +31,13 @@
 |-------------|-------|--------|
 | AUTH-01 | Phase 1 | Pending |
 | AUTH-02 | Phase 2 | Pending |
+| PRESSURE-03 | Phase 3 | Pending |
+| OPS-01 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 2 total
-- Mapped to phases: 2
+- v2 requirements: 2 total
+- Mapped to phases: 4
 - Unmapped: 0 ✓
 
 ---
