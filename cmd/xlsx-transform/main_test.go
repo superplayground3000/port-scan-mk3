@@ -152,10 +152,7 @@ func TestRunTransform_E2E(t *testing.T) {
 		t.Fatalf("CSV has no rows, expected header + data rows")
 	}
 	if records[0][0] != "src_ip" {
-		// Full header check.
-		if records[0][0] == "" && len(records[0]) == 1 {
-			t.Fatalf("header appears empty, got: %v", records[0])
-		}
+		t.Fatalf("header mismatch: got %q, want %q", records[0][0], "src_ip")
 	}
 	headerStr := ""
 	for i, h := range records[0] {
@@ -211,6 +208,13 @@ func TestRunTransform_E2E(t *testing.T) {
 		row := records[port443Row]
 		if row[9] != "MATCH_POLICY_ACCEPT" {
 			t.Errorf("reason for port 443 row = %q, want %q", row[9], "MATCH_POLICY_ACCEPT")
+		}
+	}
+
+	// Verify TRUE row (8.8.8.8:53) is NOT in output.
+	for _, rec := range records {
+		if len(rec) > 6 && rec[0] == "10.0.0.1" && rec[2] == "8.8.8.8" && rec[6] == "53" {
+			t.Errorf("TRUE-marked row (8.8.8.8:53) should be absent from output, found: %v", rec)
 		}
 	}
 }
