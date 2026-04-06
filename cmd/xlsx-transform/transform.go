@@ -47,7 +47,7 @@ var stderr = os.Stderr
 // hostname string is returned (downstream validation will catch it).
 func ResolveHost(host string) (string, error) {
 	// IPv4 passthrough
-	if net.ParseIP(host) != nil {
+	if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
 		return host, nil
 	}
 
