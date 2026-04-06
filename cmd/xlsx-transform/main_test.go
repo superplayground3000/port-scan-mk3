@@ -67,6 +67,300 @@ func TestParseConfig_EnvVarOverride(t *testing.T) {
 	}
 }
 
+func TestRunTransform_FileNotFound(t *testing.T) {
+	cfg := &TransformConfig{
+		Input:     "/nonexistent/path/to/file.xlsx",
+		Output:    "/tmp/out.csv",
+		SheetName: "all-runs",
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+	if err := runTransform(cfg); err == nil {
+		t.Fatalf("runTransform with nonexistent file = nil, want error")
+	}
+}
+
+func TestRunTransform_SheetNotFound(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "actual-sheet"
+	f.NewSheet(sheetName)
+	// Set a header so the file is valid but we ask for the wrong sheet.
+	headers := []string{"Host", "Port", "Pass the test"}
+	for colIdx, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+	}
+
+	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(inputDir)
+
+	inputPath := filepath.Join(inputDir, "test.xlsx")
+	if err := f.SaveAs(inputPath); err != nil {
+		t.Fatalf("failed to save xlsx: %v", err)
+	}
+
+	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
+	if err != nil {
+		t.Fatalf("failed to create temp output dir: %v", err)
+	}
+	defer os.RemoveAll(outputDir)
+
+	cfg := &TransformConfig{
+		Input:     inputPath,
+		Output:    filepath.Join(outputDir, "out.csv"),
+		SheetName: "nonexistent-sheet",
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+	if err := runTransform(cfg); err == nil {
+		t.Fatalf("runTransform with wrong sheet = nil, want error")
+	}
+}
+
+func TestRunTransform_MissingHostColumn(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "all-runs"
+	f.NewSheet(sheetName)
+	// Omit "Host" column.
+	headers := []string{"Port", "Pass the test"}
+	for colIdx, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+	}
+	f.SetCellValue(sheetName, "A2", "80")
+	f.SetCellValue(sheetName, "B2", "FALSE")
+
+	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(inputDir)
+
+	inputPath := filepath.Join(inputDir, "test.xlsx")
+	if err := f.SaveAs(inputPath); err != nil {
+		t.Fatalf("failed to save xlsx: %v", err)
+	}
+
+	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
+	if err != nil {
+		t.Fatalf("failed to create temp output dir: %v", err)
+	}
+	defer os.RemoveAll(outputDir)
+
+	cfg := &TransformConfig{
+		Input:     inputPath,
+		Output:    filepath.Join(outputDir, "out.csv"),
+		SheetName: sheetName,
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+	if err := runTransform(cfg); err == nil {
+		t.Fatalf("runTransform with missing Host column = nil, want error")
+	}
+}
+
+func TestRunTransform_MissingPortColumn(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "all-runs"
+	f.NewSheet(sheetName)
+	// Omit "Port" column.
+	headers := []string{"Host", "Pass the test"}
+	for colIdx, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+	}
+	f.SetCellValue(sheetName, "A2", "192.168.1.1")
+	f.SetCellValue(sheetName, "B2", "FALSE")
+
+	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(inputDir)
+
+	inputPath := filepath.Join(inputDir, "test.xlsx")
+	if err := f.SaveAs(inputPath); err != nil {
+		t.Fatalf("failed to save xlsx: %v", err)
+	}
+
+	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
+	if err != nil {
+		t.Fatalf("failed to create temp output dir: %v", err)
+	}
+	defer os.RemoveAll(outputDir)
+
+	cfg := &TransformConfig{
+		Input:     inputPath,
+		Output:    filepath.Join(outputDir, "out.csv"),
+		SheetName: sheetName,
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+	if err := runTransform(cfg); err == nil {
+		t.Fatalf("runTransform with missing Port column = nil, want error")
+	}
+}
+
+func TestRunTransform_MissingPassColumn(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "all-runs"
+	f.NewSheet(sheetName)
+	// Omit "Pass the test" column.
+	headers := []string{"Host", "Port"}
+	for colIdx, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+	}
+	f.SetCellValue(sheetName, "A2", "192.168.1.1")
+	f.SetCellValue(sheetName, "B2", "80")
+
+	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(inputDir)
+
+	inputPath := filepath.Join(inputDir, "test.xlsx")
+	if err := f.SaveAs(inputPath); err != nil {
+		t.Fatalf("failed to save xlsx: %v", err)
+	}
+
+	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
+	if err != nil {
+		t.Fatalf("failed to create temp output dir: %v", err)
+	}
+	defer os.RemoveAll(outputDir)
+
+	cfg := &TransformConfig{
+		Input:     inputPath,
+		Output:    filepath.Join(outputDir, "out.csv"),
+		SheetName: sheetName,
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+	if err := runTransform(cfg); err == nil {
+		t.Fatalf("runTransform with missing Pass column = nil, want error")
+	}
+}
+
+func TestRunTransform_OutputFileCreationFails(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "all-runs"
+	f.NewSheet(sheetName)
+	headers := []string{"Host", "Port", "Pass the test"}
+	for colIdx, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+	}
+	f.SetCellValue(sheetName, "A2", "192.168.1.1")
+	f.SetCellValue(sheetName, "B2", "80")
+	f.SetCellValue(sheetName, "C2", "FALSE")
+
+	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(inputDir)
+
+	inputPath := filepath.Join(inputDir, "test.xlsx")
+	if err := f.SaveAs(inputPath); err != nil {
+		t.Fatalf("failed to save xlsx: %v", err)
+	}
+
+	// Use a path that cannot be created (read-only filesystem-like path).
+	cfg := &TransformConfig{
+		Input:     inputPath,
+		Output:    "/proc/nonexistent/out.csv",
+		SheetName: sheetName,
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+	if err := runTransform(cfg); err == nil {
+		t.Fatalf("runTransform with unreachable output path = nil, want error")
+	}
+}
+
+func TestParseConfig_MissingOutput(t *testing.T) {
+	origInput := os.Getenv("TRANSFORM_INPUT")
+	origOutput := os.Getenv("TRANSFORM_OUTPUT")
+	defer func() {
+		if origInput != "" {
+			os.Setenv("TRANSFORM_INPUT", origInput)
+		} else {
+			os.Unsetenv("TRANSFORM_INPUT")
+		}
+		if origOutput != "" {
+			os.Setenv("TRANSFORM_OUTPUT", origOutput)
+		} else {
+			os.Unsetenv("TRANSFORM_OUTPUT")
+		}
+	}()
+	os.Setenv("TRANSFORM_INPUT", "/some/input.xlsx")
+	os.Unsetenv("TRANSFORM_OUTPUT")
+
+	cfg, err := ParseConfigFromArgs(nil)
+	if err == nil {
+		t.Fatalf("ParseConfigFromArgs with only --input = %v, want error", cfg)
+	}
+	if cfgErr, ok := err.(*ConfigError); ok {
+		if cfgErr.Code != 2 {
+			t.Errorf("ConfigError.Code = %d, want 2", cfgErr.Code)
+		}
+	} else {
+		t.Fatalf("expected *ConfigError, got %T", err)
+	}
+}
+
+func TestParseConfig_MissingInput(t *testing.T) {
+	origInput := os.Getenv("TRANSFORM_INPUT")
+	origOutput := os.Getenv("TRANSFORM_OUTPUT")
+	defer func() {
+		if origInput != "" {
+			os.Setenv("TRANSFORM_INPUT", origInput)
+		} else {
+			os.Unsetenv("TRANSFORM_INPUT")
+		}
+		if origOutput != "" {
+			os.Setenv("TRANSFORM_OUTPUT", origOutput)
+		} else {
+			os.Unsetenv("TRANSFORM_OUTPUT")
+		}
+	}()
+	os.Setenv("TRANSFORM_OUTPUT", "/some/output.csv")
+	os.Unsetenv("TRANSFORM_INPUT")
+
+	cfg, err := ParseConfigFromArgs(nil)
+	if err == nil {
+		t.Fatalf("ParseConfigFromArgs with only --output = %v, want error", cfg)
+	}
+	if cfgErr, ok := err.(*ConfigError); ok {
+		if cfgErr.Code != 2 {
+			t.Errorf("ConfigError.Code = %d, want 2", cfgErr.Code)
+		}
+	} else {
+		t.Fatalf("expected *ConfigError, got %T", err)
+	}
+}
+
 func TestRunTransform_E2E(t *testing.T) {
 	// Create a real xlsx file in-memory using excelize.
 	f := excelize.NewFile()
