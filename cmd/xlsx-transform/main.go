@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/xlsx"
+	"github.com/xuxiping/port-scan-mk3/pkg/spreadsheet"
 )
 
 // TransformConfig holds all CLI configuration for the transform tool.
@@ -114,7 +114,7 @@ func (e *ConfigError) Error() string { return e.Msg }
 // runTransform wires together xlsx reading, column indexing, filtering,
 // host resolution, port expansion, and CSV output.
 func runTransform(cfg *TransformConfig) error {
-	reader := xlsx.NewReader(cfg.Input)
+	reader := spreadsheet.NewReader(cfg.Input)
 	rows, err := reader.OpenSheet(cfg.SheetName)
 	if err != nil {
 		return fmt.Errorf("failed to open xlsx: %w", err)
