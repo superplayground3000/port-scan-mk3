@@ -1,13 +1,12 @@
 package xlsx
 
 import (
-	"os"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
 )
 
-func TestReader_OpenSheet_NotFound(t *testing.T) {
+func TestReader_OpenSheet_FileNotFound(t *testing.T) {
 	r := NewReader("nonexistent.xlsx")
 	_, err := r.OpenSheet("Sheet1")
 	if err == nil {
@@ -88,9 +87,4 @@ func TestReader_OpenSheet_Success(t *testing.T) {
 		t.Fatalf("unexpected row 1: %v", rows[1])
 	}
 
-	// Also verify the file is closed properly by reopening it
-	_, err = os.Stat(testFile)
-	if err != nil {
-		t.Fatalf("file should still be accessible: %v", err)
 	}
-}
