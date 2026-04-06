@@ -512,3 +512,68 @@ func TestRunTransform_E2E(t *testing.T) {
 		}
 	}
 }
+
+func TestRunTransform_E2E_CSVInput(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "input.csv")
+	csvContent := "Host,Port,Pass the test\n192.168.1.1,80/443,FALSE\n8.8.8.8,53,TRUE\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
+	}
+
+	outputDir := t.TempDir()
+	outputPath := filepath.Join(outputDir, "out.csv")
+
+	cfg := &TransformConfig{
+		Input:     csvPath,
+		Output:    outputPath,
+		SheetName: "ignored-for-csv",
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+
+	if err := runTransform(cfg); err != nil {
+		t.Fatalf("runTransform failed: %v", err)
+	}
+
+	fd, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("failed to open output CSV: %v", err)
+	}
+	defer fd.Close()
+
+	records, err := csv.NewReader(fd).ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read CSV: %v", err)
+	}
+
+	if len(records) < 2 {
+		t.Fatalf("expected at least 2 data rows, got %d: %v", len(records)-1, records[1:])
+	}
+
+	// Find port 80 and 443 rows.
+	port80 := false
+	port443 := false
+	for i := 1; i < len(records); i++ {
+		if len(records[i]) > 6 && records[i][6] == "80" {
+			port80 = true
+		}
+		if len(records[i]) > 6 && records[i][6] == "443" {
+			port443 = true
+		}
+	}
+	if !port80 {
+		t.Error("port 80 row not found")
+	}
+	if !port443 {
+		t.Error("port 443 row not found")
+	}
+
+	// TRUE row (8.8.8.8:53) must be absent.
+	for _, rec := range records {
+		if len(rec) > 6 && rec[0] == "10.0.0.1" && rec[2] == "8.8.8.8" && rec[6] == "53" {
+			t.Error("TRUE-marked row (8.8.8.8:53) should be absent from output")
+		}
+	}
+}
