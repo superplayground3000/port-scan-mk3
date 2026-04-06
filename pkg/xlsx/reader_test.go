@@ -86,5 +86,4 @@ func TestReader_OpenSheet_Success(t *testing.T) {
 	if rows[1][0] != "foo" {
 		t.Fatalf("unexpected row 1: %v", rows[1])
 	}
-
-	}
+}
