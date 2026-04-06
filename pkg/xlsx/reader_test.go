@@ -1,6 +1,9 @@
 package xlsx
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -11,6 +14,24 @@ func TestReader_OpenSheet_FileNotFound(t *testing.T) {
 	_, err := r.OpenSheet("Sheet1")
 	if err == nil {
 		t.Fatal("expected error opening nonexistent file, got nil")
+	}
+}
+
+func TestReader_OpenSheet_NotXLSX(t *testing.T) {
+	// Create a file that is NOT a valid xlsx (plain CSV content).
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "data.csv")
+	if err := os.WriteFile(csvPath, []byte("Host,Port,Pass the test\n192.168.1.1,80,FALSE\n"), 0644); err != nil {
+		t.Fatalf("failed to write CSV file: %v", err)
+	}
+
+	r := NewReader(csvPath)
+	_, err := r.OpenSheet("Sheet1")
+	if err == nil {
+		t.Fatal("expected error opening non-xlsx file, got nil")
+	}
+	if !errors.Is(err, ErrNotXLSX) {
+		t.Fatalf("expected ErrNotXLSX, got %v", err)
 	}
 }
 
