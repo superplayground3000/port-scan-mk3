@@ -15,7 +15,7 @@ func TestReader_OpenSheet_NotFound(t *testing.T) {
 	}
 }
 
-func TestReader_GetRows_SheetNotFound(t *testing.T) {
+func TestReader_OpenSheet_SheetNotFound(t *testing.T) {
 	// Create a real xlsx file first as test fixture
 	// Use excelize to create a minimal test xlsx
 	tmpDir := t.TempDir()
@@ -34,6 +34,26 @@ func TestReader_GetRows_SheetNotFound(t *testing.T) {
 	_, err := r.OpenSheet("NonexistentSheet")
 	if err == nil {
 		t.Fatal("expected error opening nonexistent sheet, got nil")
+	}
+}
+
+func TestReader_OpenSheet_EmptySheet(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := tmpDir + "/test.xlsx"
+
+	f := excelize.NewFile()
+	f.NewSheet("empty-sheet")
+	if err := f.SaveAs(testFile); err != nil {
+		t.Fatalf("failed to save test xlsx: %v", err)
+	}
+
+	r := NewReader(testFile)
+	rows, err := r.OpenSheet("empty-sheet")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected 0 rows for empty sheet, got %d", len(rows))
 	}
 }
 
