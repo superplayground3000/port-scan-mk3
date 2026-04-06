@@ -178,12 +178,9 @@ func runTransform(cfg *TransformConfig) error {
 			continue
 		}
 
-		dstIP, err := ResolveHost(host)
-		if err != nil {
-			// ResolveHost already uses original on failure; continue.
-		}
+		dstIP, _ := ResolveHost(host)
 
-		ports, err := SplitPorts(portStr)
+		ports, _ := SplitPorts(portStr)
 		if ports == nil {
 			continue // invalid port, skip row silently.
 		}
