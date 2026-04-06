@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/csv"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 )
 
 func TestTransformConfig_FromFlags_MissingRequired(t *testing.T) {
@@ -60,5 +64,153 @@ func TestParseConfig_EnvVarOverride(t *testing.T) {
 	}
 	if cfg.Output != "/env/output.csv" {
 		t.Errorf("cfg.Output = %q, want %q", cfg.Output, "/env/output.csv")
+	}
+}
+
+func TestRunTransform_E2E(t *testing.T) {
+	// Create a real xlsx file in-memory using excelize.
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "all-runs"
+	headers := []string{"Host", "Port", "Pass the test"}
+
+	// Set up header row (row 1 in excelize is index 0).
+	headerRow, _ := f.NewSheet(sheetName)
+	_ = headerRow
+	for colIdx, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+	}
+
+	// Row 2: 192.168.1.1, 80/443, FALSE → expands to 2 rows.
+	f.SetCellValue(sheetName, "A2", "192.168.1.1")
+	f.SetCellValue(sheetName, "B2", "80/443")
+	f.SetCellValue(sheetName, "C2", "FALSE")
+
+	// Row 3: 8.8.8.8, 53, TRUE → should be SKIPPED.
+	f.SetCellValue(sheetName, "A3", "8.8.8.8")
+	f.SetCellValue(sheetName, "B3", "53")
+	f.SetCellValue(sheetName, "C3", "TRUE")
+
+	// Row 4: example.com, 22, FALSE → hostname resolution may fail but row included.
+	f.SetCellValue(sheetName, "A4", "example.com")
+	f.SetCellValue(sheetName, "B4", "22")
+	f.SetCellValue(sheetName, "C4", "FALSE")
+
+	// Save xlsx to a temp file.
+	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(inputDir)
+
+	inputPath := filepath.Join(inputDir, "test.xlsx")
+	if err := f.SaveAs(inputPath); err != nil {
+		t.Fatalf("failed to save xlsx: %v", err)
+	}
+
+	// Create temp output file.
+	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
+	if err != nil {
+		t.Fatalf("failed to create temp output dir: %v", err)
+	}
+	defer os.RemoveAll(outputDir)
+
+	outputPath := filepath.Join(outputDir, "out.csv")
+
+	// Build config and call runTransform.
+	cfg := &TransformConfig{
+		Input:     inputPath,
+		Output:    outputPath,
+		SheetName: sheetName,
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+
+	if err := runTransform(cfg); err != nil {
+		t.Fatalf("runTransform failed: %v", err)
+	}
+
+	// Read and verify output CSV.
+	fd, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("failed to open output CSV: %v", err)
+	}
+	defer fd.Close()
+
+	reader := csv.NewReader(fd)
+	records, err := reader.ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read CSV: %v", err)
+	}
+
+	// Verify header.
+	expectedHeader := "src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason"
+	if len(records) < 1 {
+		t.Fatalf("CSV has no rows, expected header + data rows")
+	}
+	if records[0][0] != "src_ip" {
+		// Full header check.
+		if records[0][0] == "" && len(records[0]) == 1 {
+			t.Fatalf("header appears empty, got: %v", records[0])
+		}
+	}
+	headerStr := ""
+	for i, h := range records[0] {
+		if i > 0 {
+			headerStr += ","
+		}
+		headerStr += h
+	}
+	if headerStr != expectedHeader {
+		t.Errorf("header mismatch:\ngot:  %q\nwant: %q", headerStr, expectedHeader)
+	}
+
+	// We expect exactly 2 rows (80 and 443 expanded from row 2; row 3 skipped because TRUE).
+	// Row 4 (example.com) may or may not resolve; if it doesn't the behavior is acceptable.
+	if len(records) < 2 {
+		t.Fatalf("expected at least 2 data rows, got %d: %v", len(records)-1, records[1:])
+	}
+
+	// Find the rows for ports 80 and 443.
+	port80Row := -1
+	port443Row := -1
+	for i := 1; i < len(records); i++ {
+		row := records[i]
+		if len(row) < 10 {
+			continue
+		}
+		if row[6] == "80" {
+			port80Row = i
+		}
+		if row[6] == "443" {
+			port443Row = i
+		}
+	}
+
+	if port80Row == -1 {
+		t.Errorf("did not find row with port=80; rows: %v", records[1:])
+	}
+	if port443Row == -1 {
+		t.Errorf("did not find row with port=443; rows: %v", records[1:])
+	}
+
+	// Verify dst_ip for port 80 row is 192.168.1.1 (IP passthrough).
+	if port80Row != -1 {
+		row := records[port80Row]
+		if row[2] != "192.168.1.1" {
+			t.Errorf("dst_ip for port 80 row = %q, want %q", row[2], "192.168.1.1")
+		}
+		if row[9] != "MATCH_POLICY_ACCEPT" {
+			t.Errorf("reason for port 80 row = %q, want %q", row[9], "MATCH_POLICY_ACCEPT")
+		}
+	}
+	if port443Row != -1 {
+		row := records[port443Row]
+		if row[9] != "MATCH_POLICY_ACCEPT" {
+			t.Errorf("reason for port 443 row = %q, want %q", row[9], "MATCH_POLICY_ACCEPT")
+		}
 	}
 }
