@@ -60,7 +60,10 @@ func TestEnvVarFallback(t *testing.T) {
 
 	// Run with no flags but env vars set
 	runCmd := exec.Command("./cidr-compare-test")
-	output, _ = runCmd.CombinedOutput()
+	output, err = runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("command failed: %v, output: %s", err, string(output))
+	}
 
 	if !strings.Contains(string(output), "10.0.0.0/8,10.1.2.3/32") {
 		t.Errorf("expected match output, got: %s", string(output))
