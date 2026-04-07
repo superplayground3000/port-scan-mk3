@@ -75,6 +75,20 @@ func TestParseCIDRInvalid(t *testing.T) {
 	}
 }
 
+func TestParseCIDRSlash16(t *testing.T) {
+	entry, err := ParseCIDR("10.0.0.0/16")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 10.0.0.0 = 0x0A000000, 10.0.255.255 = 0x0A00FFFF
+	if entry.StartIP != 0x0A000000 {
+		t.Errorf("expected StartIP 0x0A000000, got 0x%08X", entry.StartIP)
+	}
+	if entry.EndIP != 0x0A00FFFF {
+		t.Errorf("expected EndIP 0x0A00FFFF, got 0x%08X", entry.EndIP)
+	}
+}
+
 func TestParseCIDRIPv6(t *testing.T) {
 	_, err := ParseCIDR("2001:db8::/32")
 	if err == nil {

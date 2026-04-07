@@ -57,7 +57,7 @@ func ParseCIDR(cidr string) (CIDREntry, error) {
 	start := uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
 	// Calculate last IP: network address OR NOT mask
 	mask := ipNet.Mask
-	end := start | ^uint32(mask[0])<<24 | ^uint32(mask[1])<<16 | ^uint32(mask[2])<<8 | ^uint32(mask[3])
+	end := start | ^(uint32(mask[0])<<24 | uint32(mask[1])<<16 | uint32(mask[2])<<8 | uint32(mask[3]))
 	return CIDREntry{
 		Network: cidr,
 		StartIP: start,
