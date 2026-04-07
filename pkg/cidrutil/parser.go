@@ -25,28 +25,36 @@ func ParseDenyCSV(content string) ([]CIDREntry, error) {
 	var entries []CIDREntry
 	var headers []string
 
+	// Parse header line first
+	if !r.Scan() {
+		return nil, r.Err()
+	}
+	headerLine := r.Text()
+	lineNum++
+	rec, err := csv.NewReader(strings.NewReader(headerLine)).Read()
+	if err != nil {
+		return nil, err
+	}
+	headers = rec
+
+	// Compute column indices once with fallback
+	cidrIdx := findColumnIndex(headers, "dst_network_segment")
+	decisionIdx := findColumnIndex(headers, "decision")
+	if cidrIdx < 0 || decisionIdx < 0 {
+		cidrIdx = 0
+		decisionIdx = 1
+	}
+
 	for r.Scan() {
 		line := r.Text()
 		lineNum++
-		// Parse CSV line manually
 		rec, err := csv.NewReader(strings.NewReader(line)).Read()
 		if err != nil {
 			log.Printf("warning: skipping malformed line %d: %v", lineNum, err)
 			continue
 		}
-		if lineNum == 1 {
-			headers = rec
-			continue
-		}
 		if len(rec) < 2 {
 			continue
-		}
-		cidrIdx := findColumnIndex(headers, "dst_network_segment")
-		decisionIdx := findColumnIndex(headers, "decision")
-		if cidrIdx < 0 || decisionIdx < 0 {
-			// Fallback to positional access if headers not found
-			cidrIdx = 0
-			decisionIdx = 1
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
 		decision := strings.TrimSpace(rec[decisionIdx])
@@ -72,28 +80,36 @@ func ParseOpenCSV(content string) ([]CIDREntry, error) {
 	var entries []CIDREntry
 	var headers []string
 
+	// Parse header line first
+	if !r.Scan() {
+		return nil, r.Err()
+	}
+	headerLine := r.Text()
+	lineNum++
+	rec, err := csv.NewReader(strings.NewReader(headerLine)).Read()
+	if err != nil {
+		return nil, err
+	}
+	headers = rec
+
+	// Compute column indices once with fallback
+	cidrIdx := findColumnIndex(headers, "dst_network_segment")
+	statusIdx := findColumnIndex(headers, "status")
+	if cidrIdx < 0 || statusIdx < 0 {
+		cidrIdx = 0
+		statusIdx = 1
+	}
+
 	for r.Scan() {
 		line := r.Text()
 		lineNum++
-		// Parse CSV line manually
 		rec, err := csv.NewReader(strings.NewReader(line)).Read()
 		if err != nil {
 			log.Printf("warning: skipping malformed line %d: %v", lineNum, err)
 			continue
 		}
-		if lineNum == 1 {
-			headers = rec
-			continue
-		}
 		if len(rec) < 2 {
 			continue
-		}
-		cidrIdx := findColumnIndex(headers, "dst_network_segment")
-		statusIdx := findColumnIndex(headers, "status")
-		if cidrIdx < 0 || statusIdx < 0 {
-			// Fallback to positional access if headers not found
-			cidrIdx = 0
-			statusIdx = 1
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
 		status := strings.TrimSpace(rec[statusIdx])
@@ -134,28 +150,36 @@ func (dr *DenyCSVReader) ReadAll() ([]CIDREntry, error) {
 	lineNum := 0
 	var headers []string
 
+	// Parse header line first
+	if !dr.scanner.Scan() {
+		return nil, dr.scanner.Err()
+	}
+	headerLine := dr.scanner.Text()
+	lineNum++
+	rec, err := csv.NewReader(strings.NewReader(headerLine)).Read()
+	if err != nil {
+		return nil, err
+	}
+	headers = rec
+
+	// Compute column indices once with fallback
+	cidrIdx := findColumnIndex(headers, "dst_network_segment")
+	decisionIdx := findColumnIndex(headers, "decision")
+	if cidrIdx < 0 || decisionIdx < 0 {
+		cidrIdx = 0
+		decisionIdx = 1
+	}
+
 	for dr.scanner.Scan() {
 		line := dr.scanner.Text()
 		lineNum++
-		// Parse CSV line manually
 		rec, err := csv.NewReader(strings.NewReader(line)).Read()
 		if err != nil {
 			log.Printf("warning: skipping malformed line %d: %v", lineNum, err)
 			continue
 		}
-		if lineNum == 1 {
-			headers = rec
-			continue
-		}
 		if len(rec) < 2 {
 			continue
-		}
-		cidrIdx := findColumnIndex(headers, "dst_network_segment")
-		decisionIdx := findColumnIndex(headers, "decision")
-		if cidrIdx < 0 || decisionIdx < 0 {
-			// Fallback to positional access if headers not found
-			cidrIdx = 0
-			decisionIdx = 1
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
 		decision := strings.TrimSpace(rec[decisionIdx])
@@ -193,28 +217,36 @@ func (dr *OpenCSVReader) ReadAll() ([]CIDREntry, error) {
 	lineNum := 0
 	var headers []string
 
+	// Parse header line first
+	if !dr.scanner.Scan() {
+		return nil, dr.scanner.Err()
+	}
+	headerLine := dr.scanner.Text()
+	lineNum++
+	rec, err := csv.NewReader(strings.NewReader(headerLine)).Read()
+	if err != nil {
+		return nil, err
+	}
+	headers = rec
+
+	// Compute column indices once with fallback
+	cidrIdx := findColumnIndex(headers, "dst_network_segment")
+	statusIdx := findColumnIndex(headers, "status")
+	if cidrIdx < 0 || statusIdx < 0 {
+		cidrIdx = 0
+		statusIdx = 1
+	}
+
 	for dr.scanner.Scan() {
 		line := dr.scanner.Text()
 		lineNum++
-		// Parse CSV line manually
 		rec, err := csv.NewReader(strings.NewReader(line)).Read()
 		if err != nil {
 			log.Printf("warning: skipping malformed line %d: %v", lineNum, err)
 			continue
 		}
-		if lineNum == 1 {
-			headers = rec
-			continue
-		}
 		if len(rec) < 2 {
 			continue
-		}
-		cidrIdx := findColumnIndex(headers, "dst_network_segment")
-		statusIdx := findColumnIndex(headers, "status")
-		if cidrIdx < 0 || statusIdx < 0 {
-			// Fallback to positional access if headers not found
-			cidrIdx = 0
-			statusIdx = 1
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
 		status := strings.TrimSpace(rec[statusIdx])
