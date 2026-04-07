@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -358,5 +359,90 @@ example.com,22,FALSE
 		if len(rec) > 6 && rec[0] == "10.0.0.1" && rec[2] == "8.8.8.8" && rec[6] == "53" {
 			t.Errorf("TRUE-marked row (8.8.8.8:53) should be absent from output, found: %v", rec)
 		}
+	}
+}
+
+func TestRunTransform_ProblematicRowsLoggedAndSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "input.csv")
+	// CSV with problematic rows mixed in
+	csvContent := `Host,Port,Pass the test
+192.168.1.1,80,FALSE
+,22,FALSE
+192.168.1.2,,FALSE
+192.168.1.3,abc,FALSE
+192.168.1.4,443,TRUE
+192.168.1.5,22,FALSE
+`
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
+	}
+
+	outputPath := filepath.Join(tmpDir, "out.csv")
+
+	// Capture stderr
+	oldStderr := stderr
+	r, w, _ := os.Pipe()
+	stderr = w
+
+	cfg := &TransformConfig{
+		Input:     csvPath,
+		Output:    outputPath,
+		SheetName: "all-runs",
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+
+	if err := runTransform(cfg); err != nil {
+		t.Fatalf("runTransform failed: %v", err)
+	}
+
+	// Restore stderr and read
+	w.Close()
+	stderr = oldStderr
+
+	var logOutput string
+	buf := make([]byte, 4096)
+	for {
+		n, _ := r.Read(buf)
+		if n == 0 {
+			break
+		}
+		logOutput += string(buf[:n])
+	}
+	r.Close()
+
+	// Verify problematic rows were logged
+	// CSV row numbers: 1=header, 2=192.168.1.1 (valid), 3=empty host, 4=empty port, 5=invalid port, 6=TRUE, 7=valid
+	t.Logf("log output: %q", logOutput)
+	if !strings.Contains(logOutput, "skipping row 2") {
+		t.Error("expected log for empty host row")
+	}
+	if !strings.Contains(logOutput, "skipping row 3") {
+		t.Error("expected log for empty port row")
+	}
+	if !strings.Contains(logOutput, "skipping row 4") {
+		t.Error("expected log for invalid port row")
+	}
+	if !strings.Contains(logOutput, "skipping row 5") {
+		t.Error("expected log for TRUE pass column row")
+	}
+
+	// Verify valid rows still processed
+	fd, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("failed to open output CSV: %v", err)
+	}
+	defer fd.Close()
+
+	records, err := csv.NewReader(fd).ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read CSV: %v", err)
+	}
+
+	// Should have 2 valid rows (80 and 22)
+	if len(records) != 3 { // header + 2 data rows
+		t.Errorf("expected 2 data rows, got %d: %v", len(records)-1, records[1:])
 	}
 }

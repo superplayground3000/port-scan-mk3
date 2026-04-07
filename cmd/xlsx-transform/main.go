@@ -111,8 +111,9 @@ type ConfigError struct {
 
 func (e *ConfigError) Error() string { return e.Msg }
 
-// runTransform wires together xlsx reading, column indexing, filtering,
+// runTransform wires together CSV reading, column indexing, filtering,
 // host resolution, port expansion, and CSV output.
+// Problematic rows are logged to stderr and skipped.
 func runTransform(cfg *TransformConfig) error {
 	reader := spreadsheet.NewReader(cfg.Input)
 	rows, err := reader.OpenSheet(cfg.SheetName)
@@ -161,20 +162,31 @@ func runTransform(cfg *TransformConfig) error {
 	}
 
 	// Process data rows (skip header).
-	for _, row := range rows[1:] {
-		if len(row) <= passIdx || len(row) <= hostIdx || len(row) <= portIdx {
+	for rowNum, row := range rows[1:] {
+		rowNum++ // 1-indexed for human readability
+		rowLen := len(row)
+
+		// Check row length
+		if rowLen <= passIdx || rowLen <= hostIdx || rowLen <= portIdx {
+			fmt.Fprintf(stderr, "skipping row %d: insufficient columns (got %d, need at least %d)\n", rowNum, rowLen, max(passIdx, max(hostIdx, portIdx))+1)
 			continue
 		}
 
 		passVal := row[passIdx]
 		if !ShouldIncludeRow(passVal) {
+			fmt.Fprintf(stderr, "skipping row %d: pass column is not FALSE (value: %q)\n", rowNum, passVal)
 			continue
 		}
 
 		host := strings.TrimSpace(row[hostIdx])
 		portStr := strings.TrimSpace(row[portIdx])
 
-		if host == "" || portStr == "" {
+		if host == "" {
+			fmt.Fprintf(stderr, "skipping row %d: empty host value\n", rowNum)
+			continue
+		}
+		if portStr == "" {
+			fmt.Fprintf(stderr, "skipping row %d: empty port value\n", rowNum)
 			continue
 		}
 
@@ -182,7 +194,8 @@ func runTransform(cfg *TransformConfig) error {
 
 		ports, _ := SplitPorts(portStr)
 		if ports == nil {
-			continue // invalid port, skip row silently.
+			fmt.Fprintf(stderr, "skipping row %d: invalid port value %q\n", rowNum, portStr)
+			continue
 		}
 
 		for _, port := range ports {
