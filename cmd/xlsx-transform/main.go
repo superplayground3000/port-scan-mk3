@@ -8,14 +8,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/xlsx"
+	"github.com/xuxiping/port-scan-mk3/pkg/spreadsheet"
 )
 
 // TransformConfig holds all CLI configuration for the transform tool.
 type TransformConfig struct {
-	Input     string // Path to input xlsx (required)
+	Input     string // Path to input CSV (required)
 	Output    string // Path to output CSV (required)
-	SheetName string // Worksheet name (default: all-runs)
+	SheetName string // Worksheet name (default: all-runs, ignored for CSV)
 	HostCol   string // Host column name (default: Host)
 	PortCol   string // Port column name (default: Port)
 	PassCol   string // Pass/fail column name (default: Pass the test)
@@ -74,7 +74,7 @@ func ParseConfigFromArgs(args []string) (*TransformConfig, error) {
 		PassCol:   "Pass the test",
 	}
 
-	fs.StringVar(&cfg.Input, "input", envOrDefault("TRANSFORM_INPUT", ""), "path to input xlsx file (required)")
+	fs.StringVar(&cfg.Input, "input", envOrDefault("TRANSFORM_INPUT", ""), "path to input CSV file (required)")
 	fs.StringVar(&cfg.Output, "output", envOrDefault("TRANSFORM_OUTPUT", ""), "path to output CSV file (required)")
 	fs.StringVar(&cfg.SheetName, "sheet", envOrDefault("TRANSFORM_SHEET_NAME", "all-runs"), "worksheet name")
 	fs.StringVar(&cfg.HostCol, "host-col", envOrDefault("TRANSFORM_HOST_COL", "Host"), "host column name")
@@ -111,13 +111,14 @@ type ConfigError struct {
 
 func (e *ConfigError) Error() string { return e.Msg }
 
-// runTransform wires together xlsx reading, column indexing, filtering,
+// runTransform wires together CSV reading, column indexing, filtering,
 // host resolution, port expansion, and CSV output.
+// Problematic rows are logged to stderr and skipped.
 func runTransform(cfg *TransformConfig) error {
-	reader := xlsx.NewReader(cfg.Input)
+	reader := spreadsheet.NewReader(cfg.Input)
 	rows, err := reader.OpenSheet(cfg.SheetName)
 	if err != nil {
-		return fmt.Errorf("failed to open xlsx: %w", err)
+		return fmt.Errorf("failed to open CSV: %w", err)
 	}
 
 	if len(rows) < 2 {
@@ -161,20 +162,31 @@ func runTransform(cfg *TransformConfig) error {
 	}
 
 	// Process data rows (skip header).
-	for _, row := range rows[1:] {
-		if len(row) <= passIdx || len(row) <= hostIdx || len(row) <= portIdx {
+	for rowNum, row := range rows[1:] {
+		rowNum++ // 1-indexed for human readability
+		rowLen := len(row)
+
+		// Check row length
+		if rowLen <= passIdx || rowLen <= hostIdx || rowLen <= portIdx {
+			fmt.Fprintf(stderr, "skipping row %d: insufficient columns (got %d, need at least %d)\n", rowNum, rowLen, max(passIdx, max(hostIdx, portIdx))+1)
 			continue
 		}
 
 		passVal := row[passIdx]
 		if !ShouldIncludeRow(passVal) {
+			fmt.Fprintf(stderr, "skipping row %d: pass column is not FALSE (value: %q)\n", rowNum, passVal)
 			continue
 		}
 
 		host := strings.TrimSpace(row[hostIdx])
 		portStr := strings.TrimSpace(row[portIdx])
 
-		if host == "" || portStr == "" {
+		if host == "" {
+			fmt.Fprintf(stderr, "skipping row %d: empty host value\n", rowNum)
+			continue
+		}
+		if portStr == "" {
+			fmt.Fprintf(stderr, "skipping row %d: empty port value\n", rowNum)
 			continue
 		}
 
@@ -182,7 +194,8 @@ func runTransform(cfg *TransformConfig) error {
 
 		ports, _ := SplitPorts(portStr)
 		if ports == nil {
-			continue // invalid port, skip row silently.
+			fmt.Fprintf(stderr, "skipping row %d: invalid port value %q\n", rowNum, portStr)
+			continue
 		}
 
 		for _, port := range ports {
