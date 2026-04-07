@@ -71,3 +71,69 @@ func TestParseOpenCSVStreaming(t *testing.T) {
 		t.Errorf("expected 192.168.0.0/16, got %s", entries[0].Network)
 	}
 }
+
+func TestParseDenyCSVMalformedLine(t *testing.T) {
+	content := "dst_network_segment,decision\n\"unclosed quote\n"
+	entries, err := ParseDenyCSV(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for malformed CSV, got %d", len(entries))
+	}
+}
+
+func TestParseDenyCSVShortLine(t *testing.T) {
+	content := "dst_network_segment,decision\nonly-one-column\n"
+	entries, err := ParseDenyCSV(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for short line, got %d", len(entries))
+	}
+}
+
+func TestParseDenyCSVInvalidCIDR(t *testing.T) {
+	content := "dst_network_segment,decision\nnot-a-cidr,deny\n"
+	entries, err := ParseDenyCSV(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for invalid CIDR, got %d", len(entries))
+	}
+}
+
+func TestParseOpenCSVMalformedLine(t *testing.T) {
+	content := "segment,status\n\"unclosed quote\n"
+	entries, err := ParseOpenCSV(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for malformed CSV, got %d", len(entries))
+	}
+}
+
+func TestParseOpenCSVShortLine(t *testing.T) {
+	content := "segment,status\nonly-one\n"
+	entries, err := ParseOpenCSV(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for short line, got %d", len(entries))
+	}
+}
+
+func TestParseOpenCSVInvalidCIDR(t *testing.T) {
+	content := "segment,status\nnot-valid,open\n"
+	entries, err := ParseOpenCSV(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for invalid CIDR, got %d", len(entries))
+	}
+}
