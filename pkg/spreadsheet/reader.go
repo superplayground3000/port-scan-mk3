@@ -1,89 +1,45 @@
 package spreadsheet
 
 import (
+	"encoding/csv"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/xuri/excelize/v2"
 )
 
-var (
-	// ErrNotXLSX is returned when the file is not a valid xlsx workbook.
-	ErrNotXLSX = errors.New("file is not a valid xlsx workbook")
-	// ErrNotCSV is returned when the file is not a valid csv file.
-	ErrNotCSV = errors.New("file is not a valid csv file")
-	// ErrExtensionMismatch is returned when the file extension does not match the detected format.
-	ErrExtensionMismatch = errors.New("file extension does not match detected format")
-)
+// ErrNotCSV is returned when the file is not a valid csv file.
+var ErrNotCSV = errors.New("file is not a valid csv file")
 
-// Reader reads both .xlsx and .csv files, returning worksheet rows as [][]string.
-// Format is auto-detected by content; extension must match detected format.
+// Reader reads .csv files, returning rows as [][]string.
 type Reader struct {
 	path string
 }
 
-// NewReader returns a Reader for the given file path.
-// The file must have a .xlsx or .csv extension.
+// NewReader returns a Reader for the given CSV file path.
 func NewReader(path string) *Reader {
 	return &Reader{path: path}
 }
 
-// IsExtensionMismatch reports whether err is an extension mismatch error.
-func IsExtensionMismatch(err error) bool {
-	return errors.Is(err, ErrExtensionMismatch)
+// OpenSheet opens the CSV file and returns all rows.
+// The sheetName parameter is ignored for CSV files.
+func (r *Reader) OpenSheet(_ string) ([][]string, error) {
+	ext := strings.ToLower(filepath.Ext(r.path))
+	if ext != ".csv" {
+		return nil, ErrNotCSV
+	}
+	return readCSV(r.path)
 }
 
-// detectFormat reads the first 2 bytes of the file to determine its format.
-// Returns "xlsx" or "csv", or an error.
-func detectFormat(path string) (string, error) {
+// readCSV reads a CSV file with a header row and returns all records.
+func readCSV(path string) ([][]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	header := make([]byte, 2)
-	if _, err := f.Read(header); err != nil {
-		return "", err
-	}
-
-	if header[0] == 0x50 && header[1] == 0x4B {
-		return "xlsx", nil
-	}
-	return "csv", nil
-}
-
-// OpenSheet opens the file and returns all rows.
-// For .xlsx: sheetName selects the worksheet.
-// For .csv: sheetName is ignored.
-func (r *Reader) OpenSheet(sheetName string) ([][]string, error) {
-	detected, err := detectFormat(r.path)
-	if err != nil {
-		return nil, err
-	}
-
-	ext := strings.ToLower(filepath.Ext(r.path))
-	isXLSX := ext == ".xlsx"
-	isCSV := ext == ".csv"
-
-	if detected == "xlsx" && !isXLSX {
-		return nil, ErrExtensionMismatch
-	}
-	if detected == "csv" && !isCSV {
-		return nil, ErrExtensionMismatch
-	}
-
-	if detected == "csv" {
-		return readCSV(r.path)
-	}
-
-	// xlsx
-	f, err := excelize.OpenFile(r.path)
-	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return f.GetRows(sheetName)
+
+	r := csv.NewReader(f)
+
+	return r.ReadAll()
 }

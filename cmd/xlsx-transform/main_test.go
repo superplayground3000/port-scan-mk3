@@ -5,13 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/xuri/excelize/v2"
 )
 
 func TestTransformConfig_FromFlags_MissingRequired(t *testing.T) {
-	// Simulate calling ParseConfig with no flags set.
-	// We save original env vars and restore after.
 	origInput := os.Getenv("TRANSFORM_INPUT")
 	origOutput := os.Getenv("TRANSFORM_OUTPUT")
 	defer func() {
@@ -36,7 +32,6 @@ func TestTransformConfig_FromFlags_MissingRequired(t *testing.T) {
 }
 
 func TestParseConfig_EnvVarOverride(t *testing.T) {
-	// Set env vars and ensure they override defaults.
 	origInput := os.Getenv("TRANSFORM_INPUT")
 	origOutput := os.Getenv("TRANSFORM_OUTPUT")
 	defer func() {
@@ -52,15 +47,15 @@ func TestParseConfig_EnvVarOverride(t *testing.T) {
 		}
 	}()
 
-	os.Setenv("TRANSFORM_INPUT", "/env/input.xlsx")
+	os.Setenv("TRANSFORM_INPUT", "/env/input.csv")
 	os.Setenv("TRANSFORM_OUTPUT", "/env/output.csv")
 
 	cfg, err := ParseConfigFromArgs(nil)
 	if err != nil {
 		t.Fatalf("ParseConfigFromArgs(nil) unexpected error: %v", err)
 	}
-	if cfg.Input != "/env/input.xlsx" {
-		t.Errorf("cfg.Input = %q, want %q", cfg.Input, "/env/input.xlsx")
+	if cfg.Input != "/env/input.csv" {
+		t.Errorf("cfg.Input = %q, want %q", cfg.Input, "/env/input.csv")
 	}
 	if cfg.Output != "/env/output.csv" {
 		t.Errorf("cfg.Output = %q, want %q", cfg.Output, "/env/output.csv")
@@ -69,7 +64,7 @@ func TestParseConfig_EnvVarOverride(t *testing.T) {
 
 func TestRunTransform_FileNotFound(t *testing.T) {
 	cfg := &TransformConfig{
-		Input:     "/nonexistent/path/to/file.xlsx",
+		Input:     "/nonexistent/path/to/file.csv",
 		Output:    "/tmp/out.csv",
 		SheetName: "all-runs",
 		HostCol:   "Host",
@@ -81,85 +76,43 @@ func TestRunTransform_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestRunTransform_SheetNotFound(t *testing.T) {
-	f := excelize.NewFile()
-	defer f.Close()
-
-	sheetName := "actual-sheet"
-	f.NewSheet(sheetName)
-	// Set a header so the file is valid but we ask for the wrong sheet.
-	headers := []string{"Host", "Port", "Pass the test"}
-	for colIdx, header := range headers {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		f.SetCellValue(sheetName, cell, header)
+func TestRunTransform_NonCSVExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Create a file with wrong extension
+	inputPath := filepath.Join(tmpDir, "data.xlsx")
+	csvContent := "Host,Port,Pass the test\n192.168.1.1,80,FALSE\n"
+	if err := os.WriteFile(inputPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
 	}
 
-	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(inputDir)
-
-	inputPath := filepath.Join(inputDir, "test.xlsx")
-	if err := f.SaveAs(inputPath); err != nil {
-		t.Fatalf("failed to save xlsx: %v", err)
-	}
-
-	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
-	if err != nil {
-		t.Fatalf("failed to create temp output dir: %v", err)
-	}
-	defer os.RemoveAll(outputDir)
-
+	outputPath := filepath.Join(tmpDir, "out.csv")
 	cfg := &TransformConfig{
 		Input:     inputPath,
-		Output:    filepath.Join(outputDir, "out.csv"),
-		SheetName: "nonexistent-sheet",
+		Output:    outputPath,
+		SheetName: "all-runs",
 		HostCol:   "Host",
 		PortCol:   "Port",
 		PassCol:   "Pass the test",
 	}
 	if err := runTransform(cfg); err == nil {
-		t.Fatalf("runTransform with wrong sheet = nil, want error")
+		t.Fatalf("runTransform with wrong extension = nil, want error")
 	}
 }
 
 func TestRunTransform_MissingHostColumn(t *testing.T) {
-	f := excelize.NewFile()
-	defer f.Close()
-
-	sheetName := "all-runs"
-	f.NewSheet(sheetName)
-	// Omit "Host" column.
-	headers := []string{"Port", "Pass the test"}
-	for colIdx, header := range headers {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		f.SetCellValue(sheetName, cell, header)
-	}
-	f.SetCellValue(sheetName, "A2", "80")
-	f.SetCellValue(sheetName, "B2", "FALSE")
-
-	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(inputDir)
-
-	inputPath := filepath.Join(inputDir, "test.xlsx")
-	if err := f.SaveAs(inputPath); err != nil {
-		t.Fatalf("failed to save xlsx: %v", err)
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	// Omit "Host" column
+	csvContent := "Port,Pass the test\n80,FALSE\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
 	}
 
-	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
-	if err != nil {
-		t.Fatalf("failed to create temp output dir: %v", err)
-	}
-	defer os.RemoveAll(outputDir)
-
+	outputPath := filepath.Join(tmpDir, "out.csv")
 	cfg := &TransformConfig{
-		Input:     inputPath,
-		Output:    filepath.Join(outputDir, "out.csv"),
-		SheetName: sheetName,
+		Input:     csvPath,
+		Output:    outputPath,
+		SheetName: "all-runs",
 		HostCol:   "Host",
 		PortCol:   "Port",
 		PassCol:   "Pass the test",
@@ -170,41 +123,19 @@ func TestRunTransform_MissingHostColumn(t *testing.T) {
 }
 
 func TestRunTransform_MissingPortColumn(t *testing.T) {
-	f := excelize.NewFile()
-	defer f.Close()
-
-	sheetName := "all-runs"
-	f.NewSheet(sheetName)
-	// Omit "Port" column.
-	headers := []string{"Host", "Pass the test"}
-	for colIdx, header := range headers {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		f.SetCellValue(sheetName, cell, header)
-	}
-	f.SetCellValue(sheetName, "A2", "192.168.1.1")
-	f.SetCellValue(sheetName, "B2", "FALSE")
-
-	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(inputDir)
-
-	inputPath := filepath.Join(inputDir, "test.xlsx")
-	if err := f.SaveAs(inputPath); err != nil {
-		t.Fatalf("failed to save xlsx: %v", err)
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	// Omit "Port" column
+	csvContent := "Host,Pass the test\n192.168.1.1,FALSE\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
 	}
 
-	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
-	if err != nil {
-		t.Fatalf("failed to create temp output dir: %v", err)
-	}
-	defer os.RemoveAll(outputDir)
-
+	outputPath := filepath.Join(tmpDir, "out.csv")
 	cfg := &TransformConfig{
-		Input:     inputPath,
-		Output:    filepath.Join(outputDir, "out.csv"),
-		SheetName: sheetName,
+		Input:     csvPath,
+		Output:    outputPath,
+		SheetName: "all-runs",
 		HostCol:   "Host",
 		PortCol:   "Port",
 		PassCol:   "Pass the test",
@@ -215,41 +146,19 @@ func TestRunTransform_MissingPortColumn(t *testing.T) {
 }
 
 func TestRunTransform_MissingPassColumn(t *testing.T) {
-	f := excelize.NewFile()
-	defer f.Close()
-
-	sheetName := "all-runs"
-	f.NewSheet(sheetName)
-	// Omit "Pass the test" column.
-	headers := []string{"Host", "Port"}
-	for colIdx, header := range headers {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		f.SetCellValue(sheetName, cell, header)
-	}
-	f.SetCellValue(sheetName, "A2", "192.168.1.1")
-	f.SetCellValue(sheetName, "B2", "80")
-
-	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(inputDir)
-
-	inputPath := filepath.Join(inputDir, "test.xlsx")
-	if err := f.SaveAs(inputPath); err != nil {
-		t.Fatalf("failed to save xlsx: %v", err)
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	// Omit "Pass the test" column
+	csvContent := "Host,Port\n192.168.1.1,80\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
 	}
 
-	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
-	if err != nil {
-		t.Fatalf("failed to create temp output dir: %v", err)
-	}
-	defer os.RemoveAll(outputDir)
-
+	outputPath := filepath.Join(tmpDir, "out.csv")
 	cfg := &TransformConfig{
-		Input:     inputPath,
-		Output:    filepath.Join(outputDir, "out.csv"),
-		SheetName: sheetName,
+		Input:     csvPath,
+		Output:    outputPath,
+		SheetName: "all-runs",
 		HostCol:   "Host",
 		PortCol:   "Port",
 		PassCol:   "Pass the test",
@@ -260,36 +169,17 @@ func TestRunTransform_MissingPassColumn(t *testing.T) {
 }
 
 func TestRunTransform_OutputFileCreationFails(t *testing.T) {
-	f := excelize.NewFile()
-	defer f.Close()
-
-	sheetName := "all-runs"
-	f.NewSheet(sheetName)
-	headers := []string{"Host", "Port", "Pass the test"}
-	for colIdx, header := range headers {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		f.SetCellValue(sheetName, cell, header)
-	}
-	f.SetCellValue(sheetName, "A2", "192.168.1.1")
-	f.SetCellValue(sheetName, "B2", "80")
-	f.SetCellValue(sheetName, "C2", "FALSE")
-
-	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(inputDir)
-
-	inputPath := filepath.Join(inputDir, "test.xlsx")
-	if err := f.SaveAs(inputPath); err != nil {
-		t.Fatalf("failed to save xlsx: %v", err)
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	csvContent := "Host,Port,Pass the test\n192.168.1.1,80,FALSE\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
 	}
 
-	// Use a path that cannot be created (read-only filesystem-like path).
 	cfg := &TransformConfig{
-		Input:     inputPath,
+		Input:     csvPath,
 		Output:    "/proc/nonexistent/out.csv",
-		SheetName: sheetName,
+		SheetName: "all-runs",
 		HostCol:   "Host",
 		PortCol:   "Port",
 		PassCol:   "Pass the test",
@@ -314,7 +204,7 @@ func TestParseConfig_MissingOutput(t *testing.T) {
 			os.Unsetenv("TRANSFORM_OUTPUT")
 		}
 	}()
-	os.Setenv("TRANSFORM_INPUT", "/some/input.xlsx")
+	os.Setenv("TRANSFORM_INPUT", "/some/input.csv")
 	os.Unsetenv("TRANSFORM_OUTPUT")
 
 	cfg, err := ParseConfigFromArgs(nil)
@@ -362,62 +252,24 @@ func TestParseConfig_MissingInput(t *testing.T) {
 }
 
 func TestRunTransform_E2E(t *testing.T) {
-	// Create a real xlsx file in-memory using excelize.
-	f := excelize.NewFile()
-	defer f.Close()
-
-	sheetName := "all-runs"
-	headers := []string{"Host", "Port", "Pass the test"}
-
-	// Set up header row (row 1 in excelize is index 0).
-	headerRow, _ := f.NewSheet(sheetName)
-	_ = headerRow
-	for colIdx, header := range headers {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		f.SetCellValue(sheetName, cell, header)
+	// Create a CSV file
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "input.csv")
+	csvContent := `Host,Port,Pass the test
+192.168.1.1,80/443,FALSE
+8.8.8.8,53,TRUE
+example.com,22,FALSE
+`
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
 	}
 
-	// Row 2: 192.168.1.1, 80/443, FALSE → expands to 2 rows.
-	f.SetCellValue(sheetName, "A2", "192.168.1.1")
-	f.SetCellValue(sheetName, "B2", "80/443")
-	f.SetCellValue(sheetName, "C2", "FALSE")
+	outputPath := filepath.Join(tmpDir, "out.csv")
 
-	// Row 3: 8.8.8.8, 53, TRUE → should be SKIPPED.
-	f.SetCellValue(sheetName, "A3", "8.8.8.8")
-	f.SetCellValue(sheetName, "B3", "53")
-	f.SetCellValue(sheetName, "C3", "TRUE")
-
-	// Row 4: example.com, 22, FALSE → hostname resolution may fail but row included.
-	f.SetCellValue(sheetName, "A4", "example.com")
-	f.SetCellValue(sheetName, "B4", "22")
-	f.SetCellValue(sheetName, "C4", "FALSE")
-
-	// Save xlsx to a temp file.
-	inputDir, err := os.MkdirTemp("", "xlsx-transform-input-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(inputDir)
-
-	inputPath := filepath.Join(inputDir, "test.xlsx")
-	if err := f.SaveAs(inputPath); err != nil {
-		t.Fatalf("failed to save xlsx: %v", err)
-	}
-
-	// Create temp output file.
-	outputDir, err := os.MkdirTemp("", "xlsx-transform-output-*")
-	if err != nil {
-		t.Fatalf("failed to create temp output dir: %v", err)
-	}
-	defer os.RemoveAll(outputDir)
-
-	outputPath := filepath.Join(outputDir, "out.csv")
-
-	// Build config and call runTransform.
 	cfg := &TransformConfig{
-		Input:     inputPath,
+		Input:     csvPath,
 		Output:    outputPath,
-		SheetName: sheetName,
+		SheetName: "all-runs",
 		HostCol:   "Host",
 		PortCol:   "Port",
 		PassCol:   "Pass the test",
@@ -427,26 +279,22 @@ func TestRunTransform_E2E(t *testing.T) {
 		t.Fatalf("runTransform failed: %v", err)
 	}
 
-	// Read and verify output CSV.
+	// Read and verify output CSV
 	fd, err := os.Open(outputPath)
 	if err != nil {
 		t.Fatalf("failed to open output CSV: %v", err)
 	}
 	defer fd.Close()
 
-	reader := csv.NewReader(fd)
-	records, err := reader.ReadAll()
+	records, err := csv.NewReader(fd).ReadAll()
 	if err != nil {
 		t.Fatalf("failed to read CSV: %v", err)
 	}
 
-	// Verify header.
+	// Verify header
 	expectedHeader := "src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason"
 	if len(records) < 1 {
 		t.Fatalf("CSV has no rows, expected header + data rows")
-	}
-	if records[0][0] != "src_ip" {
-		t.Fatalf("header mismatch: got %q, want %q", records[0][0], "src_ip")
 	}
 	headerStr := ""
 	for i, h := range records[0] {
@@ -459,13 +307,13 @@ func TestRunTransform_E2E(t *testing.T) {
 		t.Errorf("header mismatch:\ngot:  %q\nwant: %q", headerStr, expectedHeader)
 	}
 
-	// We expect exactly 2 rows (80 and 443 expanded from row 2; row 3 skipped because TRUE).
-	// Row 4 (example.com) may or may not resolve; if it doesn't the behavior is acceptable.
+	// We expect exactly 2 rows (80 and 443 expanded from row 1; row 2 skipped because TRUE).
+	// Row 3 (example.com) may or may not resolve; if it doesn't the behavior is acceptable.
 	if len(records) < 2 {
 		t.Fatalf("expected at least 2 data rows, got %d: %v", len(records)-1, records[1:])
 	}
 
-	// Find the rows for ports 80 and 443.
+	// Find the rows for ports 80 and 443
 	port80Row := -1
 	port443Row := -1
 	for i := 1; i < len(records); i++ {
@@ -488,7 +336,7 @@ func TestRunTransform_E2E(t *testing.T) {
 		t.Errorf("did not find row with port=443; rows: %v", records[1:])
 	}
 
-	// Verify dst_ip for port 80 row is 192.168.1.1 (IP passthrough).
+	// Verify dst_ip for port 80 row is 192.168.1.1 (IP passthrough)
 	if port80Row != -1 {
 		row := records[port80Row]
 		if row[2] != "192.168.1.1" {
@@ -505,75 +353,10 @@ func TestRunTransform_E2E(t *testing.T) {
 		}
 	}
 
-	// Verify TRUE row (8.8.8.8:53) is NOT in output.
+	// Verify TRUE row (8.8.8.8:53) is NOT in output
 	for _, rec := range records {
 		if len(rec) > 6 && rec[0] == "10.0.0.1" && rec[2] == "8.8.8.8" && rec[6] == "53" {
 			t.Errorf("TRUE-marked row (8.8.8.8:53) should be absent from output, found: %v", rec)
-		}
-	}
-}
-
-func TestRunTransform_E2E_CSVInput(t *testing.T) {
-	tmpDir := t.TempDir()
-	csvPath := filepath.Join(tmpDir, "input.csv")
-	csvContent := "Host,Port,Pass the test\n192.168.1.1,80/443,FALSE\n8.8.8.8,53,TRUE\n"
-	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
-		t.Fatalf("failed to write CSV: %v", err)
-	}
-
-	outputDir := t.TempDir()
-	outputPath := filepath.Join(outputDir, "out.csv")
-
-	cfg := &TransformConfig{
-		Input:     csvPath,
-		Output:    outputPath,
-		SheetName: "ignored-for-csv",
-		HostCol:   "Host",
-		PortCol:   "Port",
-		PassCol:   "Pass the test",
-	}
-
-	if err := runTransform(cfg); err != nil {
-		t.Fatalf("runTransform failed: %v", err)
-	}
-
-	fd, err := os.Open(outputPath)
-	if err != nil {
-		t.Fatalf("failed to open output CSV: %v", err)
-	}
-	defer fd.Close()
-
-	records, err := csv.NewReader(fd).ReadAll()
-	if err != nil {
-		t.Fatalf("failed to read CSV: %v", err)
-	}
-
-	if len(records) < 2 {
-		t.Fatalf("expected at least 2 data rows, got %d: %v", len(records)-1, records[1:])
-	}
-
-	// Find port 80 and 443 rows.
-	port80 := false
-	port443 := false
-	for i := 1; i < len(records); i++ {
-		if len(records[i]) > 6 && records[i][6] == "80" {
-			port80 = true
-		}
-		if len(records[i]) > 6 && records[i][6] == "443" {
-			port443 = true
-		}
-	}
-	if !port80 {
-		t.Error("port 80 row not found")
-	}
-	if !port443 {
-		t.Error("port 443 row not found")
-	}
-
-	// TRUE row (8.8.8.8:53) must be absent.
-	for _, rec := range records {
-		if len(rec) > 6 && rec[0] == "10.0.0.1" && rec[2] == "8.8.8.8" && rec[6] == "53" {
-			t.Error("TRUE-marked row (8.8.8.8:53) should be absent from output")
 		}
 	}
 }

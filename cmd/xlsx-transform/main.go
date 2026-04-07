@@ -13,9 +13,9 @@ import (
 
 // TransformConfig holds all CLI configuration for the transform tool.
 type TransformConfig struct {
-	Input     string // Path to input xlsx (required)
+	Input     string // Path to input CSV (required)
 	Output    string // Path to output CSV (required)
-	SheetName string // Worksheet name (default: all-runs)
+	SheetName string // Worksheet name (default: all-runs, ignored for CSV)
 	HostCol   string // Host column name (default: Host)
 	PortCol   string // Port column name (default: Port)
 	PassCol   string // Pass/fail column name (default: Pass the test)
@@ -74,7 +74,7 @@ func ParseConfigFromArgs(args []string) (*TransformConfig, error) {
 		PassCol:   "Pass the test",
 	}
 
-	fs.StringVar(&cfg.Input, "input", envOrDefault("TRANSFORM_INPUT", ""), "path to input xlsx file (required)")
+	fs.StringVar(&cfg.Input, "input", envOrDefault("TRANSFORM_INPUT", ""), "path to input CSV file (required)")
 	fs.StringVar(&cfg.Output, "output", envOrDefault("TRANSFORM_OUTPUT", ""), "path to output CSV file (required)")
 	fs.StringVar(&cfg.SheetName, "sheet", envOrDefault("TRANSFORM_SHEET_NAME", "all-runs"), "worksheet name")
 	fs.StringVar(&cfg.HostCol, "host-col", envOrDefault("TRANSFORM_HOST_COL", "Host"), "host column name")
@@ -117,7 +117,7 @@ func runTransform(cfg *TransformConfig) error {
 	reader := spreadsheet.NewReader(cfg.Input)
 	rows, err := reader.OpenSheet(cfg.SheetName)
 	if err != nil {
-		return fmt.Errorf("failed to open xlsx: %w", err)
+		return fmt.Errorf("failed to open CSV: %w", err)
 	}
 
 	if len(rows) < 2 {
