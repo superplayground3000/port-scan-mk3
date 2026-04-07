@@ -34,6 +34,18 @@ func TestCIDRDoesNotContain(t *testing.T) {
 	}
 }
 
+func TestIntervalTreeQueryEmpty(t *testing.T) {
+	tree := &IntervalTree{}
+	matches := tree.Query(CIDREntry{
+		Network: "10.1.2.3/32",
+		StartIP: ipToUint32("10.1.2.3"),
+		EndIP:   ipToUint32("10.1.2.3"),
+	})
+	if len(matches) != 0 {
+		t.Errorf("expected 0 matches for empty tree, got %d", len(matches))
+	}
+}
+
 func TestIntervalTreeInsertAndQuery(t *testing.T) {
 	tree := &IntervalTree{}
 	tree.Insert(CIDREntry{
@@ -53,5 +65,19 @@ func TestIntervalTreeInsertAndQuery(t *testing.T) {
 	}
 	if matches[0].Network != "10.0.0.0/8" {
 		t.Errorf("expected 10.0.0.0/8, got %s", matches[0].Network)
+	}
+}
+
+func TestParseCIDRInvalid(t *testing.T) {
+	_, err := ParseCIDR("invalid")
+	if err == nil {
+		t.Error("expected error for invalid CIDR")
+	}
+}
+
+func TestParseCIDRIPv6(t *testing.T) {
+	_, err := ParseCIDR("2001:db8::/32")
+	if err == nil {
+		t.Error("expected error for IPv6 CIDR")
 	}
 }
