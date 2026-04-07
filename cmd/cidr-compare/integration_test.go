@@ -20,12 +20,16 @@ func TestEndToEnd(t *testing.T) {
 	// Create temp deny file
 	denyContent := "dst_network_segment,decision\n10.0.0.0/8,deny\n192.168.0.0/16,deny\n"
 	denyFile := filepath.Join(t.TempDir(), "deny.csv")
-	os.WriteFile(denyFile, []byte(denyContent), 0644)
+	if err := os.WriteFile(denyFile, []byte(denyContent), 0644); err != nil {
+		t.Fatalf("failed to write deny file: %v", err)
+	}
 
 	// Create temp open file
 	openContent := "segment,status\n10.1.2.3/32,open\n192.168.1.1/32,open\n172.16.0.1/32,open\n"
 	openFile := filepath.Join(t.TempDir(), "open.csv")
-	os.WriteFile(openFile, []byte(openContent), 0644)
+	if err := os.WriteFile(openFile, []byte(openContent), 0644); err != nil {
+		t.Fatalf("failed to write open file: %v", err)
+	}
 
 	cmd = exec.Command("./cidr-compare-test", "-deny-file="+denyFile, "-open-file="+openFile)
 	output, err = cmd.CombinedOutput()
