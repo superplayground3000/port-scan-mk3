@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,5 +68,71 @@ func TestEnvVarFallback(t *testing.T) {
 
 	if !strings.Contains(string(output), "10.0.0.0/8,10.1.2.3/32") {
 		t.Errorf("expected match output, got: %s", string(output))
+	}
+}
+
+func TestRunMain(t *testing.T) {
+	// Create temp CSV files
+	denyDir := t.TempDir()
+	denyFile := filepath.Join(denyDir, "deny.csv")
+	openDir := t.TempDir()
+	openFile := filepath.Join(openDir, "open.csv")
+
+	// Write deny CSV - uses correct headers
+	denyContent := "dst_network_segment,decision\n10.0.0.0/8,deny\n192.168.1.0/24,deny\n"
+	if err := os.WriteFile(denyFile, []byte(denyContent), 0644); err != nil {
+		t.Fatalf("failed to write deny file: %v", err)
+	}
+
+	// Write open CSV - uses correct headers
+	openContent := "segment,status\n10.1.2.3/32,open\n192.168.1.100/32,open\n172.16.0.1/32,open\n"
+	if err := os.WriteFile(openFile, []byte(openContent), 0644); err != nil {
+		t.Fatalf("failed to write open file: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	err := runMain([]string{"-deny-file", denyFile, "-open-file", openFile}, stdout, stderr)
+	if err != nil {
+		t.Fatalf("runMain() returned error: %v", err)
+	}
+
+	output := stdout.String()
+	if output == "" {
+		t.Fatal("expected output, got empty string")
+	}
+
+	// Verify header
+	if !strings.Contains(output, "deny_cidr,open_cidr") {
+		t.Errorf("output missing header, got: %s", output)
+	}
+
+	// Verify matches are present
+	if !strings.Contains(output, "10.0.0.0/8,10.1.2.3/32") {
+		t.Errorf("expected 10.0.0.0/8 match for 10.1.2.3/32, got: %s", output)
+	}
+	if !strings.Contains(output, "192.168.1.0/24,192.168.1.100/32") {
+		t.Errorf("expected 192.168.1.0/24 match for 192.168.1.100/32, got: %s", output)
+	}
+}
+
+func TestRunMain_MissingFlags(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	err := runMain([]string{}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected error for missing flags")
+	}
+}
+
+func TestRunMain_InvalidDenyFile(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	err := runMain([]string{"-deny-file", "/nonexistent/deny.csv", "-open-file", "/nonexistent/open.csv"}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected error for invalid deny file")
 	}
 }
