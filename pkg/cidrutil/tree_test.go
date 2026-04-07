@@ -3,32 +3,16 @@ package cidrutil
 import "testing"
 
 func TestCIDRContains(t *testing.T) {
-	deny := CIDREntry{
-		Network: "10.0.0.0/8",
-		StartIP: ipToUint32("10.0.0.0"),
-		EndIP:   ipToUint32("10.255.255.255"),
-	}
-	open := CIDREntry{
-		Network: "10.1.2.3/32",
-		StartIP: ipToUint32("10.1.2.3"),
-		EndIP:   ipToUint32("10.1.2.3"),
-	}
+	deny, _ := ParseCIDR("10.0.0.0/8")
+	open, _ := ParseCIDR("10.1.2.3/32")
 	if !contains(deny, open) {
 		t.Error("10.0.0.0/8 should contain 10.1.2.3/32")
 	}
 }
 
 func TestCIDRDoesNotContain(t *testing.T) {
-	deny := CIDREntry{
-		Network: "10.0.0.0/8",
-		StartIP: ipToUint32("10.0.0.0"),
-		EndIP:   ipToUint32("10.255.255.255"),
-	}
-	open := CIDREntry{
-		Network: "192.168.1.1/32",
-		StartIP: ipToUint32("192.168.1.1"),
-		EndIP:   ipToUint32("192.168.1.1"),
-	}
+	deny, _ := ParseCIDR("10.0.0.0/8")
+	open, _ := ParseCIDR("192.168.1.1/32")
 	if contains(deny, open) {
 		t.Error("10.0.0.0/8 should not contain 192.168.1.1/32")
 	}
@@ -36,11 +20,8 @@ func TestCIDRDoesNotContain(t *testing.T) {
 
 func TestIntervalTreeQueryEmpty(t *testing.T) {
 	tree := &IntervalTree{}
-	matches := tree.Query(CIDREntry{
-		Network: "10.1.2.3/32",
-		StartIP: ipToUint32("10.1.2.3"),
-		EndIP:   ipToUint32("10.1.2.3"),
-	})
+	entry, _ := ParseCIDR("10.1.2.3/32")
+	matches := tree.Query(entry)
 	if len(matches) != 0 {
 		t.Errorf("expected 0 matches for empty tree, got %d", len(matches))
 	}
@@ -48,17 +29,11 @@ func TestIntervalTreeQueryEmpty(t *testing.T) {
 
 func TestIntervalTreeInsertAndQuery(t *testing.T) {
 	tree := &IntervalTree{}
-	tree.Insert(CIDREntry{
-		Network: "10.0.0.0/8",
-		StartIP: ipToUint32("10.0.0.0"),
-		EndIP:   ipToUint32("10.255.255.255"),
-	})
+	deny, _ := ParseCIDR("10.0.0.0/8")
+	tree.Insert(deny)
 
-	matches := tree.Query(CIDREntry{
-		Network: "10.1.2.3/32",
-		StartIP: ipToUint32("10.1.2.3"),
-		EndIP:   ipToUint32("10.1.2.3"),
-	})
+	open, _ := ParseCIDR("10.1.2.3/32")
+	matches := tree.Query(open)
 
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %d", len(matches))

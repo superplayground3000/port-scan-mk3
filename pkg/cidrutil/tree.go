@@ -31,19 +31,6 @@ func contains(deny, open CIDREntry) bool {
 	return deny.StartIP <= open.StartIP && deny.EndIP >= open.EndIP
 }
 
-// ipToUint32 parses a dotted-decimal IP string to uint32.
-func ipToUint32(s string) uint32 {
-	ip := net.ParseIP(s)
-	if ip == nil {
-		return 0
-	}
-	ip4 := ip.To4()
-	if ip4 == nil {
-		return 0 // IPv6 addresses are not supported, return 0
-	}
-	return uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
-}
-
 // ParseCIDR parses a CIDR string and returns a CIDREntry with numeric bounds.
 func ParseCIDR(cidr string) (CIDREntry, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
