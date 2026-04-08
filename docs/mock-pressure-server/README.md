@@ -7,7 +7,7 @@
 Mock pressure API server 支援兩種模式：
 - **Simple Mode**: 無認證，直接回傳 pressure 值
 - **Authenticated Mode**: OAuth-style client credentials 認證
-- **Config-Driven Mode**: 從 JSON config 檔動態載入 `/api/pressure` response body（支援單一 object 或多 objects）
+- **Config-Driven Mode**: 從 JSON config 檔動態載入 `/api/pressure` response body（任意合法 JSON），且會優先於 current pressure state
 
 ## Quick Start
 
@@ -22,8 +22,8 @@ Service 啟動後可透過 `http://localhost:8083` 存取。
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/pressure` | GET | Pressure endpoint（可回傳預設 `{ "pressure": n }` 或 config 指定 body） |
-| `/api/pressure` | POST | 動態更新目前 pressure（`{"pressure":95}`）或 sequence（`{"sequence":[20,95,20]}`） |
+| `/api/pressure` | GET | Pressure endpoint（預設回傳 `{ "pressure": n }`；若設定 `PRESSURE_RESPONSE_CONFIG`，則直接回傳該檔案的 `response_body`） |
+| `/api/pressure` | POST | 動態更新目前 pressure（`{"pressure":95}`）或 sequence（`{"sequence":[20,95,20],"loop":true}`） |
 | `/auth` | POST | OAuth token endpoint |
 | `/data` | GET | Pressure data (requires Bearer token) |
 | `/admin/config` | GET | 查看目前 config-driven response body（僅 config mode 啟用時可用） |
@@ -39,7 +39,7 @@ Service 啟動後可透過 `http://localhost:8083` 存取。
 | `PRESSURE_SEQUENCE` | empty | Comma-separated sequence, e.g. `20,95,95,20` |
 | `PRESSURE_SEQUENCE_LOOP` | `false` | Whether to loop sequence when reaching the end |
 | `DELAY_MS` | `5000` | Delay in ms for timeout mode |
-| `PRESSURE_RESPONSE_CONFIG` | empty | Path to JSON file. When set, `/api/pressure` GET will return `response_body` from this file |
+| `PRESSURE_RESPONSE_CONFIG` | empty | Path to JSON file. When set, `/api/pressure` GET will return that file's `response_body` verbatim; any valid JSON is accepted |
 | `USE_AUTH` | `false` | Enable authenticated mode |
 | `AUTH_CLIENT_ID` | `test-client` | Client ID for auth |
 | `AUTH_CLIENT_SECRET` | `test-secret` | Client secret for auth |
@@ -62,7 +62,7 @@ curl http://localhost:8080/api/pressure
 # Output: {"pressure":42}
 ```
 
-### Config-Driven Mode（單一/多 objects body）
+### Config-Driven Mode（任意 JSON body）
 
 範例 config 已提供在：
 

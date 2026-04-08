@@ -3,7 +3,7 @@
 ## Goals
 
 - 可獨立啟動的 mock API server
-- 可透過 config 檔控制 `/api/pressure` 的 response body
+- 可透過 config 檔控制 `/api/pressure` 的 response body（任意合法 JSON）
 - 支援 runtime reload config（不重啟程序）
 - 保留既有 simple/auth 行為，避免破壞原測試流程
 
@@ -11,8 +11,8 @@
 
 1. `newPressureHandler`
 - 對外提供 `/api/pressure`。
-- `GET`：依序檢查 config-driven body（若啟用）或 numeric pressure state。
-- `POST`：支援手動更新 pressure 或 sequence，便於 pause/resume 壓測。
+- `GET`：若 config-driven body 啟用，直接回傳其內容；否則回傳 numeric pressure state。
+- `POST`：支援手動更新 pressure 或 sequence，便於 pause/resume 壓測。若 config mode 啟用，POST 只會更新 fallback state。
 
 2. `responseConfigStore`
 - 負責載入與保存 `PRESSURE_RESPONSE_CONFIG` 對應 JSON。
@@ -51,5 +51,4 @@ flowchart LR
 }
 ```
 
-`response_body` 可為任意合法 JSON（object 或 array）。
-
+`response_body` 可為任意合法 JSON，會原樣回傳，不限制為 object 或 array。

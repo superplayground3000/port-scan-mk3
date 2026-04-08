@@ -68,7 +68,7 @@ func Parse(args []string) (Config, error)
 | `-pressure-interval` | duration/int | 5s | NO | Supports "5" or "5s" |
 | `-disable-api` | bool | false | NO | Disable pressure API |
 | `-resume` | string | "" | NO | Resume state path |
-| `-log-level` | string | "info" | NO | debug/info/warn/error |
+| `-log-level` | string | "info" | NO | debug/info/error |
 | `-format` | string | "human" | NO | human/json |
 | `-cidr-ip-col` | string | "ip" | NO | Custom IP column name |
 | `-cidr-ip-cidr-col` | string | "ip_cidr" | NO | Custom CIDR column name |

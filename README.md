@@ -138,6 +138,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 
 - [All flags](docs/cli/flags.md)
 - [Scenario cookbook](docs/cli/scenarios.md)
+- [Mock pressure server](docs/mock-pressure-server/README.md)
 - [E2E overview](docs/e2e/overview.md)
 - [Speed-control E2E](docs/e2e/speedcontrol.md)
 - [Architecture diagram](docs/architecture/diagram.html)
