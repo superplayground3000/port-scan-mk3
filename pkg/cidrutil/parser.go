@@ -57,7 +57,7 @@ func ParseDenyCSV(content string) ([]CIDREntry, error) {
 			continue
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
-		decision := strings.TrimSpace(rec[decisionIdx])
+		decision := strings.ToLower(strings.TrimSpace(rec[decisionIdx]))
 		if decision == "deny" {
 			entry, err := ParseCIDR(cidr)
 			if err != nil {
@@ -93,7 +93,7 @@ func ParseOpenCSV(content string) ([]CIDREntry, error) {
 	headers = rec
 
 	// Compute column indices once with fallback
-	cidrIdx := findColumnIndex(headers, "dst_network_segment")
+	cidrIdx := findColumnIndex(headers, "segment")
 	statusIdx := findColumnIndex(headers, "status")
 	if cidrIdx < 0 || statusIdx < 0 {
 		cidrIdx = 0
@@ -112,7 +112,7 @@ func ParseOpenCSV(content string) ([]CIDREntry, error) {
 			continue
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
-		status := strings.TrimSpace(rec[statusIdx])
+		status := strings.ToLower(strings.TrimSpace(rec[statusIdx]))
 		if status == "open" {
 			entry, err := ParseCIDR(cidr)
 			if err != nil {
@@ -182,7 +182,7 @@ func (dr *DenyCSVReader) ReadAll() ([]CIDREntry, error) {
 			continue
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
-		decision := strings.TrimSpace(rec[decisionIdx])
+		decision := strings.ToLower(strings.TrimSpace(rec[decisionIdx]))
 		if decision == "deny" {
 			entry, err := ParseCIDR(cidr)
 			if err != nil {
@@ -230,7 +230,7 @@ func (dr *OpenCSVReader) ReadAll() ([]CIDREntry, error) {
 	headers = rec
 
 	// Compute column indices once with fallback
-	cidrIdx := findColumnIndex(headers, "dst_network_segment")
+	cidrIdx := findColumnIndex(headers, "segment")
 	statusIdx := findColumnIndex(headers, "status")
 	if cidrIdx < 0 || statusIdx < 0 {
 		cidrIdx = 0
@@ -249,7 +249,7 @@ func (dr *OpenCSVReader) ReadAll() ([]CIDREntry, error) {
 			continue
 		}
 		cidr := strings.TrimSpace(rec[cidrIdx])
-		status := strings.TrimSpace(rec[statusIdx])
+		status := strings.ToLower(strings.TrimSpace(rec[statusIdx]))
 		if status == "open" {
 			entry, err := ParseCIDR(cidr)
 			if err != nil {
