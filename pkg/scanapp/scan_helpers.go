@@ -6,7 +6,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 func indexToRuntimeTarget(targets []scanTarget, ports []int, idx int) (scanTarget, int, error) {
@@ -71,22 +70,4 @@ func defaultString(primary, fallback string) string {
 		return primary
 	}
 	return fallback
-}
-
-func ensureFDLimit(workers int) error {
-	var lim syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
-		return nil
-	}
-	minNeed := uint64(1024)
-	if workers > 0 {
-		workerNeed := uint64(workers * 8)
-		if workerNeed > minNeed {
-			minNeed = workerNeed
-		}
-	}
-	if lim.Cur < minNeed {
-		return fmt.Errorf("file descriptor limit too low: %d (need >= %d)", lim.Cur, minNeed)
-	}
-	return nil
 }
