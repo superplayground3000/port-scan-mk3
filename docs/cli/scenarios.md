@@ -54,7 +54,7 @@ go run ./cmd/port-scan scan \
 Expected:
 - Rich mode is auto-detected by header.
 - Scan runs without requiring `-port-file`.
-- Output still includes rich context columns such as `policy_id` and `execution_key`.
+- Output still includes rich context columns such as `matched_policy_id`, `execution_key`, `src_ip`, and `src_network_segment`.
 
 ## Scenario 2B: Observe rich dashboard output
 

@@ -55,7 +55,7 @@ Service 啟動後可透過 `http://localhost:8083` 存取。
 docker run -d -p 8080:8080 \
   -e MODE=ok \
   -e PRESSURE=42 \
-  e2e-pressure-api-auth
+  mock-pressure-api:test
 
 # Test
 curl http://localhost:8080/api/pressure
@@ -96,7 +96,7 @@ docker run -d -p 8083:8083 \
   -e AUTH_CLIENT_SECRET=test-secret \
   -e PRESSURE_VALUE_1=85 \
   -e PRESSURE_VALUE_2=72 \
-  e2e-pressure-api-auth
+  mock-pressure-api:test
 
 # Step 1: Get access token
 TOKEN=$(curl -s -X POST http://localhost:8083/auth \

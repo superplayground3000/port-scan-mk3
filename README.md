@@ -34,7 +34,7 @@ go run ./cmd/port-scan scan \
   - Column mapping flags are case-sensitive: `-cidr-ip-col`, `-cidr-ip-cidr-col`
 - Rich CSV mode is auto-detected when all rich fields exist:
   - `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`
-  - `service_label`, `protocol`, `port`, `decision`, `policy_id`, `reason`
+  - `service_label`, `protocol`, `port`, `decision`, `matched_policy_id`, `reason`
 - Port file format: one line per port in `<port>/tcp` (for example `443/tcp`)
   - Required in default CIDR mode
   - Optional in rich CSV mode
