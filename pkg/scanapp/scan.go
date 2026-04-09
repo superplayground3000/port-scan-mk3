@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultResumeStateFile = "resume_state.json"
-	defaultPressureLimit   = 90
+	defaultPressureLimit   = 60
 )
 
 // DialFunc abstracts TCP dialing for tests and runtime customization.
