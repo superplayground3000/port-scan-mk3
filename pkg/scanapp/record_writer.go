@@ -57,7 +57,15 @@ func (a *writerRecordAdapter) ExecutionKey() string         { return a.record.Ex
 func (a *writerRecordAdapter) SrcIP() string                 { return a.record.SrcIP }
 func (a *writerRecordAdapter) SrcNetworkSegment() string    { return a.record.SrcNetworkSegment }
 
-// AsScanRecord converts a writer.Record to a ScanRecord interface.
+// AsScanRecord adapts a writer.Record to the ScanRecord interface.
+// This is used by the scan pipeline to bridge concrete writer types to
+// the domain's record abstraction.
+//
+// # Example
+//
+//	var record writer.Record = ...
+//	sr := scanapp.AsScanRecord(record)
+//	fmt.Println(sr.Status())
 func AsScanRecord(r writer.Record) ScanRecord {
 	return &writerRecordAdapter{record: r}
 }

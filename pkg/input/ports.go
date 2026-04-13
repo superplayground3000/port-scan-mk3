@@ -8,8 +8,26 @@ import (
 	"strings"
 )
 
-// LoadPorts reads line-based port specs in `<port>/tcp` format and returns
-// normalized TCP port definitions.
+// LoadPorts reads line-based port specifications in `<port>/tcp` format and
+// returns a slice of normalized PortSpec values.
+//
+// Each non-empty line must be in the format `<number>/tcp` where <number> is
+// a TCP port in the range 1–65535. Empty lines are skipped.
+//
+// # Parameters
+//
+//	r: io.Reader positioned at the port file content.
+//
+// # Returns
+//
+//	[]PortSpec on success; error if any line is malformed or port is out of range.
+//
+// # Example
+//
+//	f, _ := os.Open("ports.csv")
+//	defer f.Close()
+//	specs, err := input.LoadPorts(f)
+//	fmt.Println("Loaded", len(specs), "port specs")
 func LoadPorts(r io.Reader) ([]PortSpec, error) {
 	scanner := bufio.NewScanner(r)
 	out := make([]PortSpec, 0)

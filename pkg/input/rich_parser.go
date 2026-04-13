@@ -1,3 +1,40 @@
+// Package input parses and validates CSV inputs for the port scanner.
+//
+// It supports two input modes:
+//
+//   - Basic CIDR mode: CSV with ip and ip_cidr columns, loaded via LoadCIDRs or LoadCIDRsWithColumns.
+//   - Rich mode: CSV with structured firewall-policy columns (src_ip, dst_ip, port, decision, etc.).
+//     Rich mode is auto-detected by detectRichHeaderIndices and parsed via ParseRichRows.
+//
+// # Function Flow
+//
+//	CSV File
+//	  |
+//	  v
+//	LoadCIDRs / LoadCIDRsWithColumns
+//	  |
+//	  v
+//	detectRichHeaderIndices  ── rich ──> ParseRichRows
+//	  |
+//	  | basic
+//	  v
+//	Parse CIDRRecord fields
+//	  |
+//	  v
+//	ValidateIPRows (duplicate check + containment)
+//	  |
+//	  v
+//	[]CIDRRecord
+//
+// # Example
+//
+//	records, err := input.LoadCIDRsWithColumns(os.Stdin, "ip", "ip_cidr")
+//	if err != nil {
+//	    log.Fatalf("load failed: %v", err)
+//	}
+//	if err := input.ValidateIPRows(records); err != nil {
+//	    log.Fatalf("validation failed: %v", err)
+//	}
 package input
 
 import (
@@ -9,9 +46,36 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
-// ParseRichRows parses and validates rich CIDR input rows. It keeps one
-// row-level result per source row (valid or invalid). Valid rows are converted
-// into CIDRRecord values consumable by downstream scan runtime code.
+// ParseRichRows parses and validates rich-mode CIDR input rows.
+//
+// It processes raw CSV rows (with header already stripped) using the column index map
+// returned by detectRichHeaderIndices. Each input row produces exactly one CIDRRecord
+// in the output slice — valid rows carry full parsed data, and invalid rows carry
+// a populated ValidationCode and ValidationError for diagnostics.
+//
+// # Parameters
+//
+//	rows: Raw CSV rows with header at index 0 (skipped during parsing).
+//	idx:  Map of canonicalized header names to column indices, from detectRichHeaderIndices.
+//
+// # Returns
+//
+//	[]CIDRRecord on success (including invalid rows with IsValid=false).
+//	RichParseSummary with row-level statistics.
+//	Error only when all rows are invalid or a structural failure occurs.
+//
+// # Required Header Fields
+//
+//	RichFieldSrcIP, RichFieldSrcNetworkSegment, RichFieldDstIP, RichFieldDstNetworkSegment,
+//	RichFieldServiceLabel, RichFieldProtocol, RichFieldPort, RichFieldDecision,
+//	RichFieldPolicyID, RichFieldReason
+//
+// # Example
+//
+//	headerIdx, ok := detectRichHeaderIndices(headerRow)
+//	if ok {
+//	    records, summary, err := input.ParseRichRows(allRows, headerIdx)
+//	}
 func ParseRichRows(rows [][]string, idx map[string]int) ([]CIDRRecord, RichParseSummary, error) {
 	summary := RichParseSummary{
 		TotalRows:       max(0, len(rows)-1),

@@ -10,6 +10,26 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
+// ExpandIPSelectors expands a list of IP selectors (individual IPs or CIDR ranges)
+// into a deduplicated, sorted slice of individual IPv4 address strings.
+//
+// Each selector may be a single IPv4 address (e.g., "192.168.1.1") or a CIDR
+// range (e.g., "10.0.0.0/8"). IPv6 inputs are rejected. The output is sorted
+// in ascending numeric order and contains no duplicates.
+//
+// # Parameters
+//
+//	selectors: Slice of IP selector strings (IP or CIDR notation).
+//
+// # Returns
+//
+//	Sorted slice of individual IPv4 strings on success; error if any selector
+//	is invalid or IPv6.
+//
+// # Example
+//
+//	ips, err := task.ExpandIPSelectors([]string{"192.168.1.0/30", "192.168.1.1"})
+//	// ips == ["192.168.1.0", "192.168.1.1", "192.168.1.2", "192.168.1.3"]
 func ExpandIPSelectors(selectors []string) ([]string, error) {
 	uniq := make(map[uint32]struct{})
 	for _, raw := range selectors {

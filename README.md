@@ -51,6 +51,56 @@ Exit code behavior:
 - `2`: CLI parsing/config error
 - `130`: scan canceled by `SIGINT` (`Ctrl+C`)
 
+## Architecture and Data Flow
+
+### port-scan Pipeline
+
+```
+CLI Input                 CSV Files                    Processing                 Output
+=========                 ========                     ==========                 ======
+
+ args/flags ─────┐
+                 │
+  [port-scan] ───┼──> Parse flags ──> Validate inputs
+                 │        │                │
+                 │        v                v
+                 │   config.Config    validate.Inputs()
+                 │        │                │
+                 │        v                v
+                 │   CIDR CSV ──> cidrutil.ParseCIDRs() ──> task.Selector
+                 │        │                              │
+                 │        v                              v
+                 │   Port list ──> task.NewPortExpander() ──> PortTask
+                 │        │                              │
+                 │        v                              v
+                 │   Task expansion ──> task.ExpandAll() ──> []Task
+                 │        |                              |
+                 |        v                              v
+                 │   Worker pool <── rate control ──> scanner.ScanTCP()
+                 |        |                              |
+                 |        v                              v
+                 +-------> Batch writer ──> scan_results-*.csv
+                          (timestamped, collision-safe)   opened_results-*.csv
+```
+
+### cidr-compare Pipeline
+
+```
+Deny CSV ──> IntervalTree.Insert() ──┐
+                                     ├──> IntervalTree.Query() ──> Matching pairs
+Open CSV ──> OpenCSVReader ──────────┘         │
+                                              v
+                                     stdout: "deny_cidr,open_cidr\ndeny,open\n..."
+```
+
+### csv-transform Pipeline
+
+```
+Input CSV ──> spreadsheet.Reader ──> Column index ──> Filter rows ──> Host resolve ──> Port expand ──> Output CSV
+              OpenSheet()            (host, port,   (Pass != FALSE)  (DNS lookup)      (ranges to    (Rich CSV
+                                  pass columns)                                     individuals)   format)
+```
+
 ## How the Scan Pipeline Works
 
 1. Parse CLI flags and validate required inputs.
@@ -79,6 +129,99 @@ Exit code behavior:
 - Rich dashboard output is written to `stderr`.
 - If `stderr` is not a TTY, or if `-format json` is selected, `scan` falls back to non-rich output.
 - No new CLI flags are added for the UI in this version.
+
+## Tools Reference
+
+### port-scan
+
+TCP port scanner with pressure-aware pacing and resume support.
+
+**Commands:**
+- `port-scan validate [flags]` - Validate input files only (no network scan)
+- `port-scan scan [flags]` - Run full scan orchestration
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-cidr-file` | string | required | Path to CIDR CSV input file |
+| `-port-file` | string | optional | Path to port list file (`<port>/tcp` lines); required in default mode |
+| `-output` | string | `scan_results.csv` | Output anchor path for scan batch files |
+| `-timeout` | duration | `100ms` | TCP dial timeout per probe |
+| `-delay` | duration | `10ms` | Dispatch delay between tasks |
+| `-bucket-rate` | int | `100` | Leaky bucket refill rate |
+| `-bucket-capacity` | int | `100` | Leaky bucket capacity |
+| `-workers` | int | `10` | Number of scan workers |
+| `-pressure-api` | string | `http://localhost:8080/api/pressure` | Pressure API endpoint |
+| `-pressure-interval` | duration | `5s` | Poll interval for pressure API (duration or integer seconds) |
+| `-pressure-use-auth` | bool | `false` | Use authenticated pressure fetcher with OAuth flow |
+| `-pressure-auth-url` | string | (empty) | OAuth auth endpoint URL (required with `-pressure-use-auth`) |
+| `-pressure-data-url` | string | (empty) | Pressure data endpoint URL (required with `-pressure-use-auth`) |
+| `-pressure-client-id` | string | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
+| `-pressure-client-secret` | string | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
+| `-disable-api` | bool | `false` | Disable pressure API polling completely |
+| `-quiet` | bool | `false` | Suppress console logs, keep only pressure API logs |
+| `-resume` | string | (empty) | Resume state file path; if set, load/save uses this exact path |
+| `-log-level` | string | `info` | Runtime log level: `debug`, `info`, `error` |
+| `-format` | string | `human` | Output format: `human` or `json` |
+| `-cidr-ip-col` | string | `ip` | Case-sensitive CIDR CSV column name for IP selector source |
+| `-cidr-ip-cidr-col` | string | `ip_cidr` | Case-sensitive CIDR CSV column name for boundary CIDR source |
+
+### cidr-compare
+
+Compare open CIDRs against deny CIDRs using an interval tree for efficient lookup.
+
+**Usage:**
+```bash
+cidr-compare -deny-file <file> -open-file <file>
+```
+
+**Environment Variables:**
+- `CIDR_COMPARE_DENY_FILE` - Path to deny CSV file
+- `CIDR_COMPARE_OPEN_FILE` - Path to open CSV file
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-deny-file` | string | required | Path to deny CSV file (or CIDR_COMPARE_DENY_FILE env var) |
+| `-open-file` | string | required | Path to open CSV file (or CIDR_COMPARE_OPEN_FILE env var) |
+
+**Input format (deny CSV):** CSV with columns `dst_network_segment` (CIDR notation, e.g., `10.0.0.0/24`) and `decision`. Falls back to columns 0 and 1 if headers are missing.
+
+**Input format (open CSV):** CSV with columns `segment` (CIDR notation) and `status`. Falls back to columns 0 and 1 if headers are missing.
+
+**Output format:** CSV with header `deny_cidr,open_cidr` followed by matching pairs where the deny CIDR contains the open CIDR.
+
+### csv-transform
+
+Transform port scan CSV output to rich CSV format with host resolution and port expansion.
+
+**Usage:**
+```bash
+csv-transform -input <file> -output <file>
+```
+
+**Environment Variables:**
+- `TRANSFORM_INPUT` - Path to input CSV file
+- `TRANSFORM_OUTPUT` - Path to output CSV file
+- `TRANSFORM_SHEET_NAME` - Worksheet name (default: `all-runs`)
+- `TRANSFORM_HOST_COL` - Host column name (default: `Host`)
+- `TRANSFORM_PORT_COL` - Port column name (default: `Port`)
+- `TRANSFORM_PASS_COL` - Pass/fail column name (default: `Pass the test`)
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-input` | string | required | Path to input CSV file (or TRANSFORM_INPUT) |
+| `-output` | string | required | Path to output CSV file (or TRANSFORM_OUTPUT) |
+| `-sheet` | string | `all-runs` | Worksheet name (ignored for CSV) |
+| `-host-col` | string | `Host` | Host column name |
+| `-port-col` | string | `Port` | Port column name |
+| `-pass-col` | string | `Pass the test` | Pass/fail column name |
+
+**Output format:** Rich CSV with columns: `src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason`
 
 ## Flags Quick Reference
 
@@ -115,7 +258,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - IPv4 only (selectors, CIDR parsing, and expansion paths).
 - Port input accepts `<port>/tcp` only.
 - Pressure API polling fails hard after 3 consecutive failures.
-- Pressure threshold defaults to `90` and is not exposed as CLI flag.
+- Pressure threshold defaults to `60` and is not exposed as CLI flag.
 - Pause gate blocks new dispatch only; in-flight worker probes continue.
 - Dispatch order is chunk-serial (not cross-CIDR fair round-robin).
 - E2E requires Docker runtime and `docker compose`.
@@ -141,3 +284,6 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - [E2E overview](docs/e2e/overview.md)
 - [Speed-control E2E](docs/e2e/speedcontrol.md)
 - [Architecture diagram](docs/architecture/diagram.html)
+
+---
+**Revised**: 2026-04-13 | **Author**: docs-team

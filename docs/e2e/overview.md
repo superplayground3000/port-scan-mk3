@@ -88,3 +88,6 @@ Pass criteria:
 - Docker unavailable: ensure Docker daemon is running and `docker compose` works.
 - Missing `resume_state` artifacts: inspect scenario logs under `e2e/out/scenario_*.log`.
 - Missing report files: confirm scanner completed normal scenario and report generator ran successfully.
+
+---
+**Revised**: 2026-04-13 | **Author**: docs-team

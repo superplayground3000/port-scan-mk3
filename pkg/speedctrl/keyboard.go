@@ -19,7 +19,30 @@ var (
 	keyboardInput                      io.Reader = os.Stdin
 )
 
-// StartKeyboardLoop enables raw-mode keyboard handling and toggles pause on space key.
+// StartKeyboardLoop enables raw-mode keyboard handling on a terminal. When
+// running in a terminal, pressing the space bar toggles manual pause/resume
+// via the Controller. In non-terminal environments (piped stdin, CI), it
+// returns nil immediately without starting any goroutines.
+//
+// The terminal is restored to its previous state when ctx is canceled or
+// StartKeyboardLoop returns.
+//
+// # Parameters
+//
+//	ctx: Context whose cancellation restores the terminal.
+//	c:   Controller whose manual pause state is toggled by the space bar.
+//
+// # Returns
+//
+//	nil in terminal environments; nil immediately in non-terminal environments;
+//	error if terminal setup (MakeRaw) fails.
+//
+// # Example
+//
+//	ctrl := speedctrl.NewController()
+//	if err := speedctrl.StartKeyboardLoop(ctx, ctrl); err != nil {
+//	    log.Printf("keyboard control unavailable: %v", err)
+//	}
 func StartKeyboardLoop(ctx context.Context, c *Controller) error {
 	fd := keyboardFD()
 	isTerminal := keyboardIsTerminal

@@ -8,13 +8,34 @@ import (
 )
 
 // ValidateNoOverlap validates CIDR/IP selector rows and rejects conflicting ranges.
+// It is a convenience alias for ValidateIPRows; the two perform identical validation.
 func ValidateNoOverlap(networks []CIDRRecord) error {
 	return ValidateIPRows(networks)
 }
 
-// ValidateIPRows enforces fail-fast input rules:
-// 1) each selector is inside its ip_cidr
-// 2) duplicate (src, dst, ip_cidr, port) tuples are rejected.
+// ValidateIPRows enforces fail-fast input rules on a slice of CIDR records:
+//
+//  1. Each IP selector is contained within its ip_cidr boundary.
+//  2. Duplicate (src, dst, ip_cidr, port) tuples are rejected.
+//
+// Callers should apply this after loading records via LoadCIDRs or
+// LoadCIDRsWithColumns. It does not mutate the records.
+//
+// # Parameters
+//
+//	rows: Parsed CIDR records to validate.
+//
+// # Returns
+//
+//	nil on success; an error describing the first violation found.
+//	Errors include row numbers (1-indexed) for duplicate or containment failures.
+//
+// # Example
+//
+//	records, _ := input.LoadCIDRs(os.Stdin)
+//	if err := input.ValidateIPRows(records); err != nil {
+//	    log.Fatalf("validation failed: %v", err)
+//	}
 func ValidateIPRows(rows []CIDRRecord) error {
 	for i := range rows {
 		if rows[i].Net == nil || rows[i].Selector == nil {
