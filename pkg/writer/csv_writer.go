@@ -1,3 +1,18 @@
+// Package writer provides CSV output writers for scan results.
+// It defines the fixed output contract (Columns) used across the scanner pipeline
+// and supports filtering via OpenOnlyWriter to emit only open-port results.
+//
+// # Output Schema
+//
+//	ip, ip_cidr, port, status, response_time_ms, fab_name, cidr_name,
+//	service_label, decision, matched_policy_id, reason, execution_key,
+//	src_ip, src_network_segment
+//
+// # Example
+//
+//	w := writer.NewCSVWriter(os.Stdout)
+//	_ = w.WriteHeader()
+//	_ = w.Write(writer.Record{IP: "192.168.1.1", Port: 80, Status: "open"})
 package writer
 
 import (
@@ -6,7 +21,8 @@ import (
 	"strconv"
 )
 
-// Record is one scan output row written to CSV.
+// Record is one scan result row written to the output CSV. All fields are
+// populated by the scan pipeline; empty fields produce empty CSV cells.
 type Record struct {
 	IP                string
 	IPCidr            string
@@ -25,13 +41,20 @@ type Record struct {
 	SrcNetworkSegment string
 }
 
-// ColumnDef maps a header name to a Record field extractor.
+// ColumnDef maps a header name to a Record field extractor function.
 type ColumnDef struct {
-	Name    string
+	// Name is the CSV column header string.
+	Name string
+	// Extract returns the string value of a Record field for this column.
 	Extract func(Record) string
 }
 
-// Columns defines the CSV output contract as a single source of truth.
+// Columns defines the canonical CSV output schema as a single source of truth.
+// The schema is: ip, ip_cidr, port, status, response_time_ms, fab_name,
+// cidr_name, service_label, decision, matched_policy_id, reason, execution_key,
+// src_ip, src_network_segment.
+//
+// Changing this slice changes the output contract and requires a MAJOR version bump.
 var Columns = []ColumnDef{
 	{"ip", func(r Record) string { return r.IP }},
 	{"ip_cidr", func(r Record) string {
@@ -54,18 +77,31 @@ var Columns = []ColumnDef{
 	{"src_network_segment", func(r Record) string { return r.SrcNetworkSegment }},
 }
 
-// CSVWriter writes scan result rows with the fixed contract header.
+// CSVWriter writes scan result rows to a CSV output with the fixed Columns
+// header. It is safe for concurrent use only if each Write call is externally
+// serialized (the scan pipeline serializes writes at the dispatcher level).
 type CSVWriter struct {
 	w           *csv.Writer
 	wroteHeader bool
 }
 
-// NewCSVWriter creates a CSV writer for scan result output.
+// NewCSVWriter creates a CSVWriter that writes to the provided io.Writer.
+// The writer does not take ownership; callers are responsible for closing
+// the underlying writer if needed.
 func NewCSVWriter(out io.Writer) *CSVWriter {
 	return &CSVWriter{w: csv.NewWriter(out)}
 }
 
-// Write appends a single record and writes header first if needed.
+// Write appends a single record to the CSV, writing the header on the first
+// call. It flushes after each write to ensure data is visible.
+//
+// # Parameters
+//
+//	r: The scan result record to write.
+//
+// # Returns
+//
+//	nil on success; error if header write or CSV write fails.
 func (cw *CSVWriter) Write(r Record) error {
 	if err := cw.WriteHeader(); err != nil {
 		return err
@@ -81,7 +117,7 @@ func (cw *CSVWriter) Write(r Record) error {
 	return cw.w.Error()
 }
 
-// WriteHeader writes the fixed result header once.
+// WriteHeader writes the fixed result header once. Subsequent calls are no-ops.
 func (cw *CSVWriter) WriteHeader() error {
 	if !cw.wroteHeader {
 		header := make([]string, len(Columns))

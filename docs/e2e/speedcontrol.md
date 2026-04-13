@@ -30,3 +30,6 @@ bash e2e/speedcontrol/run_speedcontrol_e2e.sh
 1. 三個 artifacts 都存在
 1. 報告可看到每個 scenario 的 verdict 與 explanation
 
+---
+**Revised**: 2026-04-13 | **Author**: docs-team
+

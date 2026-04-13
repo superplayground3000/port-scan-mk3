@@ -138,3 +138,6 @@ $ csv-transform --input=malformed.csv --output=data.csv
 error: failed to open CSV: <underlying csv error>
 # exit 1
 ```
+
+---
+**Revised**: 2026-04-13 | **Author**: docs-team

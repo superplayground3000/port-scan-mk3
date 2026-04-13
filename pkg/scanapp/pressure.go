@@ -13,18 +13,36 @@ import (
 	"time"
 )
 
-// PressureFetcher defines the interface for fetching pressure data.
+// PressureFetcher defines the interface for fetching router pressure data.
+// Implementations determine how pressure is retrieved (plain HTTP, OAuth, etc.).
+// The returned value is a percentage (e.g., 45.0 for 45%).
 type PressureFetcher interface {
+	// Fetch retrieves the current pressure value.
+	//
+	// # Parameters
+	//
+	//	ctx: Context for the HTTP request with timeout/cancellation.
+	//
+	// # Returns
+	//
+	//	Pressure as a percentage (e.g., 45.0) on success; error on failure.
 	Fetch(ctx context.Context) (float64, error)
 }
 
-// SimplePressureFetcher makes plain HTTP GET requests.
+// SimplePressureFetcher is a PressureFetcher that makes unauthenticated HTTP GET
+// requests to a pressure API endpoint. It expects a JSON response with a
+// "pressure" field (number or numeric string).
 type SimplePressureFetcher struct {
 	url    string
 	client *http.Client
 }
 
-// NewSimplePressureFetcher creates a SimplePressureFetcher.
+// NewSimplePressureFetcher creates a SimplePressureFetcher for the given URL.
+// If client is nil, a default HTTP client with a 2-second timeout is used.
+//
+// # Example
+//
+//	fetcher := NewSimplePressureFetcher("http://localhost:8080/api/pressure", nil)
 func NewSimplePressureFetcher(url string, client *http.Client) PressureFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
@@ -32,7 +50,8 @@ func NewSimplePressureFetcher(url string, client *http.Client) PressureFetcher {
 	return &SimplePressureFetcher{url: url, client: client}
 }
 
-// Fetch retrieves pressure value from the configured URL.
+// Fetch performs an HTTP GET to the configured URL and returns the pressure value.
+// It expects a JSON body: {"pressure": <number>}.
 func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
 	if err != nil {
@@ -61,7 +80,9 @@ func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	return pressure, nil
 }
 
-// AuthenticatedPressureFetcher handles OAuth-style auth flow.
+// AuthenticatedPressureFetcher is a PressureFetcher that first obtains an OAuth
+// bearer token from authURL, then uses it to fetch pressure data from dataURL.
+// It caches and automatically refreshes tokens before expiry.
 type AuthenticatedPressureFetcher struct {
 	authURL      string
 	dataURL      string
@@ -75,6 +96,15 @@ type AuthenticatedPressureFetcher struct {
 }
 
 // NewAuthenticatedPressureFetcher creates an AuthenticatedPressureFetcher.
+// If client is nil, a default HTTP client with a 2-second timeout is used.
+//
+// # Example
+//
+//	fetcher := NewAuthenticatedPressureFetcher(
+//	    "https://auth.example.com/token",
+//	    "https://api.example.com/pressure",
+//	    "client-id", "secret", nil,
+//	)
 func NewAuthenticatedPressureFetcher(authURL, dataURL, clientID, clientSecret string, client *http.Client) PressureFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
@@ -88,7 +118,8 @@ func NewAuthenticatedPressureFetcher(authURL, dataURL, clientID, clientSecret st
 	}
 }
 
-// Fetch retrieves pressure value with token authentication.
+// Fetch retrieves pressure data using a cached bearer token. It automatically
+// refreshes the token when it is within 30 seconds of expiry.
 func (f *AuthenticatedPressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	// Get valid token (refresh if needed)
 	token, err := f.getToken(ctx)

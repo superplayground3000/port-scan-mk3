@@ -6,20 +6,25 @@ import (
 )
 
 // RecordWriterAdapter wraps a writer.CSVWriter to implement scanapp.RecordWriter.
-// This lives in CLI layer (not domain) per SOLID - it bridges domain interface to concrete writer.
+// It lives in the CLI layer per SOLID: it bridges the domain's RecordWriter
+// interface to the concrete writer implementation without polluting domain code
+// with transport details.
 type RecordWriterAdapter struct {
 	w *writer.CSVWriter
 }
 
-// NewRecordWriterAdapter creates an adapter from *writer.CSVWriter to scanapp.RecordWriter.
+// NewRecordWriterAdapter creates a RecordWriterAdapter from a CSVWriter.
+// The resulting adapter implements scanapp.RecordWriter.
 func NewRecordWriterAdapter(csv *writer.CSVWriter) *RecordWriterAdapter {
 	return &RecordWriterAdapter{w: csv}
 }
 
+// Write forwards the record to the underlying CSVWriter.
 func (a *RecordWriterAdapter) Write(record writer.Record) error {
 	return a.w.Write(record)
 }
 
+// WriteHeader forwards the header write to the underlying CSVWriter.
 func (a *RecordWriterAdapter) WriteHeader() error {
 	return a.w.WriteHeader()
 }
@@ -27,21 +32,25 @@ func (a *RecordWriterAdapter) WriteHeader() error {
 // Compile-time interface check
 var _ scanapp.RecordWriter = (*RecordWriterAdapter)(nil)
 
-// OpenOnlyRecordWriterAdapter wraps a writer.OpenOnlyWriter to implement scanapp.RecordWriter.
-// The OpenOnlyWriter filters records to only include "open" status entries.
+// OpenOnlyRecordWriterAdapter wraps a writer.OpenOnlyWriter to implement
+// scanapp.RecordWriter. The OpenOnlyWriter filters records to include only those
+// with Status equal to "open", enabling separate all-results and open-only outputs.
 type OpenOnlyRecordWriterAdapter struct {
 	w *writer.OpenOnlyWriter
 }
 
-// NewOpenOnlyRecordWriterAdapter creates an adapter from *writer.OpenOnlyWriter to scanapp.RecordWriter.
+// NewOpenOnlyRecordWriterAdapter creates an OpenOnlyRecordWriterAdapter from
+// an OpenOnlyWriter. The resulting adapter implements scanapp.RecordWriter.
 func NewOpenOnlyRecordWriterAdapter(open *writer.OpenOnlyWriter) *OpenOnlyRecordWriterAdapter {
 	return &OpenOnlyRecordWriterAdapter{w: open}
 }
 
+// Write forwards only "open" status records to the underlying writer.
 func (a *OpenOnlyRecordWriterAdapter) Write(record writer.Record) error {
 	return a.w.Write(record)
 }
 
+// WriteHeader forwards the header write to the underlying writer.
 func (a *OpenOnlyRecordWriterAdapter) WriteHeader() error {
 	return a.w.WriteHeader()
 }

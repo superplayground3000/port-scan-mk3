@@ -240,3 +240,6 @@ Expected:
 
 Troubleshooting:
 - If e2e fails early, verify Docker daemon and `docker compose` availability.
+
+---
+**Revised**: 2026-04-13 | **Author**: docs-team
