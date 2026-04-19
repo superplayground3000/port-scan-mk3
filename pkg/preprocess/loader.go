@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"log"
 	"strings"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/cidrutil"
@@ -13,7 +12,11 @@ import (
 
 // LoadCleanedCIDRs reads a cleaned CIDRs CSV, filters to rows matching fabName
 // with status "close", and returns an IntervalTree of the closed CIDRs.
-func LoadCleanedCIDRs(r io.Reader, fabName string) (*cidrutil.IntervalTree, error) {
+// Parse warnings are written to warn.
+func LoadCleanedCIDRs(r io.Reader, fabName string, warn io.Writer) (*cidrutil.IntervalTree, error) {
+	if warn == nil {
+		warn = io.Discard
+	}
 	cr := csv.NewReader(r)
 	rows, err := cr.ReadAll()
 	if err != nil {
@@ -47,7 +50,7 @@ func LoadCleanedCIDRs(r io.Reader, fabName string) (*cidrutil.IntervalTree, erro
 		row := rows[i]
 		maxIdx := max(fabIdx, cidrIdx, statusIdx)
 		if len(row) <= maxIdx {
-			log.Printf("cleaned CIDRs row %d: too few columns, skipping", i+1)
+			fmt.Fprintf(warn, "cleaned CIDRs row %d: too few columns, skipping\n", i+1)
 			continue
 		}
 
@@ -64,7 +67,7 @@ func LoadCleanedCIDRs(r io.Reader, fabName string) (*cidrutil.IntervalTree, erro
 		raw := strings.TrimSpace(row[cidrIdx])
 		entry, err := cidrutil.ParseCIDR(raw)
 		if err != nil {
-			log.Printf("cleaned CIDRs row %d: invalid CIDR %q, skipping", i+1, raw)
+			fmt.Fprintf(warn, "cleaned CIDRs row %d: invalid CIDR %q, skipping\n", i+1, raw)
 			continue
 		}
 		tree.Insert(entry)

@@ -76,3 +76,15 @@ func TestFilter_InvalidCIDR(t *testing.T) {
 		t.Fatal("expected error for invalid CIDR")
 	}
 }
+
+func TestFilter_NilTree(t *testing.T) {
+	f := NewFilter(nil)
+
+	keep, err := f.Keep("10.0.0.0/16")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !keep {
+		t.Error("expected keep=true when tree is nil (nothing closed)")
+	}
+}

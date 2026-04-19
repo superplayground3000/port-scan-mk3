@@ -1,6 +1,8 @@
 package preprocess
 
 import (
+	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -9,7 +11,7 @@ import (
 
 func TestLoadCleanedCIDRs_FiltersByFabAndClose(t *testing.T) {
 	csv := "fab,segment,status\ndc-east,10.0.0.0/16,close\ndc-east,10.1.0.0/16,open\ndc-west,192.168.0.0/24,close\n"
-	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east")
+	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east", io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -29,7 +31,7 @@ func TestLoadCleanedCIDRs_FiltersByFabAndClose(t *testing.T) {
 
 func TestLoadCleanedCIDRs_MissingColumns(t *testing.T) {
 	csv := "a,b,c\n1,2,3\n"
-	_, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east")
+	_, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east", io.Discard)
 	if err == nil {
 		t.Fatal("expected error for missing required columns")
 	}
@@ -37,7 +39,7 @@ func TestLoadCleanedCIDRs_MissingColumns(t *testing.T) {
 
 func TestLoadCleanedCIDRs_EmptyResult(t *testing.T) {
 	csv := "fab,segment,status\ndc-east,10.0.0.0/16,open\n"
-	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east")
+	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east", io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,12 +51,47 @@ func TestLoadCleanedCIDRs_EmptyResult(t *testing.T) {
 
 func TestLoadCleanedCIDRs_CaseInsensitiveStatus(t *testing.T) {
 	csv := "fab,segment,status\ndc-east,10.0.0.0/16,CLOSE\n"
-	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east")
+	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east", io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	q, _ := cidrutil.ParseCIDR("10.0.1.0/24")
 	if len(tree.Query(q)) != 1 {
 		t.Error("expected match for case-insensitive CLOSE status")
+	}
+}
+
+func TestLoadCleanedCIDRs_EmptyCSV(t *testing.T) {
+	_, err := LoadCleanedCIDRs(strings.NewReader(""), "dc-east", io.Discard)
+	if err == nil {
+		t.Fatal("expected error for completely empty CSV")
+	}
+}
+
+func TestLoadCleanedCIDRs_WarnsOnInvalidCIDR(t *testing.T) {
+	csv := "fab,segment,status\ndc-east,not-a-cidr,close\ndc-east,10.0.0.0/16,close\n"
+	var warn bytes.Buffer
+	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east", &warn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(warn.String(), "invalid CIDR") {
+		t.Errorf("expected warning about invalid CIDR, got: %s", warn.String())
+	}
+	q, _ := cidrutil.ParseCIDR("10.0.1.0/24")
+	if len(tree.Query(q)) != 1 {
+		t.Error("expected valid CIDR to still be loaded")
+	}
+}
+
+func TestLoadCleanedCIDRs_NilWarn(t *testing.T) {
+	csv := "fab,segment,status\ndc-east,10.0.0.0/16,close\n"
+	tree, err := LoadCleanedCIDRs(strings.NewReader(csv), "dc-east", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	q, _ := cidrutil.ParseCIDR("10.0.1.0/24")
+	if len(tree.Query(q)) != 1 {
+		t.Error("expected closed CIDR to be loaded")
 	}
 }

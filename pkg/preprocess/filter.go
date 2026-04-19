@@ -1,3 +1,5 @@
+// Package preprocess filters rich CSV rows by removing targets whose
+// destination network segment falls within a closed CIDR.
 package preprocess
 
 import (
@@ -13,7 +15,11 @@ type Filter struct {
 }
 
 // NewFilter creates a Filter from an IntervalTree of closed CIDRs.
+// If closedTree is nil, an empty tree is substituted to avoid nil-pointer panics.
 func NewFilter(closedTree *cidrutil.IntervalTree) *Filter {
+	if closedTree == nil {
+		closedTree = &cidrutil.IntervalTree{}
+	}
 	return &Filter{closedTree: closedTree}
 }
 

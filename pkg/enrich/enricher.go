@@ -1,3 +1,5 @@
+// Package enrich transforms minimal host,port pairs into full rich CSV rows
+// using a CIDR reference tree and a port-to-service-label map.
 package enrich
 
 import (
@@ -41,7 +43,11 @@ type Enricher struct {
 }
 
 // NewEnricher creates an Enricher with the given CIDR tree and service map.
+// If cidrTree is nil, an empty tree is substituted to avoid nil-pointer panics.
 func NewEnricher(cidrTree *cidrutil.IntervalTree, serviceMap map[int]string) *Enricher {
+	if cidrTree == nil {
+		cidrTree = &cidrutil.IntervalTree{}
+	}
 	return &Enricher{cidrTree: cidrTree, serviceMap: serviceMap}
 }
 
@@ -56,6 +62,10 @@ func (e *Enricher) Enrich(host string, port int) (RichRow, error) {
 	ip = ip.To4()
 	if ip == nil {
 		return RichRow{}, fmt.Errorf("host %q is not IPv4", host)
+	}
+
+	if port < 1 || port > 65535 {
+		return RichRow{}, fmt.Errorf("port %d out of valid range [1, 65535]", port)
 	}
 
 	dstSegment := e.findSmallestCIDR(host)
@@ -85,6 +95,8 @@ func (e *Enricher) findSmallestCIDR(host string) string {
 	hostCIDR := host + "/32"
 	entry, err := cidrutil.ParseCIDR(hostCIDR)
 	if err != nil {
+		// host was already validated by Enrich; parse failure here is
+		// defensive-only, so fall back to the string form.
 		return hostCIDR
 	}
 

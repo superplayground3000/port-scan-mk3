@@ -1,6 +1,7 @@
 package enrich
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/cidrutil"
@@ -94,5 +95,83 @@ func TestEnrich_InvalidHost(t *testing.T) {
 	_, err := e.Enrich("not-an-ip", 80)
 	if err == nil {
 		t.Fatal("expected error for invalid host IP")
+	}
+}
+
+func TestEnrich_IPv6Rejected(t *testing.T) {
+	tree := buildTree("10.0.0.0/8")
+	svc := map[int]string{}
+	e := NewEnricher(tree, svc)
+
+	_, err := e.Enrich("::1", 80)
+	if err == nil {
+		t.Fatal("expected error for IPv6 address")
+	}
+	if !strings.Contains(err.Error(), "not IPv4") {
+		t.Errorf("expected 'not IPv4' in error, got: %v", err)
+	}
+}
+
+func TestEnrich_NilTree(t *testing.T) {
+	svc := map[int]string{22: "SSH"}
+	e := NewEnricher(nil, svc)
+
+	row, err := e.Enrich("10.1.2.3", 22)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// With no tree entries, should fall back to /32
+	if row.DstNetworkSegment != "10.1.2.3/32" {
+		t.Errorf("expected fallback 10.1.2.3/32, got %s", row.DstNetworkSegment)
+	}
+}
+
+func TestEnrich_PortZero(t *testing.T) {
+	tree := buildTree("10.0.0.0/8")
+	svc := map[int]string{}
+	e := NewEnricher(tree, svc)
+
+	_, err := e.Enrich("10.1.2.3", 0)
+	if err == nil {
+		t.Fatal("expected error for port 0")
+	}
+}
+
+func TestEnrich_PortNegative(t *testing.T) {
+	tree := buildTree("10.0.0.0/8")
+	svc := map[int]string{}
+	e := NewEnricher(tree, svc)
+
+	_, err := e.Enrich("10.1.2.3", -1)
+	if err == nil {
+		t.Fatal("expected error for negative port")
+	}
+}
+
+func TestEnrich_PortTooHigh(t *testing.T) {
+	tree := buildTree("10.0.0.0/8")
+	svc := map[int]string{}
+	e := NewEnricher(tree, svc)
+
+	_, err := e.Enrich("10.1.2.3", 99999)
+	if err == nil {
+		t.Fatal("expected error for port > 65535")
+	}
+}
+
+func TestEnrich_PortBoundary(t *testing.T) {
+	tree := buildTree("10.0.0.0/8")
+	svc := map[int]string{65535: "MAX"}
+	e := NewEnricher(tree, svc)
+
+	row, err := e.Enrich("10.1.2.3", 65535)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if row.Port != "65535" {
+		t.Errorf("expected port 65535, got %s", row.Port)
+	}
+	if row.ServiceLabel != "MAX" {
+		t.Errorf("expected service label MAX, got %s", row.ServiceLabel)
 	}
 }

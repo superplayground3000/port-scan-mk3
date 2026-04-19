@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 
@@ -14,8 +13,11 @@ import (
 
 // LoadServiceMap reads a CSV with port and service_label columns and returns
 // a map from port number to service label. Rows with invalid port numbers are
-// skipped with a log warning.
-func LoadServiceMap(r io.Reader) (map[int]string, error) {
+// skipped with a warning written to warn.
+func LoadServiceMap(r io.Reader, warn io.Writer) (map[int]string, error) {
+	if warn == nil {
+		warn = io.Discard
+	}
 	cr := csv.NewReader(r)
 	rows, err := cr.ReadAll()
 	if err != nil {
@@ -44,12 +46,12 @@ func LoadServiceMap(r io.Reader) (map[int]string, error) {
 	for i := 1; i < len(rows); i++ {
 		row := rows[i]
 		if len(row) <= portIdx || len(row) <= labelIdx {
-			log.Printf("service map row %d: too few columns, skipping", i+1)
+			fmt.Fprintf(warn, "service map row %d: too few columns, skipping\n", i+1)
 			continue
 		}
 		port, err := strconv.Atoi(strings.TrimSpace(row[portIdx]))
 		if err != nil {
-			log.Printf("service map row %d: invalid port %q, skipping", i+1, row[portIdx])
+			fmt.Fprintf(warn, "service map row %d: invalid port %q, skipping\n", i+1, row[portIdx])
 			continue
 		}
 		m[port] = strings.TrimSpace(row[labelIdx])
@@ -60,8 +62,11 @@ func LoadServiceMap(r io.Reader) (map[int]string, error) {
 // LoadCIDRList reads a CSV listing CIDRs and returns them as an IntervalTree.
 // The first column is used as the CIDR value. If the first row is not a valid
 // CIDR it is treated as a header and skipped. Malformed CIDRs are skipped with
-// a log warning.
-func LoadCIDRList(r io.Reader) (*cidrutil.IntervalTree, error) {
+// a warning written to warn.
+func LoadCIDRList(r io.Reader, warn io.Writer) (*cidrutil.IntervalTree, error) {
+	if warn == nil {
+		warn = io.Discard
+	}
 	cr := csv.NewReader(r)
 	rows, err := cr.ReadAll()
 	if err != nil {
@@ -86,7 +91,7 @@ func LoadCIDRList(r io.Reader) (*cidrutil.IntervalTree, error) {
 		}
 		entry, err := cidrutil.ParseCIDR(raw)
 		if err != nil {
-			log.Printf("CIDR list row %d: invalid CIDR %q, skipping", i+1, raw)
+			fmt.Fprintf(warn, "CIDR list row %d: invalid CIDR %q, skipping\n", i+1, raw)
 			continue
 		}
 		tree.Insert(entry)
