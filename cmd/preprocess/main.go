@@ -43,7 +43,7 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 		return fmt.Errorf("opening cleaned CIDRs: %w", err)
 	}
 	defer cidrsFile.Close()
-	closedTree, err := preprocess.LoadCleanedCIDRs(cidrsFile, *fabName)
+	closedTree, err := preprocess.LoadCleanedCIDRs(cidrsFile, *fabName, stderr)
 	if err != nil {
 		return fmt.Errorf("loading cleaned CIDRs: %w", err)
 	}
@@ -81,7 +81,10 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
+	defer func() {
+		// Close is checked explicitly after Flush; defer is a safety net.
+		outFile.Close()
+	}()
 
 	// Write header (pass through input header).
 	if err := cw.Write(header); err != nil {
@@ -91,11 +94,11 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 	total, kept, dropped := 0, 0, 0
 	for {
 		row, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("reading input row: %w", err)
+			return fmt.Errorf("reading input row %d: %w", total+2, err)
 		}
 		total++
 
@@ -127,8 +130,13 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 	if err := cw.Error(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
 	}
+	if err := outFile.Close(); err != nil {
+		return fmt.Errorf("closing output: %w", err)
+	}
 
-	preprocess.PrintSummary(stderr, total, kept, dropped)
+	if err := preprocess.PrintSummary(stderr, total, kept, dropped); err != nil {
+		return fmt.Errorf("writing summary: %w", err)
+	}
 	fmt.Fprintf(stderr, "Output written to: %s\n", outPath)
 	return nil
 }

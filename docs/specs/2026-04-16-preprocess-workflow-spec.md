@@ -12,9 +12,9 @@ rich CSV ready for port-scan consumption.
 
 | File | Format | Scope |
 |------|--------|-------|
-| Filtered targets CSV | Rich CSV (10 columns: `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`, `service_label`, `protocol`, `port`, `decision`, `matched_policy_id`, `reason`) | One per data center |
+| Filtered targets CSV | Rich CSV (10 columns: `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`, `service_label`, `protocol`, `port`, `decision`, `matched_policy_id`, `reason`) | One per data center, stored at `filtered-targets/<DC>/<timestamp>/opened_targets.csv` |
 | Previous opened targets CSV | Minimal CSV (`host`, `port`) | One per data center, stored at `previous-scanned/<DC>/<timestamp>/opened_targets.csv` |
-| Cleaned CIDRs CSV | Columns: `cidr`, `status` (values: `open` / `close`) | Covers all data centers |
+| Cleaned CIDRs CSV | Multiple columns, the columns we need are: `fab`,`segment` (values: CIDR), `status` (values: `open` / `close`) | Covers all data centers |
 | CIDR reference list | CSV listing CIDRs | Used for enrichment: maps host IPs to their containing CIDR |
 | Service map CSV | Columns: `port`, `service_label` | Used for enrichment: maps port numbers to service names |
 

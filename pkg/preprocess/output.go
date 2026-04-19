@@ -49,9 +49,16 @@ func WriteRichCSV(w *csv.Writer, rows [][]string) error {
 }
 
 // PrintSummary writes a human-readable filter summary to the given writer.
-func PrintSummary(w io.Writer, total, kept, dropped int) {
-	fmt.Fprintf(w, "Filter summary:\n")
-	fmt.Fprintf(w, "  Total input rows:  %d\n", total)
-	fmt.Fprintf(w, "  Rows kept:         %d\n", kept)
-	fmt.Fprintf(w, "  Rows dropped:      %d\n", dropped)
+func PrintSummary(w io.Writer, total, kept, dropped int) error {
+	if _, err := fmt.Fprintf(w, "Filter summary:\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  Total input rows:  %d\n", total); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  Rows kept:         %d\n", kept); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "  Rows dropped:      %d\n", dropped)
+	return err
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -17,11 +18,11 @@ func TestEnrichEndToEnd(t *testing.T) {
 	svcCSV := "port,service_label\n22,SSH\n80,HTTP\n"
 	inputCSV := "host,port\n10.1.2.3,22\n10.5.6.7,80\n192.168.1.1,9999\n"
 
-	tree, err := enrich.LoadCIDRList(strings.NewReader(cidrCSV))
+	tree, err := enrich.LoadCIDRList(strings.NewReader(cidrCSV), io.Discard)
 	if err != nil {
 		t.Fatalf("loading CIDR list: %v", err)
 	}
-	svcMap, err := enrich.LoadServiceMap(strings.NewReader(svcCSV))
+	svcMap, err := enrich.LoadServiceMap(strings.NewReader(svcCSV), io.Discard)
 	if err != nil {
 		t.Fatalf("loading service map: %v", err)
 	}

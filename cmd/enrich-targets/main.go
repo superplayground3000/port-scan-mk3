@@ -43,7 +43,7 @@ func runMain(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("opening CIDR list: %w", err)
 	}
 	defer cidrFile.Close()
-	tree, err := enrich.LoadCIDRList(cidrFile)
+	tree, err := enrich.LoadCIDRList(cidrFile, stderr)
 	if err != nil {
 		return fmt.Errorf("loading CIDR list: %w", err)
 	}
@@ -54,7 +54,7 @@ func runMain(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("opening service map: %w", err)
 	}
 	defer svcFile.Close()
-	svcMap, err := enrich.LoadServiceMap(svcFile)
+	svcMap, err := enrich.LoadServiceMap(svcFile, stderr)
 	if err != nil {
 		return fmt.Errorf("loading service map: %w", err)
 	}
@@ -91,7 +91,10 @@ func runMain(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("creating output: %w", err)
 	}
-	defer outFile.Close()
+	defer func() {
+		// Close is checked explicitly after Flush; defer is a safety net.
+		outFile.Close()
+	}()
 	cw := csv.NewWriter(outFile)
 
 	// Write header.
@@ -105,7 +108,7 @@ func runMain(args []string, stdout, stderr io.Writer) error {
 
 	for {
 		row, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -140,6 +143,9 @@ func runMain(args []string, stdout, stderr io.Writer) error {
 	cw.Flush()
 	if err := cw.Error(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+	if err := outFile.Close(); err != nil {
+		return fmt.Errorf("closing output: %w", err)
 	}
 
 	fmt.Fprintf(stderr, "Enriched %d rows from %d input rows\n", enriched, rowNum-1)

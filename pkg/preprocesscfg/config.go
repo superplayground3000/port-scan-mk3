@@ -1,3 +1,5 @@
+// Package preprocesscfg defines column names, status values, and placeholder
+// defaults shared across the enrich and preprocess packages.
 package preprocesscfg
 
 // Rich CSV output columns.

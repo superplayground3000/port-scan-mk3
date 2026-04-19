@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestPreprocessEndToEnd(t *testing.T) {
 		"10.59.42.39,10.59.42.39/32,172.16.1.1,172.16.1.0/24,HTTPS,tcp,443,accept,enriched,MATCH_POLICY_ACCEPT",
 	)
 
-	closedTree, err := preprocess.LoadCleanedCIDRs(strings.NewReader(cleanedCSV), "dc-east")
+	closedTree, err := preprocess.LoadCleanedCIDRs(strings.NewReader(cleanedCSV), "dc-east", io.Discard)
 	if err != nil {
 		t.Fatalf("loading cleaned CIDRs: %v", err)
 	}

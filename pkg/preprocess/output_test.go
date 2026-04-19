@@ -70,7 +70,9 @@ func TestWriteRichCSV(t *testing.T) {
 
 func TestPrintSummary(t *testing.T) {
 	var buf bytes.Buffer
-	PrintSummary(&buf, 100, 80, 20)
+	if err := PrintSummary(&buf, 100, 80, 20); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, "100") {
