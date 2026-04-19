@@ -77,7 +77,8 @@ var (
 
 // Cleaned CIDRs columns.
 var (
-    ColCIDR   = "cidr"
+    ColFab    = "fab"
+    ColCIDR   = "segment"
     ColStatus = "status"
 )
 
@@ -212,15 +213,19 @@ filtered targets or the output of `enrich-targets`).
 
 **Cleaned CIDRs** (`--cleaned-cidrs`):
 ```csv
-cidr,status
-10.0.0.0/16,close
-10.1.0.0/16,open
-192.168.0.0/24,close
+fab,segment,status
+dc-east,10.0.0.0/16,close
+dc-east,10.1.0.0/16,open
+dc-west,192.168.0.0/24,close
 ```
+
+The `fab` column identifies the data center. When `--fab-name` is provided, only
+rows matching that fab are loaded. The `segment` column contains the CIDR.
 
 ### Filtering Logic
 
-1. Load cleaned CIDRs, extract those with `status = close`.
+1. Load cleaned CIDRs, filter to rows matching `--fab-name`, extract those
+   with `status = close`.
 2. Build an `IntervalTree` from the closed CIDRs.
 3. For each input row, parse `dst_network_segment` and query the closed tree.
 4. If the closed tree contains a CIDR that encompasses the target's
