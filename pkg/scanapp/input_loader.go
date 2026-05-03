@@ -42,7 +42,7 @@ func readCIDRFile(path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return input.LoadCIDRsWithColumns(f, ipCol, ipCidrCol)
 }
 
@@ -51,6 +51,6 @@ func readPortFile(path string) ([]input.PortSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return input.LoadPorts(f)
 }

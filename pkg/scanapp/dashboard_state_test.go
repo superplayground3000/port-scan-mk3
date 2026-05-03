@@ -141,6 +141,35 @@ func TestDashboardState_APIHealthTextAndTimestamps(t *testing.T) {
 	}
 }
 
+func TestDashboardState_APISourceHealthTracksEachSource(t *testing.T) {
+	current := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
+	state := newDashboardState(1, func() time.Time { return current })
+
+	src1At := current.Add(2 * time.Second)
+	src2FailAt := current.Add(3 * time.Second)
+	src2OKAt := current.Add(4 * time.Second)
+
+	state.OnPressureSourceSample("src1", 61, src1At)
+	state.OnPressureSourceFailure("src2", src2FailAt)
+
+	snap := state.Snapshot()
+	if len(snap.APISources) != 2 {
+		t.Fatalf("expected two source snapshots, got %#v", snap.APISources)
+	}
+	if got := snap.APISources[0]; got.Name != "src1" || got.PressurePercent != 61 || got.HealthText != "ok" || !got.LastUpdatedAt.Equal(src1At) {
+		t.Fatalf("unexpected src1 snapshot: %#v", got)
+	}
+	if got := snap.APISources[1]; got.Name != "src2" || got.PressurePercent != 0 || got.HealthText != "fail streak 1" || !got.LastUpdatedAt.Equal(src2FailAt) {
+		t.Fatalf("unexpected src2 failure snapshot: %#v", got)
+	}
+
+	state.OnPressureSourceSample("src2", 42, src2OKAt)
+	snap = state.Snapshot()
+	if got := snap.APISources[1]; got.Name != "src2" || got.PressurePercent != 42 || got.HealthText != "ok" || !got.LastUpdatedAt.Equal(src2OKAt) {
+		t.Fatalf("expected src2 to recover, got %#v", got)
+	}
+}
+
 func TestDashboardState_SetScannedTasks_ClampsWithinBounds(t *testing.T) {
 	current := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
 	state := newDashboardState(4, func() time.Time { return current })

@@ -19,6 +19,10 @@ func TestDashboardRenderer_RenderIncludesRefreshAndFixedSections(t *testing.T) {
 		ResultsPerSecond:     0.8,
 		APIHealthText:        "fail streak 2",
 		LastPressureUpdateAt: time.Date(2026, 3, 18, 10, 4, 5, 0, time.UTC),
+		APISources: []dashboardAPISourceSnapshot{
+			{Name: "src1", PressurePercent: 73, HasPressure: true, HealthText: "ok", LastUpdatedAt: time.Date(2026, 3, 18, 10, 4, 5, 0, time.UTC)},
+			{Name: "src2", PressurePercent: 0, HealthText: "fail streak 2", LastUpdatedAt: time.Date(2026, 3, 18, 10, 4, 7, 0, time.UTC)},
+		},
 	}
 
 	var buf bytes.Buffer
@@ -35,7 +39,8 @@ func TestDashboardRenderer_RenderIncludesRefreshAndFixedSections(t *testing.T) {
 		"Controller: PAUSED(API)\n" +
 		"API Pressure: 73%\n" +
 		"Last Update: 2026-03-18T10:04:05Z\n" +
-		"Health: fail streak 2\n"
+		"Health: fail streak 2\n" +
+		"API Sources: src1=73% ok | src2=- fail streak 2\n"
 
 	if got := buf.String(); got != want {
 		t.Fatalf("unexpected render output\nwant:\n%q\n\ngot:\n%q", want, got)
@@ -59,7 +64,8 @@ func TestDashboardRenderer_RenderUsesFallbacksForEmptyFields(t *testing.T) {
 		"Controller: -\n" +
 		"API Pressure: 0%\n" +
 		"Last Update: -\n" +
-		"Health: -\n"
+		"Health: -\n" +
+		"API Sources: -\n"
 
 	if got := buf.String(); got != want {
 		t.Fatalf("unexpected render output\nwant:\n%q\n\ngot:\n%q", want, got)

@@ -51,25 +51,6 @@ func (r *dashboardSnapshotRecorder) snapshots() []dashboardSnapshot {
 	return out
 }
 
-type sequencePressureFetcher struct {
-	mu     sync.Mutex
-	values []float64
-}
-
-func (f *sequencePressureFetcher) Fetch(context.Context) (float64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if len(f.values) == 0 {
-		return 0.0, errors.New("no pressure values configured")
-	}
-	value := f.values[0]
-	if len(f.values) > 1 {
-		f.values = f.values[1:]
-	}
-	return value, nil
-}
-
 type scriptedPressureResult struct {
 	pressure float64
 	err      error
@@ -92,6 +73,36 @@ func (f *scriptedPressureFetcher) Fetch(context.Context) (float64, error) {
 		f.results = f.results[1:]
 	}
 	return result.pressure, result.err
+}
+
+type scriptedSourcePressureResult struct {
+	pressure float64
+	sources  []PressureSourceResult
+	err      error
+}
+
+type scriptedSourcePressureFetcher struct {
+	mu      sync.Mutex
+	results []scriptedSourcePressureResult
+}
+
+func (f *scriptedSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
+	pressure, _, err := f.FetchWithSourceStatuses(ctx)
+	return pressure, err
+}
+
+func (f *scriptedSourcePressureFetcher) FetchWithSourceStatuses(context.Context) (float64, []PressureSourceResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if len(f.results) == 0 {
+		return 0.0, nil, errors.New("no scripted source pressure results configured")
+	}
+	result := f.results[0]
+	if len(f.results) > 1 {
+		f.results = f.results[1:]
+	}
+	return result.pressure, result.sources, result.err
 }
 
 type pressureTelemetryRecorder struct {
@@ -137,7 +148,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -332,8 +343,30 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 			time.Sleep(25 * time.Millisecond)
 			return nil, errors.New("dial refused for test")
 		},
-		PressureLimit:             90,
-		PressureFetcher:           &sequencePressureFetcher{values: []float64{95, 95, 20, 20, 20}},
+		PressureLimit: 90,
+		PressureFetcher: &scriptedSourcePressureFetcher{results: []scriptedSourcePressureResult{
+			{
+				pressure: 95,
+				sources: []PressureSourceResult{
+					{Name: "src1", Pressure: 95},
+					{Name: "src2", Pressure: 44},
+				},
+			},
+			{
+				pressure: 20,
+				sources: []PressureSourceResult{
+					{Name: "src1", Pressure: 20},
+					{Name: "src2", Pressure: 18},
+				},
+			},
+			{
+				pressure: 20,
+				sources: []PressureSourceResult{
+					{Name: "src1", Pressure: 20},
+					{Name: "src2", Pressure: 18},
+				},
+			},
+		}},
 		dashboardTerminalDetector: func(io.Writer) bool { return true },
 		dashboardRefreshInterval:  10 * time.Millisecond,
 		dashboardRenderer:         recorder,
@@ -356,6 +389,7 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		sawControllerState bool
 		sawPressure        bool
 		sawAPIHealth       bool
+		sawAPISources      bool
 	)
 	for _, snap := range snaps {
 		if snap.CurrentCIDR != "" {
@@ -381,6 +415,9 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		if snap.APIHealthText == "ok" {
 			sawAPIHealth = true
 		}
+		if len(snap.APISources) == 2 && snap.APISources[0].Name == "src1" && snap.APISources[1].Name == "src2" {
+			sawAPISources = true
+		}
 	}
 
 	if !sawCIDR {
@@ -403,6 +440,9 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	}
 	if !sawAPIHealth {
 		t.Fatalf("expected API health text update in snapshots, got %#v", snaps)
+	}
+	if !sawAPISources {
+		t.Fatalf("expected per-source API health in snapshots, got %#v", snaps)
 	}
 }
 
