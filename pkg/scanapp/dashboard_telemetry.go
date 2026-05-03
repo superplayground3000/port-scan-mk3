@@ -18,6 +18,11 @@ type pressureTelemetryObserver interface {
 	OnPressureFailure(streak int, t time.Time)
 }
 
+type pressureSourceTelemetryObserver interface {
+	OnPressureSourceSample(source string, pressure int, t time.Time)
+	OnPressureSourceFailure(source string, t time.Time)
+}
+
 type controllerTelemetryObserver interface {
 	OnController(manualPaused, apiPaused bool)
 }
@@ -79,6 +84,26 @@ func (o pressureTelemetryObservers) OnPressureSample(pressure int, t time.Time) 
 func (o pressureTelemetryObservers) OnPressureFailure(streak int, t time.Time) {
 	for _, observer := range o {
 		observer.OnPressureFailure(streak, t)
+	}
+}
+
+func (o pressureTelemetryObservers) OnPressureSourceSample(source string, pressure int, t time.Time) {
+	for _, observer := range o {
+		sourceObserver, ok := observer.(pressureSourceTelemetryObserver)
+		if !ok {
+			continue
+		}
+		sourceObserver.OnPressureSourceSample(source, pressure, t)
+	}
+}
+
+func (o pressureTelemetryObservers) OnPressureSourceFailure(source string, t time.Time) {
+	for _, observer := range o {
+		sourceObserver, ok := observer.(pressureSourceTelemetryObserver)
+		if !ok {
+			continue
+		}
+		sourceObserver.OnPressureSourceFailure(source, t)
 	}
 }
 

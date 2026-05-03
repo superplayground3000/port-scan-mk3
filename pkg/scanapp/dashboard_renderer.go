@@ -3,6 +3,7 @@ package scanapp
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -20,7 +21,8 @@ func (r dashboardRenderer) Render(w io.Writer, snap dashboardSnapshot) error {
 			"Controller: %s\n"+
 			"API Pressure: %d%%\n"+
 			"Last Update: %s\n"+
-			"Health: %s\n",
+			"Health: %s\n"+
+			"API Sources: %s\n",
 		dashboardRefreshSequence,
 		snap.ScannedTasks,
 		snap.TotalTasks,
@@ -33,6 +35,7 @@ func (r dashboardRenderer) Render(w io.Writer, snap dashboardSnapshot) error {
 		snap.PressurePercent,
 		dashboardLastUpdateText(snap),
 		dashboardValueOrFallback(snap.APIHealthText),
+		dashboardAPISourcesText(snap.APISources),
 	)
 	return err
 }
@@ -53,4 +56,19 @@ func dashboardLastUpdateText(snap dashboardSnapshot) string {
 		return "-"
 	}
 	return latest.UTC().Format(time.RFC3339)
+}
+
+func dashboardAPISourcesText(sources []dashboardAPISourceSnapshot) string {
+	if len(sources) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(sources))
+	for _, source := range sources {
+		pressure := "-"
+		if source.HasPressure {
+			pressure = fmt.Sprintf("%d%%", source.PressurePercent)
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s %s", dashboardValueOrFallback(source.Name), pressure, dashboardValueOrFallback(source.HealthText)))
+	}
+	return strings.Join(parts, " | ")
 }

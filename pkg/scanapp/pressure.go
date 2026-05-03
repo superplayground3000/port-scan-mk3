@@ -29,6 +29,17 @@ type PressureFetcher interface {
 	Fetch(ctx context.Context) (float64, error)
 }
 
+type pressureSourceStatusFetcher interface {
+	FetchWithSourceStatuses(ctx context.Context) (float64, []PressureSourceResult, error)
+}
+
+// PressureSourceResult describes one pressure source result from a multi-source poll.
+type PressureSourceResult struct {
+	Name     string
+	Pressure float64
+	Err      error
+}
+
 // SimplePressureFetcher is a PressureFetcher that makes unauthenticated HTTP GET
 // requests to a pressure API endpoint. It expects a JSON response with a
 // "pressure" field (number or numeric string).
@@ -61,7 +72,7 @@ func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	if err != nil {
 		return 0.0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return 0.0, fmt.Errorf("pressure api status=%d", resp.StatusCode)
 	}
@@ -138,7 +149,7 @@ func (f *AuthenticatedPressureFetcher) Fetch(ctx context.Context) (float64, erro
 	if err != nil {
 		return 0.0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return 0.0, fmt.Errorf("data api status=%d", resp.StatusCode)
 	}
@@ -236,38 +247,54 @@ func NewMultiSourcePressureFetcher(authURL string, dataURLs []string, clientID, 
 
 // Fetch retrieves pressure from all configured sources concurrently and
 // waits for all to complete. If any source returns an error, Fetch returns
-// that error (wrapping it with the source index). Otherwise it returns the
+// that error (wrapping it with the source label). Otherwise it returns the
 // maximum pressure value across all sources.
 func (f *MultiSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
+	pressure, _, err := f.FetchWithSourceStatuses(ctx)
+	return pressure, err
+}
+
+// FetchWithSourceStatuses retrieves pressure and returns per-source telemetry
+// for dashboard consumers while preserving Fetch's aggregate success/failure contract.
+func (f *MultiSourcePressureFetcher) FetchWithSourceStatuses(ctx context.Context) (float64, []PressureSourceResult, error) {
 	if len(f.sources) == 0 {
-		return 0, fmt.Errorf("no pressure sources configured")
+		return 0, nil, fmt.Errorf("no pressure sources configured")
 	}
-	type result struct {
-		value float64
-		err   error
-	}
-	results := make([]result, len(f.sources))
+	results := make([]PressureSourceResult, len(f.sources))
 	var wg sync.WaitGroup
 	for i, src := range f.sources {
 		wg.Add(1)
 		go func(i int, src PressureFetcher) {
 			defer wg.Done()
 			v, err := src.Fetch(ctx)
-			results[i] = result{value: v, err: err}
+			results[i] = PressureSourceResult{
+				Name:     fmt.Sprintf("src%d", i+1),
+				Pressure: v,
+				Err:      err,
+			}
 		}(i, src)
 	}
 	wg.Wait()
 
 	var maxPressure float64
-	for i, r := range results {
-		if r.err != nil {
-			return 0, fmt.Errorf("source %d: %w", i, r.err)
+	var firstErr error
+	var foundPressure bool
+	for _, r := range results {
+		if r.Err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", r.Name, r.Err)
+			}
+			continue
 		}
-		if i == 0 || r.value > maxPressure {
-			maxPressure = r.value
+		if !foundPressure || r.Pressure > maxPressure {
+			maxPressure = r.Pressure
 		}
+		foundPressure = true
 	}
-	return maxPressure, nil
+	if firstErr != nil {
+		return 0, results, firstErr
+	}
+	return maxPressure, results, nil
 }
 
 func (f *AuthenticatedPressureFetcher) getToken(ctx context.Context) (string, error) {
@@ -294,7 +321,7 @@ func (f *AuthenticatedPressureFetcher) getToken(ctx context.Context) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("auth status=%d", resp.StatusCode)
 	}

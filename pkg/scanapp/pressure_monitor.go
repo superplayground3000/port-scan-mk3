@@ -69,11 +69,12 @@ func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ct
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			pressure, err := fetcher.Fetch(ctx)
+			sampledAt := time.Now()
+			pressure, err := fetchPressureWithSourceTelemetry(ctx, fetcher, pressureObserver, sampledAt)
 			if err != nil {
 				consecutiveFailures++
 				if pressureObserver != nil {
-					pressureObserver.OnPressureFailure(consecutiveFailures, time.Now())
+					pressureObserver.OnPressureFailure(consecutiveFailures, sampledAt)
 				}
 				if consecutiveFailures <= 2 {
 					logger.errorf("pressure api request failed (%d/3): %v", consecutiveFailures, err)
@@ -88,7 +89,6 @@ func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ct
 			consecutiveFailures = 0
 			logger.infof("[API] pressure api status=ok pressure=%.1f%% threshold=%.1f", pressure, thresholdValue)
 
-			sampledAt := time.Now()
 			if pressureObserver != nil {
 				pressureObserver.OnPressureSample(int(pressure), sampledAt)
 			}
@@ -106,12 +106,37 @@ func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ct
 	}
 }
 
+func fetchPressureWithSourceTelemetry(ctx context.Context, fetcher PressureFetcher, observer pressureTelemetryObserver, sampledAt time.Time) (float64, error) {
+	sourceFetcher, ok := fetcher.(pressureSourceStatusFetcher)
+	if !ok {
+		return fetcher.Fetch(ctx)
+	}
+
+	pressure, sources, err := sourceFetcher.FetchWithSourceStatuses(ctx)
+	reportPressureSourceResults(observer, sources, sampledAt)
+	return pressure, err
+}
+
+func reportPressureSourceResults(observer pressureTelemetryObserver, sources []PressureSourceResult, sampledAt time.Time) {
+	sourceObserver, ok := observer.(pressureSourceTelemetryObserver)
+	if !ok {
+		return
+	}
+	for _, source := range sources {
+		if source.Err != nil {
+			sourceObserver.OnPressureSourceFailure(source.Name, sampledAt)
+			continue
+		}
+		sourceObserver.OnPressureSourceSample(source.Name, int(source.Pressure), sampledAt)
+	}
+}
+
 func fetchPressure(client *http.Client, url string) (float64, error) {
 	resp, err := client.Get(url)
 	if err != nil {
 		return 0.0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return 0.0, fmt.Errorf("pressure api status=%d", resp.StatusCode)
 	}

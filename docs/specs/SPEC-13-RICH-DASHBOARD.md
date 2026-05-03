@@ -78,12 +78,17 @@ Status values:
 
 ```
 API: pressure=85% | last_update=2s ago | health=ok
+API Sources: src1=85% ok | src2=42% ok | src3=- fail streak 1
 ```
 
 Fields:
 - `PressurePercent`: Current pressure percentage
 - `LastUpdatedAt`: Time since last update
 - `HealthText`: `ok` or `fail streak N`
+- `APISources`: Ordered compact source health states for multi-source pressure APIs.
+  Each source uses the configured data URL order (`src1`, `src2`, ...), preserves
+  the last successful pressure value, and shows per-source failure streaks when a
+  source fails.
 
 ## 4. Architecture Components
 
@@ -112,6 +117,7 @@ type DashboardState struct {
     PressurePercent int
     LastUpdatedAt  time.Time
     APIFailStreak  int
+    APISources      []DashboardAPISource
 }
 ```
 
