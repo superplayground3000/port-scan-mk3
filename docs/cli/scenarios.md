@@ -241,5 +241,69 @@ Expected:
 Troubleshooting:
 - If e2e fails early, verify Docker daemon and `docker compose` availability.
 
+## Scenario 11: From-scratch pre-processing flow
+
+Goal: Filter a firewall-policy rich CSV with `preprocess`, then hand the output directly to `port-scan`.
+
+Commands:
+```bash
+# Step 1 — filter targets by closed CIDRs
+go run ./cmd/preprocess \
+  --input filtered-targets/dc-east/20260503T120000Z/opened_targets.csv \
+  --cleaned-cidrs cleaned_cidrs.csv \
+  --fab-name dc-east \
+  --output-dir ./scan-input
+
+# Step 2 — scan the filtered input
+# Replace <timestamp> with the value printed by step 1 ("Output written to: ...")
+go run ./cmd/port-scan scan \
+  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
+  -disable-api=true
+```
+
+Expected:
+- Step 1 prints a summary (`total / kept / dropped`) and the output path to stderr.
+- Step 2 runs a full rich-mode scan; `opened_results-*.csv` contains only open ports.
+
+Troubleshooting:
+- If `preprocess` reports 0 kept rows, verify that the `--fab-name` value matches the `fab` column in `cleaned_cidrs.csv` (case-sensitive).
+- If `port-scan` rejects the input, confirm the output file path from step 1 was copied exactly.
+
+## Scenario 12: Re-scan pre-processing flow
+
+Goal: Promote a minimal `host,port` opened-targets CSV to rich format with `enrich-targets`, filter it with `preprocess`, then re-scan.
+
+Commands:
+```bash
+# Step 1 — enrich minimal CSV to rich format
+go run ./cmd/enrich-targets \
+  --input previous-scanned/dc-east/20260503T120000Z/opened_targets.csv \
+  --cidr-list cidrs.csv \
+  --service-map services.csv \
+  --output enriched.csv
+
+# Step 2 — filter enriched targets by closed CIDRs
+go run ./cmd/preprocess \
+  --input enriched.csv \
+  --cleaned-cidrs cleaned_cidrs.csv \
+  --fab-name dc-east \
+  --output-dir ./scan-input
+
+# Step 3 — re-scan
+# Replace <timestamp> with the value printed by step 2
+go run ./cmd/port-scan scan \
+  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
+  -disable-api=true
+```
+
+Expected:
+- Step 1 reports `Enriched N rows from M input rows` on stderr; rows with unparseable ports are skipped with a per-row warning.
+- Step 2 prints total/kept/dropped summary and the output path.
+- Step 3 runs a full rich-mode scan using the previously discovered hosts as targets.
+
+Troubleshooting:
+- If `enrich-targets` fails with a missing-columns error, confirm the input CSV has `host` and `port` headers (case-insensitive).
+- If `dst_network_segment` mapping produces `<host>/32` for most rows, the CIDR reference list (`--cidr-list`) may not cover those hosts; verify coverage with `cidr-compare`.
+
 ---
-**Revised**: 2026-04-13 | **Author**: docs-team
+**Revised**: 2026-05-03 | **Author**: docs-team

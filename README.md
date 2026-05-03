@@ -26,6 +26,58 @@ go run ./cmd/port-scan scan \
   -port-file e2e/inputs/ports.csv
 ```
 
+## Pre-processing Workflows
+
+Two tools prepare input files for `port-scan`. Both output a port-scan-ready rich CSV at
+`<output-dir>/<fab_name>/<timestamp>/input.csv`.
+
+### From-Scratch Flow
+
+Use when scanning a data center for the first time or starting fresh.
+`preprocess` filters a firewall-policy rich CSV, removing any target whose
+`dst_network_segment` falls inside a closed CIDR.
+
+```bash
+# Step 1 — filter targets
+go run ./cmd/preprocess \
+  --input filtered-targets/dc-east/20260503T120000Z/opened_targets.csv \
+  --cleaned-cidrs cleaned_cidrs.csv \
+  --fab-name dc-east \
+  --output-dir ./scan-input
+
+# Step 2 — scan (replace <timestamp> with the path printed by step 1)
+go run ./cmd/port-scan scan \
+  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
+  -disable-api=true
+```
+
+### Re-scan Flow
+
+Use when re-scanning previously discovered open targets from a `host,port` CSV.
+`enrich-targets` promotes it to rich format; `preprocess` then applies the same
+CIDR filter.
+
+```bash
+# Step 1 — enrich minimal CSV to rich format
+go run ./cmd/enrich-targets \
+  --input previous-scanned/dc-east/20260503T120000Z/opened_targets.csv \
+  --cidr-list cidrs.csv \
+  --service-map services.csv \
+  --output enriched.csv
+
+# Step 2 — filter enriched targets
+go run ./cmd/preprocess \
+  --input enriched.csv \
+  --cleaned-cidrs cleaned_cidrs.csv \
+  --fab-name dc-east \
+  --output-dir ./scan-input
+
+# Step 3 — scan (replace <timestamp> with the path printed by step 2)
+go run ./cmd/port-scan scan \
+  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
+  -disable-api=true
+```
+
 ## Input Contracts
 
 - CIDR CSV (default mode):
@@ -81,6 +133,24 @@ CLI Input                 CSV Files                    Processing               
                  |        v                              v
                  +-------> Batch writer ──> scan_results-*.csv
                           (timestamped, collision-safe)   opened_results-*.csv
+```
+
+### Pre-processing Pipeline
+
+```
+Mode 1 — From Scratch:
+
+  Filtered targets CSV (rich) ──────────────────────────────> preprocess ──> output/<fab>/<ts>/input.csv
+                                                                   │
+                                                          cleaned_cidrs.csv
+                                                       (drops closed-CIDR targets)
+
+Mode 2 — Re-scan:
+
+  Opened targets CSV (host,port) ──> enrich-targets ──> enriched rich CSV ──> preprocess ──> output/<fab>/<ts>/input.csv
+                                           │                                       │
+                                  cidrs.csv + services.csv               cleaned_cidrs.csv
+                                  (fills 10 rich columns)             (drops closed-CIDR targets)
 ```
 
 ### cidr-compare Pipeline
@@ -167,6 +237,46 @@ TCP port scanner with pressure-aware pacing and resume support.
 | `-cidr-ip-col` | string | `ip` | Case-sensitive CIDR CSV column name for IP selector source |
 | `-cidr-ip-cidr-col` | string | `ip_cidr` | Case-sensitive CIDR CSV column name for boundary CIDR source |
 
+### enrich-targets
+
+Enriches a minimal `host,port` CSV into rich CSV format required by `port-scan` rich mode and `preprocess`.
+
+**Usage:**
+```bash
+enrich-targets --input <file> --cidr-list <file> --service-map <file> --output <file>
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--input` | string | required | Path to opened targets CSV (`host,port`) |
+| `--cidr-list` | string | required | Path to CIDR reference CSV for host-to-CIDR mapping |
+| `--service-map` | string | required | Path to port-to-service-label CSV |
+| `--output` | string | required | Path to write enriched rich CSV |
+
+**Output format:** Rich CSV with all ten required columns: `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`, `service_label`, `protocol`, `port`, `decision`, `matched_policy_id`, `reason`
+
+### preprocess
+
+Filters a rich CSV by removing targets whose `dst_network_segment` is contained within a closed CIDR, then writes a port-scan-ready input file.
+
+**Usage:**
+```bash
+preprocess --input <file> --cleaned-cidrs <file> --fab-name <name> --output-dir <dir>
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--input` | string | required | Path to rich CSV (from `enrich-targets` or filtered targets) |
+| `--cleaned-cidrs` | string | required | Path to cleaned CIDRs CSV (`fab`, `segment`, `status`) |
+| `--fab-name` | string | required | Data center / fabric name (filters CIDRs for this fabric) |
+| `--output-dir` | string | required | Base output directory; writes to `<output-dir>/<fab-name>/<timestamp>/input.csv` |
+
+**Output:** Timestamped CSV at `<output-dir>/<fab-name>/<timestamp>/input.csv` plus a summary (total / kept / dropped) on stderr.
+
 ### cidr-compare
 
 Compare open CIDRs against deny CIDRs using an interval tree for efficient lookup.
@@ -195,7 +305,7 @@ cidr-compare -deny-file <file> -open-file <file>
 
 ### csv-transform
 
-Transform port scan CSV output to rich CSV format with host resolution and port expansion.
+Transforms a spreadsheet-style CSV (e.g. an Excel export with `Host`, `Port`, `Pass the test` columns) into rich CSV format via host resolution and port expansion. This is a separate preparation path for spreadsheet-sourced inputs and is not part of the `enrich-targets`/`preprocess` workflow.
 
 **Usage:**
 ```bash
@@ -242,6 +352,10 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 ## Repository Map
 
 - `cmd/port-scan`: CLI composition root, command routing, user I/O, exit codes
+- `cmd/enrich-targets`: promotes `host,port` CSV to rich CSV format for re-scan workflows
+- `cmd/preprocess`: filters rich CSV by closed-CIDR containment, writes port-scan input
+- `cmd/cidr-compare`: CIDR interval-tree comparison utility
+- `cmd/csv-transform`: spreadsheet-to-rich-CSV transformer (Excel-export path)
 - `pkg/config`: flag parsing and configuration validation
 - `pkg/input`: CIDR/rich input loading and row-level validation
 - `pkg/task`: selector expansion and execution-key helpers
@@ -281,6 +395,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 
 - [All flags](docs/cli/flags.md)
 - [Scenario cookbook](docs/cli/scenarios.md)
+- [Pre-processing workflow spec](docs/specs/2026-04-16-preprocess-workflow-spec.md)
 - [E2E overview](docs/e2e/overview.md)
 - [Speed-control E2E](docs/e2e/speedcontrol.md)
 - [Architecture diagram](docs/architecture/diagram.html)
