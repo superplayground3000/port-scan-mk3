@@ -53,9 +53,9 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	opts := scanapp.RunOptions{}
 	if !cfg.DisableAPI {
 		if cfg.PressureUseAuth {
-			opts.PressureFetcher = scanapp.NewAuthenticatedPressureFetcher(
+			opts.PressureFetcher = scanapp.NewMultiSourcePressureFetcher(
 				cfg.PressureAuthURL,
-				cfg.PressureDataURL,
+				cfg.PressureDataURLs,
 				cfg.PressureClientID,
 				cfg.PressureClientSecret,
 				nil,

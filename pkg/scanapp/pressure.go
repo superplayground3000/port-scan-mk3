@@ -211,6 +211,65 @@ func normalizePressure(v float64) float64 {
 	return math.Round(v*10) / 10
 }
 
+// MultiSourcePressureFetcher fetches pressure from multiple authenticated
+// endpoints that share the same OAuth credentials. It fans out concurrently
+// and returns the maximum pressure across all sources. Any source error
+// causes the entire Fetch to fail.
+type MultiSourcePressureFetcher struct {
+	sources []PressureFetcher
+}
+
+// NewMultiSourcePressureFetcher creates a MultiSourcePressureFetcher that
+// polls each URL in dataURLs using shared OAuth credentials. A separate
+// AuthenticatedPressureFetcher (with its own token cache) is created per URL.
+// If client is nil, a default HTTP client with a 2-second timeout is used.
+func NewMultiSourcePressureFetcher(authURL string, dataURLs []string, clientID, clientSecret string, client *http.Client) *MultiSourcePressureFetcher {
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Second}
+	}
+	sources := make([]PressureFetcher, len(dataURLs))
+	for i, u := range dataURLs {
+		sources[i] = NewAuthenticatedPressureFetcher(authURL, u, clientID, clientSecret, client)
+	}
+	return &MultiSourcePressureFetcher{sources: sources}
+}
+
+// Fetch retrieves pressure from all configured sources concurrently and
+// waits for all to complete. If any source returns an error, Fetch returns
+// that error (wrapping it with the source index). Otherwise it returns the
+// maximum pressure value across all sources.
+func (f *MultiSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
+	if len(f.sources) == 0 {
+		return 0, fmt.Errorf("no pressure sources configured")
+	}
+	type result struct {
+		value float64
+		err   error
+	}
+	results := make([]result, len(f.sources))
+	var wg sync.WaitGroup
+	for i, src := range f.sources {
+		wg.Add(1)
+		go func(i int, src PressureFetcher) {
+			defer wg.Done()
+			v, err := src.Fetch(ctx)
+			results[i] = result{value: v, err: err}
+		}(i, src)
+	}
+	wg.Wait()
+
+	var maxPressure float64
+	for i, r := range results {
+		if r.err != nil {
+			return 0, fmt.Errorf("source %d: %w", i, r.err)
+		}
+		if i == 0 || r.value > maxPressure {
+			maxPressure = r.value
+		}
+	}
+	return maxPressure, nil
+}
+
 func (f *AuthenticatedPressureFetcher) getToken(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
