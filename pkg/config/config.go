@@ -46,8 +46,8 @@ type Config struct {
 	DisableAPI bool
 	// PressureAuthURL is the OAuth token endpoint URL.
 	PressureAuthURL string
-	// PressureDataURL is the authenticated pressure data endpoint URL.
-	PressureDataURL string
+	// PressureDataURLs are the authenticated pressure data endpoint URLs (comma-separated on input).
+	PressureDataURLs []string
 	// PressureClientID is the OAuth client ID for authenticated pressure fetching.
 	PressureClientID string
 	// PressureClientSecret is the OAuth client secret.
@@ -102,7 +102,10 @@ type Config struct {
 func Parse(args []string) (Config, error) {
 	fs := flag.NewFlagSet("port-scan", flag.ContinueOnError)
 	cfg := Config{}
-	pressureIntervalRaw := "5s"
+	var (
+		pressureIntervalRaw string
+		pressureDataURLRaw  string
+	)
 
 	fs.StringVar(&cfg.CIDRFile, "cidr-file", "", "CIDR CSV path")
 	fs.StringVar(&cfg.PortFile, "port-file", "", "Port CSV path")
@@ -116,7 +119,7 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&pressureIntervalRaw, "pressure-interval", "5s", "pressure poll interval (duration or seconds)")
 	fs.BoolVar(&cfg.DisableAPI, "disable-api", false, "disable pressure api")
 	fs.StringVar(&cfg.PressureAuthURL, "pressure-auth-url", "", "pressure auth endpoint URL")
-	fs.StringVar(&cfg.PressureDataURL, "pressure-data-url", "", "pressure data endpoint URL")
+	fs.StringVar(&pressureDataURLRaw, "pressure-data-url", "", "pressure data endpoint URLs (comma-separated)")
 	fs.StringVar(&cfg.PressureClientID, "pressure-client-id", "", "pressure API client ID")
 	fs.StringVar(&cfg.PressureClientSecret, "pressure-client-secret", "", "pressure API client secret")
 	fs.BoolVar(&cfg.PressureUseAuth, "pressure-use-auth", false, "use authenticated pressure fetcher")
@@ -129,6 +132,16 @@ func Parse(args []string) (Config, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	if pressureDataURLRaw != "" {
+		for _, u := range strings.Split(pressureDataURLRaw, ",") {
+			if trimmed := strings.TrimSpace(u); trimmed != "" {
+				cfg.PressureDataURLs = append(cfg.PressureDataURLs, trimmed)
+			}
+		}
+		if len(cfg.PressureDataURLs) == 0 {
+			return Config{}, errors.New("-pressure-data-url contains only empty values after trimming")
+		}
 	}
 	if cfg.CIDRFile == "" {
 		return Config{}, errors.New("-cidr-file is required")
@@ -155,7 +168,7 @@ func Parse(args []string) (Config, error) {
 		if cfg.PressureAuthURL == "" {
 			return Config{}, errors.New("-pressure-auth-url is required when -pressure-use-auth is set")
 		}
-		if cfg.PressureDataURL == "" {
+		if len(cfg.PressureDataURLs) == 0 {
 			return Config{}, errors.New("-pressure-data-url is required when -pressure-use-auth is set")
 		}
 		if cfg.PressureClientID == "" {

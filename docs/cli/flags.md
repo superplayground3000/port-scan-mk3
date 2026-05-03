@@ -26,7 +26,7 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 | `-pressure-interval` | duration or integer seconds | `5s` | `validate`, `scan` | Poll interval for pressure API. Accepts duration (for example `200ms`, `5s`) or integer seconds (for example `7`). |
 | `-pressure-use-auth` | bool | `false` | `validate`, `scan` | Use authenticated pressure fetcher with OAuth flow. |
 | `-pressure-auth-url` | string | empty | `validate`, `scan` | OAuth auth endpoint URL. Required when `-pressure-use-auth` is set. |
-| `-pressure-data-url` | string | empty | `validate`, `scan` | Pressure data endpoint URL. Required when `-pressure-use-auth` is set. |
+| `-pressure-data-url` | string | empty | `validate`, `scan` | Comma-separated list of pressure data endpoint URLs. Required when `-pressure-use-auth` is set. All sources must succeed; the maximum pressure value is used. |
 | `-pressure-client-id` | string | empty | `validate`, `scan` | OAuth client ID. Required when `-pressure-use-auth` is set. |
 | `-pressure-client-secret` | string | empty | `validate`, `scan` | OAuth client secret. Required when `-pressure-use-auth` is set. |
 | `-disable-api` | bool | `false` | `validate`, `scan` | Disable pressure API polling completely. |
@@ -45,7 +45,7 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 - `-pressure-interval` must be positive; invalid format or non-positive values are rejected.
 - When `-pressure-use-auth` is set, all four auth flags are required:
   - `-pressure-auth-url`
-  - `-pressure-data-url`
+  - `-pressure-data-url` (one or more comma-separated URLs; whitespace around commas is trimmed)
   - `-pressure-client-id`
   - `-pressure-client-secret`
 - `-cidr-ip-col` and `-cidr-ip-cidr-col` must be non-empty after trimming.
@@ -81,15 +81,26 @@ Suppress console output while keeping pressure API logs visible:
 port-scan scan -cidr-file targets.csv -quiet
 ```
 
-### Authenticated Pressure API
-
-Use OAuth-authenticated pressure API:
+### Authenticated Pressure API (single source)
 
 ```bash
 port-scan scan -cidr-file targets.csv \
   -pressure-use-auth \
   -pressure-auth-url "https://auth.example.com/oauth/token" \
   -pressure-data-url "https://api.example.com/pressure" \
+  -pressure-client-id "your-client-id" \
+  -pressure-client-secret "your-client-secret"
+```
+
+### Authenticated Pressure API (multiple sources)
+
+All sources share the same OAuth credentials. The scanner fans out concurrently to each URL and uses the maximum pressure value. Any source error fails the poll cycle.
+
+```bash
+port-scan scan -cidr-file targets.csv \
+  -pressure-use-auth \
+  -pressure-auth-url "https://auth.example.com/oauth/token" \
+  -pressure-data-url "https://api1.example.com/pressure,https://api2.example.com/pressure,https://api3.example.com/pressure" \
   -pressure-client-id "your-client-id" \
   -pressure-client-secret "your-client-secret"
 ```

@@ -209,6 +209,43 @@ func TestParseConfig_WhenPressureUseAuthSetWithAllRequiredFields_Succeeds(t *tes
 	if cfg.PressureAuthURL != "http://auth" {
 		t.Fatalf("unexpected auth url: %s", cfg.PressureAuthURL)
 	}
+	if len(cfg.PressureDataURLs) != 1 || cfg.PressureDataURLs[0] != "http://data" {
+		t.Fatalf("unexpected data urls: %v", cfg.PressureDataURLs)
+	}
+}
+
+func TestParseConfig_WhenPressureDataURLHasMultipleURLs_ParsesAll(t *testing.T) {
+	cfg, err := Parse([]string{
+		"-cidr-file", "cidr.csv",
+		"-pressure-use-auth",
+		"-pressure-auth-url", "http://auth",
+		"-pressure-data-url", "http://data1,http://data2, http://data3",
+		"-pressure-client-id", "id",
+		"-pressure-client-secret", "secret",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.PressureDataURLs) != 3 {
+		t.Fatalf("expected 3 data urls, got %d: %v", len(cfg.PressureDataURLs), cfg.PressureDataURLs)
+	}
+	if cfg.PressureDataURLs[0] != "http://data1" || cfg.PressureDataURLs[1] != "http://data2" || cfg.PressureDataURLs[2] != "http://data3" {
+		t.Fatalf("unexpected data urls: %v", cfg.PressureDataURLs)
+	}
+}
+
+func TestParseConfig_WhenPressureDataURLIsWhitespaceOnly_ReturnsError(t *testing.T) {
+	_, err := Parse([]string{
+		"-cidr-file", "cidr.csv",
+		"-pressure-use-auth",
+		"-pressure-auth-url", "http://auth",
+		"-pressure-data-url", "  ,  ",
+		"-pressure-client-id", "id",
+		"-pressure-client-secret", "secret",
+	})
+	if err == nil {
+		t.Fatal("expected error when pressure-data-url contains only whitespace")
+	}
 }
 
 func TestParseConfig_WhenCIDRIPCidrColumnIsEmpty_ReturnsError(t *testing.T) {

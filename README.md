@@ -156,7 +156,7 @@ TCP port scanner with pressure-aware pacing and resume support.
 | `-pressure-interval` | duration | `5s` | Poll interval for pressure API (duration or integer seconds) |
 | `-pressure-use-auth` | bool | `false` | Use authenticated pressure fetcher with OAuth flow |
 | `-pressure-auth-url` | string | (empty) | OAuth auth endpoint URL (required with `-pressure-use-auth`) |
-| `-pressure-data-url` | string | (empty) | Pressure data endpoint URL (required with `-pressure-use-auth`) |
+| `-pressure-data-url` | string | (empty) | Comma-separated list of pressure data endpoint URLs (required with `-pressure-use-auth`; single URL is backward-compatible) |
 | `-pressure-client-id` | string | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
 | `-pressure-client-secret` | string | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
 | `-disable-api` | bool | `false` | Disable pressure API polling completely |

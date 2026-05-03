@@ -239,3 +239,123 @@ func TestAuthenticatedPressureFetcher_ZeroPercentIsValid(t *testing.T) {
 		t.Fatalf("expected zero pressure, got %.1f", pressure)
 	}
 }
+
+func TestMultiSourcePressureFetcher_AllSourcesSucceed_ReturnsMax(t *testing.T) {
+	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"tok-multi","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer authSrv.Close()
+
+	dataSrv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"data":{"Percent":30.0}}]`))
+	}))
+	defer dataSrv1.Close()
+
+	dataSrv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"data":{"Percent":70.0}}]`))
+	}))
+	defer dataSrv2.Close()
+
+	fetcher := NewMultiSourcePressureFetcher(authSrv.URL, []string{dataSrv1.URL, dataSrv2.URL}, "test-client", "test-secret", authSrv.Client())
+	ctx := context.Background()
+
+	pressure, err := fetcher.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pressure != 70.0 {
+		t.Errorf("expected 70.0, got %.1f", pressure)
+	}
+}
+
+func TestMultiSourcePressureFetcher_OneSourceErrors_ReturnsFetchError(t *testing.T) {
+	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"tok-err","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer authSrv.Close()
+
+	dataSrv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"data":{"Percent":50.0}}]`))
+	}))
+	defer dataSrv1.Close()
+
+	dataSrv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer dataSrv2.Close()
+
+	fetcher := NewMultiSourcePressureFetcher(authSrv.URL, []string{dataSrv1.URL, dataSrv2.URL}, "test-client", "test-secret", authSrv.Client())
+	ctx := context.Background()
+
+	_, err := fetcher.Fetch(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestMultiSourcePressureFetcher_OneSourceReturnsEmptyBody_ReturnsFetchError(t *testing.T) {
+	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"tok-empty","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer authSrv.Close()
+
+	dataSrv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"data":{"Percent":40.0}}]`))
+	}))
+	defer dataSrv1.Close()
+
+	dataSrv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer dataSrv2.Close()
+
+	fetcher := NewMultiSourcePressureFetcher(authSrv.URL, []string{dataSrv1.URL, dataSrv2.URL}, "test-client", "test-secret", authSrv.Client())
+	ctx := context.Background()
+
+	_, err := fetcher.Fetch(ctx)
+	if err == nil {
+		t.Fatal("expected error for empty body, got nil")
+	}
+}
+
+func TestMultiSourcePressureFetcher_EmptySources_ReturnsError(t *testing.T) {
+	fetcher := NewMultiSourcePressureFetcher("http://auth", []string{}, "id", "secret", nil)
+	ctx := context.Background()
+	_, err := fetcher.Fetch(ctx)
+	if err == nil {
+		t.Fatal("expected error for empty sources, got nil")
+	}
+}
+
+func TestMultiSourcePressureFetcher_SingleSource_ReturnsPressure(t *testing.T) {
+	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"tok-single","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer authSrv.Close()
+
+	dataSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"data":{"Percent":55.5}}]`))
+	}))
+	defer dataSrv.Close()
+
+	fetcher := NewMultiSourcePressureFetcher(authSrv.URL, []string{dataSrv.URL}, "test-client", "test-secret", authSrv.Client())
+	ctx := context.Background()
+
+	pressure, err := fetcher.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pressure != 55.5 {
+		t.Errorf("expected 55.5, got %.1f", pressure)
+	}
+}

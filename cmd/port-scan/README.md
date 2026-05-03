@@ -100,7 +100,7 @@ All flags apply to both `validate` and `scan` commands unless noted.
 | `-pressure-interval` | `5s` | How often to poll the pressure API (duration or integer seconds) |
 | `-disable-api` | `false` | Disable pressure API polling; use only local rate control |
 | `-pressure-auth-url` | (empty) | OAuth token endpoint URL (required with `-pressure-use-auth`) |
-| `-pressure-data-url` | (empty) | Authenticated pressure data endpoint URL (required with `-pressure-use-auth`) |
+| `-pressure-data-url` | (empty) | Comma-separated list of pressure data endpoint URLs (required with `-pressure-use-auth`; all sources must succeed; maximum value is used) |
 | `-pressure-client-id` | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
 | `-pressure-client-secret` | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
 | `-pressure-use-auth` | `false` | Use OAuth-authenticated pressure fetcher |
@@ -273,6 +273,19 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv \
   -pressure-use-auth \
   -pressure-auth-url https://auth.example.com/oauth/token \
   -pressure-data-url https://api.example.com/pressure \
+  -pressure-client-id my-client \
+  -pressure-client-secret my-secret
+```
+
+### Scan with multiple authenticated pressure API sources
+
+All sources share the same OAuth credentials. The scanner polls each URL concurrently and pauses when any source reports pressure at or above the threshold.
+
+```bash
+port-scan scan -cidr-file targets.csv -port-file ports.csv \
+  -pressure-use-auth \
+  -pressure-auth-url https://auth.example.com/oauth/token \
+  -pressure-data-url "https://api1.example.com/pressure,https://api2.example.com/pressure" \
   -pressure-client-id my-client \
   -pressure-client-secret my-secret
 ```
