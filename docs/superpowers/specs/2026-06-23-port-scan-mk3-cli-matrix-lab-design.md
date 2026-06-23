@@ -93,7 +93,7 @@ Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binar
 | B1 | basic mode, `-disable-api -disable-pre-scan-ping` | `target-open` ports → `status=open` in `opened_results-*.csv` |
 | B2 | same | `target-closed` → `status=close` |
 | B3 | `-timeout 300ms -disable-api -disable-pre-scan-ping` | `target-filtered` → `status=close(timeout)` |
-| B4 | rich-mode fixture (auto-detect), `-disable-api -disable-pre-scan-ping` | only `decision=accept` tcp rows scanned; 14-col schema correct |
+| B4 | rich-mode fixture (auto-detect), `-disable-api -disable-pre-scan-ping` | all `tcp` rows scanned regardless of `decision` (decision carried through as output metadata); non-`tcp` (udp) rows excluded; 14-col schema correct |
 | B5 | `-cidr-ip-col source_ip -cidr-ip-cidr-col source_range` + custom-header fixture | custom columns parsed; open found |
 | B6 | `-bucket-rate 500 -bucket-capacity 500 -delay 5ms -workers 20` | completes; open found (rate flags accepted) |
 | B7 | `-output /out/custom/run.csv` | files written as `run-<ts>.csv` + `opened_results-<ts>.csv` under that dir |
@@ -111,24 +111,24 @@ Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binar
 |---|---|---|
 | D1 | `-pressure-api http://pressure-ok:.../api/pressure -pressure-interval 1s` | scan completes, open found |
 | D2 | `-pressure-api http://pressure-high/... ` (seq high→low) | stderr shows pause then resume; scan completes |
-| D3 | `-pressure-api http://pressure-5xx/...` | scan handles 5xx without crash (defined resilience) |
-| D4 | `-pressure-api http://pressure-timeout/...` | scan handles timeout without crash |
+| D3 | `-pressure-api http://pressure-5xx/...` | fail-safe: after 3 consecutive failures, abort with `pressure api failed 3 times`, exit 1 |
+| D4 | `-pressure-api http://pressure-timeout/...` | fail-safe: 3 consecutive timeout failures → abort exit 1 (scan uses `-timeout 3s` so it outlives the ~7s to the 3rd strike) |
 | D5 | `-disable-api` | no pressure polling; completes on local rate control |
 | D6 | `-pressure-use-auth -pressure-auth-url .../auth -pressure-data-url http://pressure-auth-1/data -pressure-client-id ID -pressure-client-secret SECRET` | OAuth exchange succeeds; scan completes |
 | D7 | multi-source: `-pressure-data-url "http://pressure-auth-1/data,http://pressure-auth-2/data"` | both polled; max aggregation; per-source health visible |
-| D8 | auth with bad credentials | startup fails clearly (negative case) |
+| D8 | auth with bad credentials | fail-safe: auth/token failure → abort with `pressure api failed 3 times`, exit 1 (negative case) |
 
 ### E. Resume (2)
 | # | Flags | Assertion |
 |---|---|---|
 | E1 | authentic: scan → SIGINT → `-resume resume_state.json` | resumed run skips completed chunks |
-| E2 | crafted resume file (total_count matched) | loads, skips, completes |
+| E2 | crafted resume file with mismatched `total_count` | abort with `chunk total_count mismatch`, nonzero exit (guard test) |
 
 ### F. `preprocess` (2)
 | # | Flags | Assertion |
 |---|---|---|
-| F1 | `--input rich.csv --cleaned-cidrs policy.csv --fab-name fab1 --output-dir /out` | rows in closed CIDRs removed; output is timestamped `fab1-<ts>.csv` |
-| F2 | fab-name with no matches | output empty/headers only, exit 0 |
+| F1 | `--input rich.csv --cleaned-cidrs policy.csv --fab-name fab1 --output-dir /out` | rows whose `dst_network_segment` is within a closed CIDR removed; output at `<output-dir>/fab1/<ts>/input.csv` |
+| F2 | fab-name with no matches | no closed CIDRs → all rows kept, exit 0 |
 
 ### G. `enrich-targets` (2)
 | # | Flags | Assertion |
@@ -195,5 +195,19 @@ Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binar
 - **Performance / throughput benchmarking** of the scanner — this lab proves correctness, not speed; rate-control flags are exercised for acceptance, not load-tested.
 - **UDP scanning** — the tool scans TCP only (`protocol` must be `tcp`); UDP rows are filtered, asserted in B4, not otherwise covered.
 - **IPv6 targets** — out of scope; fixtures are IPv4.
-- **Resume after partial chunk corruption** — only clean SIGINT resume (E1) and matched crafted state (E2) are covered.
+- **Resume after partial chunk corruption** — only clean SIGINT resume (E1) and the mismatched-`total_count` guard (E2) are covered.
 - **The repo's own `e2e/` suite** — this lab is additive and self-contained; it does not modify or replace `e2e/`.
+
+---
+
+## Errata — behavior corrected during implementation/validation (2026-06-23)
+
+The following supersede any earlier claims above. Discovered by running the lab; the shipped lab and product reflect these.
+
+1. **Rich-mode scanning is not decision-filtered.** `port-scan scan` in rich mode scans **every `protocol=tcp` row regardless of `decision`**, carrying `decision` through as output metadata; only non-`tcp` rows are excluded. (Earlier text said "only `decision=accept`".) B4 asserts this: accept `.10`→open, deny `.11`→close (both scanned, decision preserved), udp `.12` excluded. Whether scanning `decision=deny` paths is desirable is a **product question flagged for review**, not a lab defect.
+2. **E2 is a guard test, not a successful resume.** E2 feeds a crafted resume file whose `total_count` mismatches the input and asserts the abort `chunk total_count mismatch` (nonzero exit). E1 remains the authentic SIGINT→resume success case.
+3. **D3/D4/D8 assert fail-safe abort, not "no crash".** After 3 consecutive pressure-fetch failures the scan aborts (`pressure api failed 3 times`, exit 1). D4 uses `-timeout 3s` so the scan outlives the ~7s needed for 3 timeout-mode strikes.
+4. **preprocess output path** is `<output-dir>/<fab>/<ts>/input.csv` (not `<fab>-<ts>.csv`); F2 with no closed CIDRs keeps all rows.
+5. **mock-pressure adaptations** beyond the vendored copy: a non-consuming `/healthz`, and **stateless bearer-token validation** in `/data` (accepts any `mock-token-*`) so the two separate auth-mock containers share a trust domain for the multi-source test (D7). D8 still fails correctly because bad client credentials are rejected at `/auth` (a token is never issued).
+6. **pressure-high** oscillates `90,10` with `loop=true` so D2's pause+resume transitions are deterministic regardless of how many GETs already advanced the sequence.
+7. **Product fix:** the lab surfaced a real bug — `cmd/csv-transform` passed `os.Args` (incl. program name) to flag parsing, so `--input/--output` were ignored (only env vars worked). Fixed test-first (`runMain` strips `argv[0]`; regression test added).
