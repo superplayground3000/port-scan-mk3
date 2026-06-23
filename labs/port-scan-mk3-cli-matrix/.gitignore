@@ -1,0 +1,5 @@
+# Lab runtime artifacts (matrix output lives inside the scanner container; nothing
+# should be written into the repo, but ignore these defensively).
+out/
+*.log
+.env
