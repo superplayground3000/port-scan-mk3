@@ -418,11 +418,12 @@ func handleData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	validTokens.RLock()
-	expiry, ok := validTokens.tokens[token]
-	validTokens.RUnlock()
-
-	if !ok || time.Now().After(expiry) {
+	// Lab adaptation: validate the token statelessly by format rather than by
+	// per-instance lookup, so any mock-pressure instance trusts a token issued
+	// by any other instance. This models a shared auth domain and is required
+	// for the multi-source fetcher test, where one /auth issues a token used
+	// against /data endpoints on two separate containers.
+	if !strings.HasPrefix(token, "mock-token-") {
 		http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 		return
 	}

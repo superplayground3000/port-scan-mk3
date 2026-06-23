@@ -114,7 +114,7 @@ D3() { local d="$OUT/D3"; mkdir -p "$d"
 D4() { local d="$OUT/D4"; mkdir -p "$d"
   port-scan scan -cidr-file "$FIX/basic-filtered-many.csv" -port-file "$FIX/ports-many.csv" \
     -pressure-api "http://$PTO:8080/api/pressure" -pressure-interval 1s \
-    -timeout 1s -workers 1 -disable-pre-scan-ping -output "$d/s.csv" >"$d/o" 2>"$d/e"; local rc=$?
+    -timeout 3s -workers 1 -disable-pre-scan-ping -output "$d/s.csv" >"$d/o" 2>"$d/e"; local rc=$?
   assert_eq "D4 timeout fail-safe abort exit1" 1 "$rc"
   assert_contains "D4 pressure failed 3 times" "$d/e" 'pressure api failed 3 times'; }
 D5() { local d="$OUT/D5"; mkdir -p "$d"
@@ -214,6 +214,7 @@ I2() { local d="$OUT/I2"; mkdir -p "$d"
   assert_contains "I2 custom-cols .10 included" "$d/t.csv" "$OPEN"; }
 I3() { local d="$OUT/I3"; mkdir -p "$d"
   csv-transform --input "$FIX/legacy.csv" --output "$d/t.csv" >"$d/o" 2>"$d/e"
+  assert_eq "I3 csv-transform exit0" 0 "$?"
   assert_not_contains "I3 TRUE row .11 skipped" "$d/t.csv" "$CLOSED"; }
 I4() { local d="$OUT/I4"; mkdir -p "$d"
   TRANSFORM_INPUT="$FIX/legacy.csv" TRANSFORM_OUTPUT="$d/t.csv" csv-transform >"$d/o" 2>"$d/e"
