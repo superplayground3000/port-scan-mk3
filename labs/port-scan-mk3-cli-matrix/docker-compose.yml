@@ -76,8 +76,12 @@ services:
     environment:
       MODE: "ok"
       ADDR: ":8080"
-      PRESSURE_SEQUENCE: "90,90,10,10,10,10,10,10,10,10,10,10"
-      PRESSURE_SEQUENCE_LOOP: "false"
+      # Oscillate high<->low and LOOP, so a pause (>=60) and a resume (<60)
+      # transition both appear within a few polls regardless of how many GETs
+      # already consumed the sequence (it advances on every GET). This keeps
+      # D2 deterministic even across repeated matrix runs on a persistent stack.
+      PRESSURE_SEQUENCE: "90,10"
+      PRESSURE_SEQUENCE_LOOP: "true"
     networks:
       lab: { ipv4_address: 172.30.0.21 }
     healthcheck:

@@ -46,9 +46,11 @@ B4() { local d="$OUT/B4"; mkdir -p "$d"
   port-scan scan -cidr-file "$FIX/rich.csv" -disable-api -disable-pre-scan-ping -timeout 300ms -output "$d/s.csv" >"$d/o" 2>"$d/e"
   assert_eq "B4 rich scan exit0" 0 "$?"
   local sr; sr="$(latest "$d" scan_results)"
-  assert_contains     "B4 rich accept .10 scanned open" "$sr" "^$OPEN,$OPEN/32,8080,open,"
-  assert_not_contains "B4 rich deny .11 skipped"        "$sr" "^$CLOSED,"
-  assert_not_contains "B4 rich udp .12 skipped"         "$sr" "$FILTERED"; }
+  # Rich mode scans every tcp row regardless of decision and carries the
+  # decision through as metadata; only non-tcp rows are filtered out.
+  assert_contains     "B4 rich accept .10 scanned open (decision preserved)" "$sr" "^$OPEN,$OPEN/32,8080,open,.*,accept,"
+  assert_contains     "B4 rich deny .11 scanned (decision preserved)"        "$sr" "^$CLOSED,$CLOSED/32,8080,close,.*,deny,"
+  assert_not_contains "B4 rich udp .12 not scanned (protocol filter)"        "$sr" "$FILTERED"; }
 B5() { local d="$OUT/B5"; mkdir -p "$d"
   port-scan scan -cidr-file "$FIX/basic-custom-headers.csv" -port-file "$FIX/ports.csv" \
     -cidr-ip-col source_ip -cidr-ip-cidr-col source_range \
