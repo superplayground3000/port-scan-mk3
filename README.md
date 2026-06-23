@@ -373,13 +373,23 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - `cmd/cidr-compare`: CIDR interval-tree comparison utility
 - `cmd/csv-transform`: spreadsheet-to-rich-CSV transformer (Excel-export path)
 - `pkg/config`: flag parsing and configuration validation
+- `pkg/cli`: CLI composition utilities bridging domain types to writers and formats
 - `pkg/input`: CIDR/rich input loading and row-level validation
+- `pkg/validate`: input validation service for the `validate` command
+- `pkg/cidrutil`: CIDR CSV parsing and selector construction
+- `pkg/netutil`: IPv4 range, execution-key, and IPv4-to-uint32 utilities
 - `pkg/task`: selector expansion and execution-key helpers
 - `pkg/scanapp`: scan orchestration (load, plan, dispatch, execute, aggregate, resume, outputs)
 - `pkg/scanner`: single TCP probe primitive
+- `pkg/ratelimit`: leaky-bucket rate limiter for dispatch throttling
 - `pkg/writer`: fixed CSV output contract and open-only projection
 - `pkg/speedctrl`: manual/API pause controller
 - `pkg/state`: resume state persistence and signal helpers
+- `pkg/logx`: structured NDJSON logging
+- `pkg/enrich`: minimal `host,port` to rich CSV transformation (enrich-targets core)
+- `pkg/preprocess`: closed-CIDR containment filtering (preprocess core)
+- `pkg/preprocesscfg`: shared column names, status values, and placeholder defaults for enrich/preprocess
+- `pkg/spreadsheet`: spreadsheet/CSV reader abstraction (csv-transform core)
 - `tests/integration`: integration contracts
 - `e2e`: dockerized end-to-end verification and artifact checks
 
@@ -416,5 +426,17 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - [Speed-control E2E](docs/e2e/speedcontrol.md)
 - [Architecture diagram](docs/architecture/diagram.html)
 
+### Per-tool specifications and design
+
+Each `cmd/` tool has a dedicated specification and design document:
+
+| Tool | Spec | Design |
+|------|------|--------|
+| port-scan | [SPEC](docs/apps/port-scan/SPEC.md) | [DESIGN](docs/apps/port-scan/DESIGN.md) |
+| enrich-targets | [SPEC](docs/apps/enrich-targets/SPEC.md) | [DESIGN](docs/apps/enrich-targets/DESIGN.md) |
+| preprocess | [SPEC](docs/apps/preprocess/SPEC.md) | [DESIGN](docs/apps/preprocess/DESIGN.md) |
+| cidr-compare | [SPEC](docs/apps/cidr-compare/SPEC.md) | [DESIGN](docs/apps/cidr-compare/DESIGN.md) |
+| csv-transform | [SPEC](docs/apps/csv-transform/SPEC.md) | [DESIGN](docs/apps/csv-transform/DESIGN.md) |
+
 ---
-**Revised**: 2026-04-13 | **Author**: docs-team
+**Revised**: 2026-06-23 | **Author**: docs-team
