@@ -46,7 +46,7 @@ func TestCLIHelp_IncludesRequiredFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected zero exit, got %d", code)
 	}
-	for _, want := range []string{"-cidr-file", "-port-file", "-cidr-ip-col", "-cidr-ip-cidr-col", "-resume", "-disable-api", "-format"} {
+	for _, want := range []string{"-cidr-file", "-port-file", "-cidr-ip-col", "-cidr-ip-cidr-col", "-resume", "-disable-pre-scan-ping", "-disable-api", "-format"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing help flag %s", want)
 		}

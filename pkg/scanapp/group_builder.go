@@ -122,7 +122,8 @@ func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
 	targets := make([]scanTarget, 0, len(ips))
 	for _, ip := range ips {
 		targets = append(targets, scanTarget{
-			ip: ip,
+			ip:     ip,
+			ipCidr: cidr,
 			meta: targetMeta{
 				fabName:  rec.FabName,
 				cidrName: rec.CIDRName,
@@ -195,20 +196,56 @@ func mergeFieldValue(existing, incoming string) string {
 }
 
 func buildCIDRGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, error) {
-	return buildGroups(cidrRecords, basicGroupStrategy{})
+	return buildCIDRGroupsWithPredicate(cidrRecords, nil)
+}
+
+func buildCIDRGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
+	strategy := basicGroupStrategy{}
+	predicate := normalizeReachablePredicate(reachable)
+	out := make(map[string]cidrGroup)
+	for _, rec := range cidrRecords {
+		key, err := strategy.Key(rec)
+		if err != nil {
+			return nil, err
+		}
+		targets, err := strategy.targets(rec)
+		if err != nil {
+			return nil, err
+		}
+		targets = filterScanTargets(targets, predicate)
+		if len(targets) == 0 {
+			continue
+		}
+
+		group := out[key]
+		group.targets = append(group.targets, targets...)
+		out[key] = group
+	}
+
+	for key, group := range out {
+		sort.Slice(group.targets, func(i, j int) bool {
+			return ipv4ToUint32(group.targets[i].ip) < ipv4ToUint32(group.targets[j].ip)
+		})
+		out[key] = group
+	}
+	return out, nil
 }
 
 func buildRichGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, error) {
-	groups, err := buildGroups(cidrRecords, richGroupStrategy{})
-	if err != nil {
-		return nil, err
-	}
+	return buildRichGroupsWithPredicate(cidrRecords, nil)
+}
 
+func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
+	predicate := normalizeReachablePredicate(reachable)
+	groups := make(map[string]cidrGroup)
 	ownerByExecutionKey := make(map[string]string)
+	hasValidRichInput := false
+
 	for _, rec := range cidrRecords {
 		if !rec.IsRich || !rec.IsValid {
 			continue
 		}
+		hasValidRichInput = true
 		cidr, err := richCIDRKey(rec)
 		if err != nil {
 			return nil, err
@@ -217,70 +254,54 @@ func buildRichGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, erro
 		if err != nil {
 			return nil, err
 		}
+		targets = filterScanTargets(targets, predicate)
+		if len(targets) == 0 {
+			continue
+		}
+
+		group := groups[cidr]
 		for _, target := range targets {
 			key := strings.TrimSpace(target.meta.executionKey)
 			if key == "" {
 				return nil, fmt.Errorf("rich record missing execution_key at row %d", rec.RowNumber)
 			}
-			if _, ok := ownerByExecutionKey[key]; !ok {
-				ownerByExecutionKey[key] = cidr
-			}
-		}
-	}
-
-	for cidr, group := range groups {
-		kept := make([]scanTarget, 0, len(group.targets))
-		for _, target := range group.targets {
-			executionKey := strings.TrimSpace(target.meta.executionKey)
-			ownerCIDR, ok := ownerByExecutionKey[executionKey]
+			ownerCIDR, ok := ownerByExecutionKey[key]
 			if !ok {
-				return nil, fmt.Errorf("owner cidr missing for execution key %s", executionKey)
+				ownerByExecutionKey[key] = cidr
+				group, err = mergeRichTargetIntoGroup(group, target)
+				if err != nil {
+					return nil, err
+				}
+				continue
 			}
 			if ownerCIDR == cidr {
-				kept = append(kept, target)
+				group, err = mergeRichTargetIntoGroup(group, target)
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
 
-			ownerGroup, ok := groups[ownerCIDR]
-			if !ok {
-				return nil, fmt.Errorf("owner cidr %s missing for execution key %s", ownerCIDR, executionKey)
-			}
-			idx := richTargetIndexByExecutionKey(ownerGroup.targets, executionKey)
-			if idx < 0 {
-				ownerGroup.targets = append(ownerGroup.targets, target)
-			} else if err := mergeRichTargetValues(&ownerGroup.targets[idx], target); err != nil {
+			ownerGroup := groups[ownerCIDR]
+			ownerGroup, err = mergeRichTargetIntoGroup(ownerGroup, target)
+			if err != nil {
 				return nil, err
 			}
 			groups[ownerCIDR] = ownerGroup
 		}
-		if len(kept) == 0 {
-			delete(groups, cidr)
-			continue
+		if len(group.targets) > 0 {
+			groups[cidr] = group
 		}
-		group.targets = kept
-		groups[cidr] = group
 	}
 
 	if len(groups) == 0 {
+		if hasValidRichInput {
+			return groups, nil
+		}
 		return nil, fmt.Errorf("no usable input rows")
 	}
 
-	for cidr, group := range groups {
-		sort.Slice(group.targets, func(i, j int) bool {
-			left := group.targets[i]
-			right := group.targets[j]
-			leftIP := ipv4ToUint32(left.ip)
-			rightIP := ipv4ToUint32(right.ip)
-			if leftIP != rightIP {
-				return leftIP < rightIP
-			}
-			if left.port != right.port {
-				return left.port < right.port
-			}
-			return strings.TrimSpace(left.meta.executionKey) < strings.TrimSpace(right.meta.executionKey)
-		})
-		groups[cidr] = group
-	}
+	sortRichGroups(groups)
 	return groups, nil
 }
 
@@ -422,4 +443,53 @@ func mergeRichTargetValues(dst *scanTarget, incoming scanTarget) error {
 		SrcNetworkSegment: incoming.meta.srcNetworkSegment,
 	})
 	return nil
+}
+
+func normalizeReachablePredicate(reachable func(string) bool) func(string) bool {
+	if reachable == nil {
+		return func(string) bool { return true }
+	}
+	return reachable
+}
+
+func filterScanTargets(targets []scanTarget, reachable func(string) bool) []scanTarget {
+	filtered := make([]scanTarget, 0, len(targets))
+	for _, target := range targets {
+		if reachable(target.ip) {
+			filtered = append(filtered, target)
+		}
+	}
+	return filtered
+}
+
+func mergeRichTargetIntoGroup(group cidrGroup, target scanTarget) (cidrGroup, error) {
+	key := strings.TrimSpace(target.meta.executionKey)
+	idx := richTargetIndexByExecutionKey(group.targets, key)
+	if idx < 0 {
+		group.targets = append(group.targets, target)
+		return group, nil
+	}
+	if err := mergeRichTargetValues(&group.targets[idx], target); err != nil {
+		return cidrGroup{}, err
+	}
+	return group, nil
+}
+
+func sortRichGroups(groups map[string]cidrGroup) {
+	for cidr, group := range groups {
+		sort.Slice(group.targets, func(i, j int) bool {
+			left := group.targets[i]
+			right := group.targets[j]
+			leftIP := ipv4ToUint32(left.ip)
+			rightIP := ipv4ToUint32(right.ip)
+			if leftIP != rightIP {
+				return leftIP < rightIP
+			}
+			if left.port != right.port {
+				return left.port < right.port
+			}
+			return strings.TrimSpace(left.meta.executionKey) < strings.TrimSpace(right.meta.executionKey)
+		})
+		groups[cidr] = group
+	}
 }

@@ -76,6 +76,42 @@ Expected:
 Troubleshooting:
 - Run in an interactive terminal and avoid redirecting `stderr` (for example `2>` or `2>&1`) if you want rich output.
 
+## Scenario 2C: Pre-scan ping, unreachable output, and disabled mode
+
+Goal: Verify the default pre-scan ping flow and the `-disable-pre-scan-ping` fallback.
+
+Command:
+```bash
+go run ./cmd/port-scan scan \
+  -cidr-file tests/integration/testdata/ip_aware/cidr_fail.csv \
+  -port-file tests/integration/testdata/ip_aware/ports.csv \
+  -output e2e/out/scan_results.csv \
+  -disable-api=true
+```
+
+Expected:
+- The test data uses the default `ip` / `ip_cidr` headers, so no CIDR mapping flags are needed.
+- With the flag omitted, pre-scan ping runs before TCP scan planning.
+- `unreachable_results-<suffix>.csv` is flushed and finalized before any TCP dial starts.
+- `scan_results-<suffix>.csv`, `opened_results-<suffix>.csv`, and `unreachable_results-<suffix>.csv` share the same suffix.
+- IPs that fail ping are written only to `unreachable_results-<suffix>.csv` and are skipped from TCP scan.
+- Windows and Unix follow the same high-level contract even though the underlying ping command differs.
+
+Disabled mode:
+```bash
+go run ./cmd/port-scan scan \
+  -cidr-file tests/integration/testdata/ip_aware/cidr_normal.csv \
+  -port-file tests/integration/testdata/ip_aware/ports.csv \
+  -output e2e/out/scan_results.csv \
+  -disable-pre-scan-ping=true \
+  -disable-api=true
+```
+
+Expected:
+- No pre-scan ping stage runs.
+- `unreachable_results-<suffix>.csv` is still created as a final batch file, but it contains header only.
+- TCP scanning behaves like the prior direct-scan flow.
+
 ## Scenario 3: Validate inputs (human format)
 
 Goal: Pre-flight check input files without scanning.
@@ -220,7 +256,7 @@ Expected:
 - Files follow batch naming:
   - `scan_results-YYYYMMDDTHHMMSSZ.csv`
   - `scan_results-YYYYMMDDTHHMMSSZ-1.csv`
-- `opened_results` uses the same sequence as `scan_results` for each batch.
+- `opened_results` and `unreachable_results` use the same sequence as `scan_results` for each batch.
 
 Troubleshooting:
 - If suffix does not appear, runs may have started in different seconds.

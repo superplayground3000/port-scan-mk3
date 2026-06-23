@@ -54,6 +54,8 @@ type Config struct {
 	PressureClientSecret string
 	// PressureUseAuth enables OAuth-authenticated pressure fetching.
 	PressureUseAuth bool
+	// DisablePreScanPing disables the pre-scan ping reachability filter when true.
+	DisablePreScanPing bool
 	// Resume is the path to the resume state file.
 	Resume string
 	// LogLevel is the log verbosity: debug, info, or error.
@@ -123,6 +125,7 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&cfg.PressureClientID, "pressure-client-id", "", "pressure API client ID")
 	fs.StringVar(&cfg.PressureClientSecret, "pressure-client-secret", "", "pressure API client secret")
 	fs.BoolVar(&cfg.PressureUseAuth, "pressure-use-auth", false, "use authenticated pressure fetcher")
+	fs.BoolVar(&cfg.DisablePreScanPing, "disable-pre-scan-ping", false, "disable pre-scan ping")
 	fs.StringVar(&cfg.Resume, "resume", "", "resume state file")
 	fs.StringVar(&cfg.LogLevel, "log-level", "info", "debug|info|error")
 	fs.StringVar(&cfg.Format, "format", "human", "human|json")

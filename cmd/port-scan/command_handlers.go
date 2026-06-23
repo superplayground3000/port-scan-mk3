@@ -83,5 +83,5 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "port-scan scan -cidr-file <file> [-port-file <file>] [flags]")
 	fmt.Fprintln(w, "port-scan validate -cidr-file <file> [-port-file <file>] [-format human|json]")
-	fmt.Fprintln(w, "Flags: -cidr-ip-col -cidr-ip-cidr-col -resume -disable-api -pressure-api -pressure-interval -pressure-auth-url -pressure-data-url -pressure-client-id -pressure-client-secret -pressure-use-auth -quiet -bucket-rate -bucket-capacity -workers -timeout -delay -log-level -format")
+	fmt.Fprintln(w, "Flags: -cidr-ip-col -cidr-ip-cidr-col -resume -disable-pre-scan-ping -disable-api -pressure-api -pressure-interval -pressure-auth-url -pressure-data-url -pressure-client-id -pressure-client-secret -pressure-use-auth -quiet -bucket-rate -bucket-capacity -workers -timeout -delay -log-level -format")
 }

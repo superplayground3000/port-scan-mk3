@@ -10,6 +10,8 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
+	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
 const (
@@ -22,13 +24,14 @@ type DialFunc func(context.Context, string, string) (net.Conn, error)
 
 // RunOptions customizes runtime behaviors that are not exposed as CLI flags.
 type RunOptions struct {
-	Dial             DialFunc
-	ResumeStatePath  string
-	PressureLimit    int
-	DisableKeyboard  bool
-	PressureHTTP     *http.Client
-	PressureFetcher  PressureFetcher
-	ProgressInterval int
+	Dial                DialFunc
+	ResumeStatePath     string
+	PressureLimit       int
+	DisableKeyboard     bool
+	PressureHTTP        *http.Client
+	PressureFetcher     PressureFetcher
+	ProgressInterval    int
+	ReachabilityChecker ReachabilityChecker
 
 	dashboardTerminalDetector func(io.Writer) bool
 	dashboardRefreshInterval  time.Duration
@@ -57,10 +60,43 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	if err != nil {
 		return err
 	}
-	plan, err := prepareRunPlan(cfg, inputs, deps, time.Now())
+
+	now := time.Now()
+	outputPaths, err := resolveRunOutputPaths(cfg, deps, now)
 	if err != nil {
 		return err
 	}
+
+	resumeSnapshot, err := loadResumeSnapshot(cfg)
+	if err != nil {
+		return err
+	}
+
+	preScan, err := runPreScanPing(ctx, inputs, cfg, resolveReachabilityChecker(cfg, opts), resumeSnapshot.PreScanPing)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := finalizeUnreachableResults(outputPaths.unreachablePath, preScan.UnreachableRows); err != nil {
+		return err
+	}
+
+	plan, err := prepareRuntimePlan(
+		cfg,
+		inputs,
+		deps,
+		runReachablePredicate(cfg, preScan),
+		resumeSnapshot.Chunks,
+		shouldUseResumeChunks(cfg, resumeSnapshot.PreScanPing, preScan),
+	)
+	if err != nil {
+		return err
+	}
+	plan.outputPaths = outputPaths
+	plan.scanOutputPath = outputPaths.scanPath
+	plan.openOnlyPath = outputPaths.openPath
 
 	outputs, err := openBatchOutputs(plan.scanOutputPath, plan.openOnlyPath)
 	if err != nil {
@@ -190,7 +226,7 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		}
 	}
 
-	if err := persistResumeState(cfg, opts, logger, plan.runtimes, dispatchErr, runErr); err != nil {
+	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, preScan.State, dispatchErr, runErr); err != nil {
 		return err
 	}
 
@@ -205,4 +241,48 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	emitCompletionSummary(logger, summary, startedAt, nil)
 	scanSuccess = true
 	return nil
+}
+
+func resolveReachabilityChecker(cfg config.Config, opts RunOptions) ReachabilityChecker {
+	if cfg.DisablePreScanPing {
+		return nil
+	}
+	if opts.ReachabilityChecker != nil {
+		return opts.ReachabilityChecker
+	}
+	return &commandReachabilityChecker{}
+}
+
+func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecord) error {
+	output, err := openUnreachableOutput(finalPath)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := output.writer.Write(row); err != nil {
+			_ = output.Finalize(false)
+			return err
+		}
+	}
+	return output.Finalize(true)
+}
+
+func runReachablePredicate(cfg config.Config, preScan preScanOutcome) func(string) bool {
+	if cfg.DisablePreScanPing {
+		return nil
+	}
+	return reachablePredicate(preScan.UnreachableIPv4U32)
+}
+
+func shouldUseResumeChunks(cfg config.Config, saved state.PreScanPingState, preScan preScanOutcome) bool {
+	if cfg.Resume == "" {
+		return false
+	}
+	if cfg.DisablePreScanPing {
+		return true
+	}
+	if hasSavedPreScanPingState(saved) {
+		return true
+	}
+	return len(preScan.UnreachableIPv4U32) == 0
 }

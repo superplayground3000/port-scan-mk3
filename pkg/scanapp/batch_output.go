@@ -7,13 +7,19 @@ import (
 	"time"
 )
 
-func resolveBatchOutputPaths(outputPath string, now time.Time) (string, string, error) {
+type batchOutputPaths struct {
+	scanPath        string
+	openPath        string
+	unreachablePath string
+}
+
+func resolveBatchOutputPaths(outputPath string, now time.Time) (batchOutputPaths, error) {
 	baseDir := filepath.Dir(outputPath)
 	if baseDir == "" {
 		baseDir = "."
 	}
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
-		return "", "", err
+		return batchOutputPaths{}, err
 	}
 
 	ts := now.UTC().Format("20060102T150405Z")
@@ -24,11 +30,16 @@ func resolveBatchOutputPaths(outputPath string, now time.Time) (string, string, 
 		}
 		scanPath := filepath.Join(baseDir, fmt.Sprintf("scan_results-%s%s.csv", ts, suffix))
 		openPath := filepath.Join(baseDir, fmt.Sprintf("opened_results-%s%s.csv", ts, suffix))
-		if !fileExists(scanPath) && !fileExists(openPath) {
-			return scanPath, openPath, nil
+		unreachablePath := filepath.Join(baseDir, fmt.Sprintf("unreachable_results-%s%s.csv", ts, suffix))
+		if !fileExists(scanPath) && !fileExists(openPath) && !fileExists(unreachablePath) {
+			return batchOutputPaths{
+				scanPath:        scanPath,
+				openPath:        openPath,
+				unreachablePath: unreachablePath,
+			}, nil
 		}
 	}
-	return "", "", fmt.Errorf("failed to allocate unique batch output paths")
+	return batchOutputPaths{}, fmt.Errorf("failed to allocate unique batch output paths")
 }
 
 func fileExists(path string) bool {

@@ -16,8 +16,9 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 |------|------|---------|---------|-------------|
 | `-cidr-file` | string | none (required) | `validate`, `scan` | Path to CIDR CSV input file. |
 | `-port-file` | string | optional | `validate`, `scan` | Path to port list file (`<port>/tcp` lines). Required when CIDR input is not rich mode. |
-| `-output` | string | `scan_results.csv` | `validate`, `scan` | Output anchor path for scan batch files; output directory also controls default resume fallback location. |
-| `-timeout` | duration | `100ms` | `validate`, `scan` | TCP dial timeout per probe. Primarily used by `scan`. |
+| `-output` | string | `scan_results.csv` | `validate`, `scan` | Parsed by both `validate` and `scan`. Only `scan` uses it to choose the batch output directory and shared suffix for `scan_results-<suffix>.csv`, `opened_results-<suffix>.csv`, and `unreachable_results-<suffix>.csv`. The output directory also controls the default resume fallback location. |
+| `-timeout` | duration | `100ms` | `validate`, `scan` | TCP dial timeout per probe. This does not control pre-scan ping; the pre-scan ping timeout is fixed internally at `100ms`. |
+| `-disable-pre-scan-ping` | bool | `false` | `validate`, `scan` | Disable the default-on pre-scan ping stage. |
 | `-delay` | duration | `10ms` | `validate`, `scan` | Dispatch delay between tasks. Primarily used by `scan`. |
 | `-bucket-rate` | int | `100` | `validate`, `scan` | Leaky bucket refill rate. Primarily used by `scan`. |
 | `-bucket-capacity` | int | `100` | `validate`, `scan` | Leaky bucket capacity. Primarily used by `scan`. |
@@ -42,6 +43,10 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 - `-cidr-file` is required.
 - `-port-file` is required only when CIDR input is not rich mode.
 - `-format` only accepts `human` or `json`.
+- Pre-scan ping is enabled by default.
+- `-disable-pre-scan-ping=true` skips pre-scan ping and preserves the current direct TCP scan flow.
+- Pre-scan ping uses a fixed internal timeout of `100ms`.
+- `-timeout` only applies to TCP dial probes.
 - `-pressure-interval` must be positive; invalid format or non-positive values are rejected.
 - When `-pressure-use-auth` is set, all four auth flags are required:
   - `-pressure-auth-url`
@@ -52,6 +57,7 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 - Resume write path behavior:
   - If `-resume` is set, state is read from and written back to that same path.
   - If `-resume` is not set, fallback save path is `<output-dir>/resume_state.json`.
+- Batch output naming uses a shared timestamp suffix across `scan_results`, `opened_results`, and `unreachable_results`; same-second collisions append `-n` to all three filenames.
 
 ## Common Mistakes
 
@@ -65,7 +71,7 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 
 3. Assuming fixed output filename
 - Problem: expecting a single `scan_results.csv` file after each run.
-- Fix: scan output is timestamped batch format `scan_results-YYYYMMDDTHHMMSSZ[-n].csv`.
+- Fix: batch output is timestamped and shared across `scan_results-YYYYMMDDTHHMMSSZ[-n].csv`, `opened_results-YYYYMMDDTHHMMSSZ[-n].csv`, and `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv`.
 
 4. Forgetting explicit resume pinning
 - Problem: restart run but cannot find expected resume file.

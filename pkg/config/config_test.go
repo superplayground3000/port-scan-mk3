@@ -18,6 +18,26 @@ func TestParseConfig_WhenRequiredFlagsProvided_UsesDefaultValues(t *testing.T) {
 	}
 }
 
+func TestParseConfig_WhenRequiredFlagsProvided_PreScanPingIsEnabledByDefault(t *testing.T) {
+	cfg, err := Parse([]string{"-cidr-file", "cidr.csv", "-port-file", "ports.csv"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DisablePreScanPing {
+		t.Fatal("expected pre-scan ping enabled by default")
+	}
+}
+
+func TestParseConfig_WhenDisablePreScanPingFlagProvided_TurnsFeatureOff(t *testing.T) {
+	cfg, err := Parse([]string{"-cidr-file", "cidr.csv", "-port-file", "ports.csv", "-disable-pre-scan-ping=true"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.DisablePreScanPing {
+		t.Fatal("expected disable-pre-scan-ping to be true")
+	}
+}
+
 func TestParseConfig_WhenPortFileOmitted_StillParses(t *testing.T) {
 	cfg, err := Parse([]string{"-cidr-file", "cidr.csv"})
 	if err != nil {
