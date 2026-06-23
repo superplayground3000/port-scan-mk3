@@ -37,9 +37,16 @@ const (
 )
 
 // runMain is the entry point for testing. It accepts explicit stdout/stderr
-// to avoid os.Exit in tests.
+// to avoid os.Exit in tests. args is the full argv slice (as returned by
+// os.Args), including the program name at index 0; runMain strips it before
+// delegating to ParseConfigFromArgs so that flag.FlagSet.Parse sees only the
+// actual flag tokens.
 func runMain(args []string, stdout io.Writer, stderrOut io.Writer) int {
-	cfg, err := ParseConfigFromArgs(args)
+	flagArgs := args
+	if len(flagArgs) > 0 {
+		flagArgs = flagArgs[1:]
+	}
+	cfg, err := ParseConfigFromArgs(flagArgs)
 	if err != nil {
 		fmt.Fprintf(stderrOut, "config error: %v\n", err)
 		if cfgErr, ok := err.(*ConfigError); ok {
