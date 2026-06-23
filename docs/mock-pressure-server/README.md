@@ -7,6 +7,7 @@
 Mock pressure API server 支援兩種模式：
 - **Simple Mode**: 無認證，直接回傳 pressure 值
 - **Authenticated Mode**: OAuth-style client credentials 認證
+- **Config-Driven Mode**: 從 JSON config 檔動態載入 `/api/pressure` response body（支援單一 object 或多 objects）
 
 ## Quick Start
 
@@ -21,9 +22,12 @@ Service 啟動後可透過 `http://localhost:8083` 存取。
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/pressure` | GET | Simple pressure endpoint (always available) |
+| `/api/pressure` | GET | Pressure endpoint（可回傳預設 `{ "pressure": n }` 或 config 指定 body） |
+| `/api/pressure` | POST | 動態更新目前 pressure（`{"pressure":95}`）或 sequence（`{"sequence":[20,95,20]}`） |
 | `/auth` | POST | OAuth token endpoint |
 | `/data` | GET | Pressure data (requires Bearer token) |
+| `/admin/config` | GET | 查看目前 config-driven response body（僅 config mode 啟用時可用） |
+| `/admin/config/reload` | POST | 重載 `PRESSURE_RESPONSE_CONFIG` 指向的檔案（runtime 生效） |
 
 ## Environment Variables
 
@@ -32,7 +36,10 @@ Service 啟動後可透過 `http://localhost:8083` 存取。
 | `ADDR` | `:8080` | Server listen address |
 | `MODE` | `ok` | Simple mode: `ok`, `fail`, `timeout` |
 | `PRESSURE` | `20` | Pressure value for simple mode |
+| `PRESSURE_SEQUENCE` | empty | Comma-separated sequence, e.g. `20,95,95,20` |
+| `PRESSURE_SEQUENCE_LOOP` | `false` | Whether to loop sequence when reaching the end |
 | `DELAY_MS` | `5000` | Delay in ms for timeout mode |
+| `PRESSURE_RESPONSE_CONFIG` | empty | Path to JSON file. When set, `/api/pressure` GET will return `response_body` from this file |
 | `USE_AUTH` | `false` | Enable authenticated mode |
 | `AUTH_CLIENT_ID` | `test-client` | Client ID for auth |
 | `AUTH_CLIENT_SECRET` | `test-secret` | Client secret for auth |
@@ -53,6 +60,29 @@ docker run -d -p 8080:8080 \
 # Test
 curl http://localhost:8080/api/pressure
 # Output: {"pressure":42}
+```
+
+### Config-Driven Mode（單一/多 objects body）
+
+範例 config 已提供在：
+
+- `e2e/mock-pressure-api/configs/pressure-single-object.json`
+- `e2e/mock-pressure-api/configs/pressure-two-objects.json`
+- `e2e/mock-pressure-api/configs/pressure-three-objects.json`
+
+```bash
+# 啟動：以 2 objects config 作為 /api/pressure 回應 body
+PRESSURE_RESPONSE_CONFIG=e2e/mock-pressure-api/configs/pressure-two-objects.json \
+go run ./e2e/mock-pressure-api
+
+curl -s http://localhost:8080/api/pressure
+# Output: [{"data":{"Percent":95}},{"data":{"Percent":35}}]
+
+# 修改 config 檔後，runtime 重載
+curl -X POST http://localhost:8080/admin/config/reload
+
+# 查看目前載入中的 config body
+curl -s http://localhost:8080/admin/config
 ```
 
 ### Authenticated Mode

@@ -13,18 +13,47 @@ import (
 	"time"
 )
 
-// PressureFetcher defines the interface for fetching pressure data.
+// PressureFetcher defines the interface for fetching router pressure data.
+// Implementations determine how pressure is retrieved (plain HTTP, OAuth, etc.).
+// The returned value is a percentage (e.g., 45.0 for 45%).
 type PressureFetcher interface {
+	// Fetch retrieves the current pressure value.
+	//
+	// # Parameters
+	//
+	//	ctx: Context for the HTTP request with timeout/cancellation.
+	//
+	// # Returns
+	//
+	//	Pressure as a percentage (e.g., 45.0) on success; error on failure.
 	Fetch(ctx context.Context) (float64, error)
 }
 
-// SimplePressureFetcher makes plain HTTP GET requests.
+type pressureSourceStatusFetcher interface {
+	FetchWithSourceStatuses(ctx context.Context) (float64, []PressureSourceResult, error)
+}
+
+// PressureSourceResult describes one pressure source result from a multi-source poll.
+type PressureSourceResult struct {
+	Name     string
+	Pressure float64
+	Err      error
+}
+
+// SimplePressureFetcher is a PressureFetcher that makes unauthenticated HTTP GET
+// requests to a pressure API endpoint. It expects a JSON response with a
+// "pressure" field (number or numeric string).
 type SimplePressureFetcher struct {
 	url    string
 	client *http.Client
 }
 
-// NewSimplePressureFetcher creates a SimplePressureFetcher.
+// NewSimplePressureFetcher creates a SimplePressureFetcher for the given URL.
+// If client is nil, a default HTTP client with a 2-second timeout is used.
+//
+// # Example
+//
+//	fetcher := NewSimplePressureFetcher("http://localhost:8080/api/pressure", nil)
 func NewSimplePressureFetcher(url string, client *http.Client) PressureFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
@@ -32,7 +61,8 @@ func NewSimplePressureFetcher(url string, client *http.Client) PressureFetcher {
 	return &SimplePressureFetcher{url: url, client: client}
 }
 
-// Fetch retrieves pressure value from the configured URL.
+// Fetch performs an HTTP GET to the configured URL and returns the pressure value.
+// It expects a JSON body: {"pressure": <number>}.
 func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
 	if err != nil {
@@ -42,7 +72,7 @@ func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	if err != nil {
 		return 0.0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return 0.0, fmt.Errorf("pressure api status=%d", resp.StatusCode)
 	}
@@ -61,7 +91,9 @@ func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	return pressure, nil
 }
 
-// AuthenticatedPressureFetcher handles OAuth-style auth flow.
+// AuthenticatedPressureFetcher is a PressureFetcher that first obtains an OAuth
+// bearer token from authURL, then uses it to fetch pressure data from dataURL.
+// It caches and automatically refreshes tokens before expiry.
 type AuthenticatedPressureFetcher struct {
 	authURL      string
 	dataURL      string
@@ -75,6 +107,15 @@ type AuthenticatedPressureFetcher struct {
 }
 
 // NewAuthenticatedPressureFetcher creates an AuthenticatedPressureFetcher.
+// If client is nil, a default HTTP client with a 2-second timeout is used.
+//
+// # Example
+//
+//	fetcher := NewAuthenticatedPressureFetcher(
+//	    "https://auth.example.com/token",
+//	    "https://api.example.com/pressure",
+//	    "client-id", "secret", nil,
+//	)
 func NewAuthenticatedPressureFetcher(authURL, dataURL, clientID, clientSecret string, client *http.Client) PressureFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
@@ -88,7 +129,8 @@ func NewAuthenticatedPressureFetcher(authURL, dataURL, clientID, clientSecret st
 	}
 }
 
-// Fetch retrieves pressure value with token authentication.
+// Fetch retrieves pressure data using a cached bearer token. It automatically
+// refreshes the token when it is within 30 seconds of expiry.
 func (f *AuthenticatedPressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	// Get valid token (refresh if needed)
 	token, err := f.getToken(ctx)
@@ -107,7 +149,7 @@ func (f *AuthenticatedPressureFetcher) Fetch(ctx context.Context) (float64, erro
 	if err != nil {
 		return 0.0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return 0.0, fmt.Errorf("data api status=%d", resp.StatusCode)
 	}
@@ -180,6 +222,81 @@ func normalizePressure(v float64) float64 {
 	return math.Round(v*10) / 10
 }
 
+// MultiSourcePressureFetcher fetches pressure from multiple authenticated
+// endpoints that share the same OAuth credentials. It fans out concurrently
+// and returns the maximum pressure across all sources. Any source error
+// causes the entire Fetch to fail.
+type MultiSourcePressureFetcher struct {
+	sources []PressureFetcher
+}
+
+// NewMultiSourcePressureFetcher creates a MultiSourcePressureFetcher that
+// polls each URL in dataURLs using shared OAuth credentials. A separate
+// AuthenticatedPressureFetcher (with its own token cache) is created per URL.
+// If client is nil, a default HTTP client with a 2-second timeout is used.
+func NewMultiSourcePressureFetcher(authURL string, dataURLs []string, clientID, clientSecret string, client *http.Client) *MultiSourcePressureFetcher {
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Second}
+	}
+	sources := make([]PressureFetcher, len(dataURLs))
+	for i, u := range dataURLs {
+		sources[i] = NewAuthenticatedPressureFetcher(authURL, u, clientID, clientSecret, client)
+	}
+	return &MultiSourcePressureFetcher{sources: sources}
+}
+
+// Fetch retrieves pressure from all configured sources concurrently and
+// waits for all to complete. If any source returns an error, Fetch returns
+// that error (wrapping it with the source label). Otherwise it returns the
+// maximum pressure value across all sources.
+func (f *MultiSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
+	pressure, _, err := f.FetchWithSourceStatuses(ctx)
+	return pressure, err
+}
+
+// FetchWithSourceStatuses retrieves pressure and returns per-source telemetry
+// for dashboard consumers while preserving Fetch's aggregate success/failure contract.
+func (f *MultiSourcePressureFetcher) FetchWithSourceStatuses(ctx context.Context) (float64, []PressureSourceResult, error) {
+	if len(f.sources) == 0 {
+		return 0, nil, fmt.Errorf("no pressure sources configured")
+	}
+	results := make([]PressureSourceResult, len(f.sources))
+	var wg sync.WaitGroup
+	for i, src := range f.sources {
+		wg.Add(1)
+		go func(i int, src PressureFetcher) {
+			defer wg.Done()
+			v, err := src.Fetch(ctx)
+			results[i] = PressureSourceResult{
+				Name:     fmt.Sprintf("src%d", i+1),
+				Pressure: v,
+				Err:      err,
+			}
+		}(i, src)
+	}
+	wg.Wait()
+
+	var maxPressure float64
+	var firstErr error
+	var foundPressure bool
+	for _, r := range results {
+		if r.Err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", r.Name, r.Err)
+			}
+			continue
+		}
+		if !foundPressure || r.Pressure > maxPressure {
+			maxPressure = r.Pressure
+		}
+		foundPressure = true
+	}
+	if firstErr != nil {
+		return 0, results, firstErr
+	}
+	return maxPressure, results, nil
+}
+
 func (f *AuthenticatedPressureFetcher) getToken(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -204,7 +321,7 @@ func (f *AuthenticatedPressureFetcher) getToken(ctx context.Context) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("auth status=%d", resp.StatusCode)
 	}

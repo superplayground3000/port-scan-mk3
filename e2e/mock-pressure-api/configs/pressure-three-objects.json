@@ -1,0 +1,19 @@
+{
+  "response_body": [
+    {
+      "data": {
+        "Percent": 98
+      }
+    },
+    {
+      "data": {
+        "Percent": 55
+      }
+    },
+    {
+      "data": {
+        "Percent": 15
+      }
+    }
+  ]
+}

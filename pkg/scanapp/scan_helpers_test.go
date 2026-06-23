@@ -616,19 +616,19 @@ func TestRecordFromScanTask_WhenMapped_PreservesTaskMetadata(t *testing.T) {
 		ResponseTimeMS: 7,
 	})
 
-	if record.IP != "10.0.0.8" || record.IPCidr != "10.0.0.0/24" || record.Port != 443 {
+	if record.IP() != "10.0.0.8" || record.IPCidr() != "10.0.0.0/24" || record.Port() != 443 {
 		t.Fatalf("unexpected primary fields: %+v", record)
 	}
-	if record.FabName != "fab-1" || record.CIDRName != "web-tier" || record.ServiceLabel != "https" {
+	if record.FabName() != "fab-1" || record.CIDRName() != "web-tier" || record.ServiceLabel() != "https" {
 		t.Fatalf("unexpected metadata fields: %+v", record)
 	}
-	if record.Decision != "accept" || record.PolicyID != "P-1" || record.Reason != "approved" {
+	if record.Decision() != "accept" || record.PolicyID() != "P-1" || record.Reason() != "approved" {
 		t.Fatalf("unexpected policy fields: %+v", record)
 	}
-	if record.ExecutionKey != "10.0.0.8:443/tcp" || record.SrcIP != "192.168.1.10" || record.SrcNetworkSegment != "192.168.1.0/24" {
+	if record.ExecutionKey() != "10.0.0.8:443/tcp" || record.SrcIP() != "192.168.1.10" || record.SrcNetworkSegment() != "192.168.1.0/24" {
 		t.Fatalf("unexpected execution metadata: %+v", record)
 	}
-	if record.Status != "open" || record.ResponseMS != 7 {
+	if record.Status() != "open" || record.ResponseMS() != 7 {
 		t.Fatalf("unexpected scan result mapping: %+v", record)
 	}
 }

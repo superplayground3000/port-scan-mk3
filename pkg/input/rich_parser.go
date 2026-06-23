@@ -1,3 +1,40 @@
+// Package input parses and validates CSV inputs for the port scanner.
+//
+// It supports two input modes:
+//
+//   - Basic CIDR mode: CSV with ip and ip_cidr columns, loaded via LoadCIDRs or LoadCIDRsWithColumns.
+//   - Rich mode: CSV with structured firewall-policy columns (src_ip, dst_ip, port, decision, etc.).
+//     Rich mode is auto-detected by detectRichHeaderIndices and parsed via ParseRichRows.
+//
+// # Function Flow
+//
+//	CSV File
+//	  |
+//	  v
+//	LoadCIDRs / LoadCIDRsWithColumns
+//	  |
+//	  v
+//	detectRichHeaderIndices  ── rich ──> ParseRichRows
+//	  |
+//	  | basic
+//	  v
+//	Parse CIDRRecord fields
+//	  |
+//	  v
+//	ValidateIPRows (duplicate check + containment)
+//	  |
+//	  v
+//	[]CIDRRecord
+//
+// # Example
+//
+//	records, err := input.LoadCIDRsWithColumns(os.Stdin, "ip", "ip_cidr")
+//	if err != nil {
+//	    log.Fatalf("load failed: %v", err)
+//	}
+//	if err := input.ValidateIPRows(records); err != nil {
+//	    log.Fatalf("validation failed: %v", err)
+//	}
 package input
 
 import (
@@ -6,12 +43,39 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/task"
+	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
-// ParseRichRows parses and validates rich CIDR input rows. It keeps one
-// row-level result per source row (valid or invalid). Valid rows are converted
-// into CIDRRecord values consumable by downstream scan runtime code.
+// ParseRichRows parses and validates rich-mode CIDR input rows.
+//
+// It processes raw CSV rows (with header already stripped) using the column index map
+// returned by detectRichHeaderIndices. Each input row produces exactly one CIDRRecord
+// in the output slice — valid rows carry full parsed data, and invalid rows carry
+// a populated ValidationCode and ValidationError for diagnostics.
+//
+// # Parameters
+//
+//	rows: Raw CSV rows with header at index 0 (skipped during parsing).
+//	idx:  Map of canonicalized header names to column indices, from detectRichHeaderIndices.
+//
+// # Returns
+//
+//	[]CIDRRecord on success (including invalid rows with IsValid=false).
+//	RichParseSummary with row-level statistics.
+//	Error only when all rows are invalid or a structural failure occurs.
+//
+// # Required Header Fields
+//
+//	RichFieldSrcIP, RichFieldSrcNetworkSegment, RichFieldDstIP, RichFieldDstNetworkSegment,
+//	RichFieldServiceLabel, RichFieldProtocol, RichFieldPort, RichFieldDecision,
+//	RichFieldPolicyID, RichFieldReason
+//
+// # Example
+//
+//	headerIdx, ok := detectRichHeaderIndices(headerRow)
+//	if ok {
+//	    records, summary, err := input.ParseRichRows(allRows, headerIdx)
+//	}
 func ParseRichRows(rows [][]string, idx map[string]int) ([]CIDRRecord, RichParseSummary, error) {
 	summary := RichParseSummary{
 		TotalRows:       max(0, len(rows)-1),
@@ -79,22 +143,36 @@ func parseRichRow(row []string, rowNumber int, idx map[string]int) (CIDRRecord, 
 		}
 	}
 
-	srcIP := net.ParseIP(srcIPRaw).To4()
+	srcIP := net.ParseIP(srcIPRaw)
 	if srcIP == nil {
 		return CIDRRecord{}, ValidationInvalidSrcIP, fmt.Errorf("invalid src_ip %q", srcIPRaw)
 	}
-	dstIP := net.ParseIP(dstIPRaw).To4()
+	srcIP = srcIP.To4()
+	if srcIP == nil {
+		return CIDRRecord{}, ValidationInvalidSrcIP, fmt.Errorf("src_ip %q is not an IPv4 address", srcIPRaw)
+	}
+	dstIP := net.ParseIP(dstIPRaw)
 	if dstIP == nil {
 		return CIDRRecord{}, ValidationInvalidDstIP, fmt.Errorf("invalid dst_ip %q", dstIPRaw)
 	}
+	dstIP = dstIP.To4()
+	if dstIP == nil {
+		return CIDRRecord{}, ValidationInvalidDstIP, fmt.Errorf("dst_ip %q is not an IPv4 address", dstIPRaw)
+	}
 
 	_, srcSeg, err := net.ParseCIDR(srcSegRaw)
-	if err != nil || srcSeg.IP.To4() == nil {
+	if err != nil {
 		return CIDRRecord{}, ValidationInvalidSrcSegment, fmt.Errorf("invalid src_network_segment %q", srcSegRaw)
 	}
+	if srcSeg.IP.To4() == nil {
+		return CIDRRecord{}, ValidationInvalidSrcSegment, fmt.Errorf("src_network_segment %q is not an IPv4 address", srcSegRaw)
+	}
 	_, dstSeg, err := net.ParseCIDR(dstSegRaw)
-	if err != nil || dstSeg.IP.To4() == nil {
+	if err != nil {
 		return CIDRRecord{}, ValidationInvalidDstSegment, fmt.Errorf("invalid dst_network_segment %q", dstSegRaw)
+	}
+	if dstSeg.IP.To4() == nil {
+		return CIDRRecord{}, ValidationInvalidDstSegment, fmt.Errorf("dst_network_segment %q is not an IPv4 address", dstSegRaw)
 	}
 	if !srcSeg.Contains(srcIP) {
 		return CIDRRecord{}, ValidationSrcContainmentFail, fmt.Errorf("src_ip %s not in src_network_segment %s", srcIP.String(), srcSeg.String())
@@ -115,7 +193,7 @@ func parseRichRow(row []string, rowNumber int, idx map[string]int) (CIDRRecord, 
 	if err != nil || port < 1 || port > 65535 {
 		return CIDRRecord{}, ValidationInvalidPort, fmt.Errorf("invalid port %q", portRaw)
 	}
-	key, err := task.BuildExecutionKey(dstIP.String(), port, protocol)
+	key, err := netutil.BuildExecutionKey(dstIP.String(), port, protocol)
 	if err != nil {
 		return CIDRRecord{}, ValidationInvalidPort, err
 	}

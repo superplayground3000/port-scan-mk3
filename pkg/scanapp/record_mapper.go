@@ -5,7 +5,13 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
-func recordFromScanTask(task scanTask, res scanner.Result) writer.Record {
+func recordFromScanTask(task scanTask, res scanner.Result) ScanRecord {
+	return AsScanRecord(recordToWriterRecord(task, res))
+}
+
+// recordToWriterRecord creates a writer.Record from a scan task and result.
+// This helper exists to build the record data before converting to ScanRecord.
+func recordToWriterRecord(task scanTask, res scanner.Result) writer.Record {
 	return writer.Record{
 		IP:                res.IP,
 		IPCidr:            task.ipCidr,

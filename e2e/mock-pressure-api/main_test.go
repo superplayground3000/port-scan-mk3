@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestNewPressureHandler_OK(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
 
-	newPressureHandler("ok", 42, 0)(rec, req)
+	newPressureHandler("ok", 0, newPressureState(42, nil, false))(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", rec.Code)
@@ -31,7 +32,7 @@ func TestNewPressureHandler_Fail(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
 
-	newPressureHandler("fail", 0, 0)(rec, req)
+	newPressureHandler("fail", 0, newPressureState(0, nil, false))(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
@@ -41,7 +42,7 @@ func TestNewPressureHandler_Timeout(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
 
-	newPressureHandler("timeout", 7, 1)(rec, req)
+	newPressureHandler("timeout", 1, newPressureState(7, nil, false))(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", rec.Code)
@@ -52,6 +53,182 @@ func TestNewPressureHandler_Timeout(t *testing.T) {
 	}
 	if body["pressure"] != 7 {
 		t.Fatalf("unexpected pressure: %v", body)
+	}
+}
+
+func TestNewPressureHandler_OKSequence(t *testing.T) {
+	handler := newPressureHandler("ok", 0, newPressureState(0, []int{20, 95, 30}, false))
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec1.Code)
+	}
+	var body1 map[string]int
+	if err := json.Unmarshal(rec1.Body.Bytes(), &body1); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if body1["pressure"] != 20 {
+		t.Fatalf("expected first pressure=20, got %v", body1["pressure"])
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(rec2, req2)
+	var body2 map[string]int
+	if err := json.Unmarshal(rec2.Body.Bytes(), &body2); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if body2["pressure"] != 95 {
+		t.Fatalf("expected second pressure=95, got %v", body2["pressure"])
+	}
+
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(rec3, req3)
+	var body3 map[string]int
+	if err := json.Unmarshal(rec3.Body.Bytes(), &body3); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if body3["pressure"] != 30 {
+		t.Fatalf("expected third pressure=30, got %v", body3["pressure"])
+	}
+}
+
+func TestNewPressureHandler_PostPressureThenResume(t *testing.T) {
+	handler := newPressureHandler("ok", 0, newPressureState(20, nil, false))
+
+	pauseRec := httptest.NewRecorder()
+	pauseReq := httptest.NewRequest(http.MethodPost, "/api/pressure", strings.NewReader(`{"pressure":95}`))
+	pauseReq.Header.Set("Content-Type", "application/json")
+	handler(pauseRec, pauseReq)
+	if pauseRec.Code != http.StatusOK {
+		t.Fatalf("unexpected status from pause update: %d", pauseRec.Code)
+	}
+
+	getPauseRec := httptest.NewRecorder()
+	getPauseReq := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(getPauseRec, getPauseReq)
+	var pausedBody map[string]int
+	if err := json.Unmarshal(getPauseRec.Body.Bytes(), &pausedBody); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if pausedBody["pressure"] != 95 {
+		t.Fatalf("expected paused pressure=95, got %v", pausedBody["pressure"])
+	}
+
+	resumeRec := httptest.NewRecorder()
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pressure", strings.NewReader(`{"pressure":20}`))
+	resumeReq.Header.Set("Content-Type", "application/json")
+	handler(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("unexpected status from resume update: %d", resumeRec.Code)
+	}
+
+	getResumeRec := httptest.NewRecorder()
+	getResumeReq := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(getResumeRec, getResumeReq)
+	var resumedBody map[string]int
+	if err := json.Unmarshal(getResumeRec.Body.Bytes(), &resumedBody); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if resumedBody["pressure"] != 20 {
+		t.Fatalf("expected resumed pressure=20, got %v", resumedBody["pressure"])
+	}
+}
+
+func TestParsePressureSequence(t *testing.T) {
+	values, err := parsePressureSequence("20,95,30")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(values) != 3 || values[0] != 20 || values[1] != 95 || values[2] != 30 {
+		t.Fatalf("unexpected parsed values: %#v", values)
+	}
+	if _, err := parsePressureSequence("20,bad,30"); err == nil {
+		t.Fatal("expected parse error for invalid sequence token")
+	}
+}
+
+func TestLoadResponseBodyConfig_SingleObject(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "single.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"response_body":{"pressure":42}}`), 0o600); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	body, err := loadResponseBodyConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	var decoded map[string]int
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if decoded["pressure"] != 42 {
+		t.Fatalf("expected pressure=42, got %d", decoded["pressure"])
+	}
+}
+
+func TestLoadResponseBodyConfig_TwoObjects(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "two.json")
+	content := `{"response_body":[{"data":{"Percent":95}},{"data":{"Percent":30}}]}`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	body, err := loadResponseBodyConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if len(decoded) != 2 {
+		t.Fatalf("expected 2 objects, got %d", len(decoded))
+	}
+}
+
+func TestResponseConfigStore_ReloadUpdatesPressureResponseBody(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "reload.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"response_body":{"pressure":20}}`), 0o600); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	store, err := newResponseConfigStore(cfgPath)
+	if err != nil {
+		t.Fatalf("new config store failed: %v", err)
+	}
+	handler := newPressureHandlerWithConfig("ok", 0, newPressureState(20, nil, false), store)
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(rec1, req1)
+	var first map[string]int
+	if err := json.Unmarshal(rec1.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first body failed: %v", err)
+	}
+	if first["pressure"] != 20 {
+		t.Fatalf("expected first pressure=20, got %v", first["pressure"])
+	}
+
+	if err := os.WriteFile(cfgPath, []byte(`{"response_body":[{"data":{"Percent":95}},{"data":{"Percent":20}},{"data":{"Percent":10}}]}`), 0o600); err != nil {
+		t.Fatalf("rewrite config failed: %v", err)
+	}
+	if err := store.Reload(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)
+	handler(rec2, req2)
+	var second []map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &second); err != nil {
+		t.Fatalf("decode second body failed: %v", err)
+	}
+	if len(second) != 3 {
+		t.Fatalf("expected 3 objects after reload, got %d", len(second))
 	}
 }
 

@@ -98,7 +98,7 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -1118,7 +1118,7 @@ func TestPollPressureAPI_WhenPressureCrossesThreshold_TogglesPauseAndLogsTransit
 	if ctrl.IsPaused() {
 		t.Fatal("expected resumed after pressure drop")
 	}
-	if !strings.Contains(logOut.String(), "掃描已自動暫停") || !strings.Contains(logOut.String(), "掃描已自動恢復") {
+	if !strings.Contains(logOut.String(), "scan automatically paused") || !strings.Contains(logOut.String(), "scan automatically resumed") {
 		t.Fatalf("expected pause/resume logs, got: %s", logOut.String())
 	}
 }
@@ -1213,7 +1213,7 @@ func TestStartManualPauseMonitor_WhenManualPauseChanges_LogsStateTransitions(t *
 	time.Sleep(50 * time.Millisecond)
 
 	logs := out.String()
-	if !strings.Contains(logs, "掃描已手動暫停") || !strings.Contains(logs, "掃描已手動恢復") {
+	if !strings.Contains(logs, "scan manually paused") || !strings.Contains(logs, "scan manually resumed") {
 		t.Fatalf("expected manual pause/resume logs, got: %s", logs)
 	}
 }
@@ -1223,7 +1223,7 @@ func TestRun_WhenIPColumnListsSubset_ScansOnlyListedIPs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -1287,7 +1287,7 @@ func TestRun_WhenCIDRColumnNamesBlank_UsesDefaultInputColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -1349,7 +1349,7 @@ func TestRun_WhenScanCompletes_WritesOpenRecordsToOpenedResultsCSV(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -1413,7 +1413,7 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()

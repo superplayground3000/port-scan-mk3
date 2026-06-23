@@ -1,3 +1,24 @@
+// Package state manages chunk resume state persistence for the port scanner.
+//
+// Resume state captures the progress of each CIDR chunk (scanned count, next index,
+// status) so that an interrupted scan can be restarted from where it left off.
+// State is stored as JSON and read/written via Save and Load.
+//
+// # Function Flow
+//
+//	Scan Interrupted
+//	  |
+//	  v
+//	collectChunkStates  ── []task.Chunk
+//	  |
+//	  v
+//	state.Save(resume_path)  → JSON file
+//	  |
+//	  v (on restart)
+//	state.Load(resume_path)  ← JSON file
+//	  |
+//	  v
+//	loadOrBuildChunks  ── resumes with existing chunks
 package state
 
 import (
@@ -123,12 +144,32 @@ func decodeStrictJSON(data []byte, target any) error {
 	return nil
 }
 
-// Save writes chunk resume state as JSON.
+// Save serializes chunk resume state to a JSON file at the given path via the
+// current snapshot envelope. The file is written with indentation for
+// readability.
+//
+// # Parameters
+//
+//	path:   Destination file path.
+//	chunks: Chunk state to persist.
+//
+// # Returns
+//
+//	nil on success; error if marshaling or file writing fails.
 func Save(path string, chunks []task.Chunk) error {
 	return SaveSnapshot(path, Snapshot{Chunks: chunks})
 }
 
-// Load reads chunk resume state from JSON file.
+// Load reads and deserializes a resume-state JSON file into a slice of task.Chunk.
+// It accepts both the current snapshot envelope and the legacy chunk-array format.
+//
+// # Parameters
+//
+//	path: Source file path (written by Save).
+//
+// # Returns
+//
+//	[]task.Chunk on success; error if the file cannot be read or the JSON is malformed.
 func Load(path string) ([]task.Chunk, error) {
 	snap, err := LoadSnapshot(path)
 	if err != nil {

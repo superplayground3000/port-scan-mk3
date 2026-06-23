@@ -51,25 +51,6 @@ func (r *dashboardSnapshotRecorder) snapshots() []dashboardSnapshot {
 	return out
 }
 
-type sequencePressureFetcher struct {
-	mu     sync.Mutex
-	values []float64
-}
-
-func (f *sequencePressureFetcher) Fetch(context.Context) (float64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if len(f.values) == 0 {
-		return 0.0, errors.New("no pressure values configured")
-	}
-	value := f.values[0]
-	if len(f.values) > 1 {
-		f.values = f.values[1:]
-	}
-	return value, nil
-}
-
 type scriptedPressureResult struct {
 	pressure float64
 	err      error
@@ -92,6 +73,36 @@ func (f *scriptedPressureFetcher) Fetch(context.Context) (float64, error) {
 		f.results = f.results[1:]
 	}
 	return result.pressure, result.err
+}
+
+type scriptedSourcePressureResult struct {
+	pressure float64
+	sources  []PressureSourceResult
+	err      error
+}
+
+type scriptedSourcePressureFetcher struct {
+	mu      sync.Mutex
+	results []scriptedSourcePressureResult
+}
+
+func (f *scriptedSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
+	pressure, _, err := f.FetchWithSourceStatuses(ctx)
+	return pressure, err
+}
+
+func (f *scriptedSourcePressureFetcher) FetchWithSourceStatuses(context.Context) (float64, []PressureSourceResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if len(f.results) == 0 {
+		return 0.0, nil, errors.New("no scripted source pressure results configured")
+	}
+	result := f.results[0]
+	if len(f.results) > 1 {
+		f.results = f.results[1:]
+	}
+	return result.pressure, result.sources, result.err
 }
 
 type pressureTelemetryRecorder struct {
@@ -137,7 +148,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -202,6 +213,101 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	}
 }
 
+func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	outFile := filepath.Join(tmp, "scan_results.csv")
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          50 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		PressureInterval: 5 * time.Second,
+		DisableAPI:       true,
+		LogLevel:         "info",
+		Format:           "json",
+	}
+
+	stderr := &bytes.Buffer{}
+	err := Run(context.Background(), cfg, io.Discard, stderr, RunOptions{
+		DisableKeyboard: true,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("dial failed for observability test")
+		},
+		ProgressInterval: 1,
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	logs := stderr.String()
+	if got := strings.Count(logs, `"msg":"scan_result"`); got != 1 {
+		t.Fatalf("expected exactly 1 scan_result event for 1 task, got %d, logs=%s", got, logs)
+	}
+}
+
+func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	outFile := filepath.Join(tmp, "scan_results.csv")
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 3 tasks with workers=1 and queue size=2 reproduces blocked dispatch when worker exits unexpectedly.
+	if err := os.WriteFile(portFile, []byte("1/tcp\n2/tcp\n3/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          50 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		PressureInterval: 5 * time.Second,
+		DisableAPI:       true,
+		LogLevel:         "info",
+		Format:           "json",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	stderr := &bytes.Buffer{}
+	err := Run(ctx, cfg, io.Discard, stderr, RunOptions{
+		DisableKeyboard: true,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			panic("boom in dial")
+		},
+		ProgressInterval: 1,
+	})
+	if err == nil {
+		t.Fatal("expected runtime error when executor worker panics")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected runtime panic error, got deadline_exceeded: %v", err)
+	}
+	if !strings.Contains(err.Error(), "executor worker panic") {
+		t.Fatalf("expected panic error message, got: %v", err)
+	}
+}
+
 func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
@@ -237,8 +343,30 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 			time.Sleep(25 * time.Millisecond)
 			return nil, errors.New("dial refused for test")
 		},
-		PressureLimit:             90,
-		PressureFetcher:           &sequencePressureFetcher{values: []float64{95, 95, 20, 20, 20}},
+		PressureLimit: 90,
+		PressureFetcher: &scriptedSourcePressureFetcher{results: []scriptedSourcePressureResult{
+			{
+				pressure: 95,
+				sources: []PressureSourceResult{
+					{Name: "src1", Pressure: 95},
+					{Name: "src2", Pressure: 44},
+				},
+			},
+			{
+				pressure: 20,
+				sources: []PressureSourceResult{
+					{Name: "src1", Pressure: 20},
+					{Name: "src2", Pressure: 18},
+				},
+			},
+			{
+				pressure: 20,
+				sources: []PressureSourceResult{
+					{Name: "src1", Pressure: 20},
+					{Name: "src2", Pressure: 18},
+				},
+			},
+		}},
 		dashboardTerminalDetector: func(io.Writer) bool { return true },
 		dashboardRefreshInterval:  10 * time.Millisecond,
 		dashboardRenderer:         recorder,
@@ -261,6 +389,7 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		sawControllerState bool
 		sawPressure        bool
 		sawAPIHealth       bool
+		sawAPISources      bool
 	)
 	for _, snap := range snaps {
 		if snap.CurrentCIDR != "" {
@@ -286,6 +415,9 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		if snap.APIHealthText == "ok" {
 			sawAPIHealth = true
 		}
+		if len(snap.APISources) == 2 && snap.APISources[0].Name == "src1" && snap.APISources[1].Name == "src2" {
+			sawAPISources = true
+		}
 	}
 
 	if !sawCIDR {
@@ -308,6 +440,9 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	}
 	if !sawAPIHealth {
 		t.Fatalf("expected API health text update in snapshots, got %#v", snaps)
+	}
+	if !sawAPISources {
+		t.Fatalf("expected per-source API health in snapshots, got %#v", snaps)
 	}
 }
 
@@ -438,7 +573,7 @@ func TestPollPressureAPI_WhenJSONLoggerEnabled_EmitsPauseResumeMessages(t *testi
 	if !strings.Contains(logs, `"level":"info"`) {
 		t.Fatalf("expected json info logs, got %s", logs)
 	}
-	if !strings.Contains(logs, "掃描已自動暫停") || !strings.Contains(logs, "掃描已自動恢復") {
+	if !strings.Contains(logs, "scan automatically paused") || !strings.Contains(logs, "scan automatically resumed") {
 		t.Fatalf("expected pause/resume messages, got %s", logs)
 	}
 }
@@ -522,13 +657,13 @@ func TestEmitScanResultEvents_WhenProgressStepReached_EmitsProgressSnapshot(t *t
 
 	emitScanResultEvents(stdout, logger, ctrl, 2, runtimes, scanResult{
 		chunkIdx: 0,
-		record: writer.Record{
+		record: AsScanRecord(writer.Record{
 			IP:         "10.0.0.1",
 			IPCidr:     "10.0.0.0/24",
 			Port:       80,
 			Status:     "open",
 			ResponseMS: 7,
-		},
+		}),
 	}, summary, false)
 
 	if !strings.Contains(stdout.String(), "progress cidr=10.0.0.0/24 scanned=1/4 paused=false") {

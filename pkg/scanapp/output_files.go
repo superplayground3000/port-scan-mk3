@@ -1,16 +1,19 @@
 package scanapp
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
+// batchOutputs holds file handles and writers for scan result output.
+// The writer fields use the RecordWriter interface to decouple from concrete types.
 type batchOutputs struct {
 	scanFile       *os.File
 	openOnlyFile   *os.File
-	scanWriter     *writer.CSVWriter
-	openOnlyWriter *writer.OpenOnlyWriter
+	scanWriter     RecordWriter
+	openOnlyWriter RecordWriter
 	scanFinalPath  string
 	openFinalPath  string
 }
@@ -30,21 +33,29 @@ func openBatchOutputs(scanPath, openPath string) (*batchOutputs, error) {
 
 	scanWriter := writer.NewCSVWriter(scanFile)
 	if err := scanWriter.WriteHeader(); err != nil {
-		_ = scanFile.Close()
+		if closeErr := scanFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to close scan file: %v\n", closeErr)
+		}
 		return nil, err
 	}
 
 	openTmpPath := openPath + ".tmp"
 	openOnlyFile, err := os.Create(openTmpPath)
 	if err != nil {
-		_ = scanFile.Close()
+		if closeErr := scanFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to close scan file: %v\n", closeErr)
+		}
 		return nil, err
 	}
 
 	openOnlyWriter := writer.NewOpenOnlyWriter(writer.NewCSVWriter(openOnlyFile))
 	if err := openOnlyWriter.WriteHeader(); err != nil {
-		_ = openOnlyFile.Close()
-		_ = scanFile.Close()
+		if closeErr := openOnlyFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to close open-only file: %v\n", closeErr)
+		}
+		if closeErr := scanFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to close scan file: %v\n", closeErr)
+		}
 		return nil, err
 	}
 

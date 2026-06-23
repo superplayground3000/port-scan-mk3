@@ -19,7 +19,9 @@ type resultSummary struct {
 	timeoutCount int
 }
 
-func writeScanRecord(csvWriter *writer.CSVWriter, openOnlyWriter *writer.OpenOnlyWriter, record writer.Record) error {
+// writeScanRecord writes a scan record to both the full-results writer and
+// the open-only writer. Both writers must implement the RecordWriter interface.
+func writeScanRecord(csvWriter, openOnlyWriter RecordWriter, record writer.Record) error {
 	if err := csvWriter.Write(record); err != nil {
 		return err
 	}
@@ -37,9 +39,9 @@ func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSu
 
 	summary.written++
 	switch {
-	case strings.EqualFold(res.record.Status, "open"):
+	case strings.EqualFold(res.record.Status(), "open"):
 		summary.openCount++
-	case strings.Contains(strings.ToLower(res.record.Status), "timeout"):
+	case strings.Contains(strings.ToLower(res.record.Status()), "timeout"):
 		summary.timeoutCount++
 	default:
 		summary.closeCount++
@@ -48,10 +50,10 @@ func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSu
 }
 
 func emitScanResultEvents(stdout io.Writer, logger *scanLogger, ctrl *speedctrl.Controller, progressStep int, runtimes []*chunkRuntime, res scanResult, summary *resultSummary, quiet bool) {
-	logger.eventf("scan_result", res.record.IP, res.record.Port, "scanned", statusErrorCause(res.record.Status), map[string]any{
-		"status":           res.record.Status,
-		"response_time_ms": res.record.ResponseMS,
-		"cidr":             res.record.IPCidr,
+	logger.eventf("scan_result", res.record.IP(), res.record.Port(), "scanned", statusErrorCause(res.record.Status()), map[string]any{
+		"status":           res.record.Status(),
+		"response_time_ms": res.record.ResponseMS(),
+		"cidr":             res.record.IPCidr(),
 	})
 	if summary == nil || progressStep <= 0 || summary.written%progressStep != 0 || quiet {
 		return

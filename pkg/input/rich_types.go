@@ -1,5 +1,6 @@
 package input
 
+// Rich-mode column names, as they appear in CSV headers (case-insensitive).
 const (
 	RichFieldSrcIP             = "src_ip"
 	RichFieldSrcNetworkSegment = "src_network_segment"
@@ -26,10 +27,15 @@ var requiredRichFields = []string{
 	RichFieldReason,
 }
 
-// RichParseSummary keeps row-level parse outcomes for rich input mode.
+// RichParseSummary aggregates row-level parse outcomes for rich input mode.
+// It is returned by ParseRichRows and used to report diagnostics to callers.
 type RichParseSummary struct {
-	TotalRows       int
-	ValidRows       int
-	InvalidRows     int
+	// TotalRows is the number of data rows processed (header row excluded).
+	TotalRows int
+	// ValidRows is the count of rows that parsed successfully.
+	ValidRows int
+	// InvalidRows is the count of rows that failed validation.
+	InvalidRows int
+	// FailureByReason maps a validation code to the number of rows that failed with that code.
 	FailureByReason map[string]int
 }

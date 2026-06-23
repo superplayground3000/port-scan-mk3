@@ -35,6 +35,58 @@ go run ./cmd/port-scan scan \
   -disable-pre-scan-ping=true
 ```
 
+## Pre-processing Workflows
+
+Two tools prepare input files for `port-scan`. Both output a port-scan-ready rich CSV at
+`<output-dir>/<fab_name>/<timestamp>/input.csv`.
+
+### From-Scratch Flow
+
+Use when scanning a data center for the first time or starting fresh.
+`preprocess` filters a firewall-policy rich CSV, removing any target whose
+`dst_network_segment` falls inside a closed CIDR.
+
+```bash
+# Step 1 — filter targets
+go run ./cmd/preprocess \
+  --input filtered-targets/dc-east/20260503T120000Z/opened_targets.csv \
+  --cleaned-cidrs cleaned_cidrs.csv \
+  --fab-name dc-east \
+  --output-dir ./scan-input
+
+# Step 2 — scan (replace <timestamp> with the path printed by step 1)
+go run ./cmd/port-scan scan \
+  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
+  -disable-api=true
+```
+
+### Re-scan Flow
+
+Use when re-scanning previously discovered open targets from a `host,port` CSV.
+`enrich-targets` promotes it to rich format; `preprocess` then applies the same
+CIDR filter.
+
+```bash
+# Step 1 — enrich minimal CSV to rich format
+go run ./cmd/enrich-targets \
+  --input previous-scanned/dc-east/20260503T120000Z/opened_targets.csv \
+  --cidr-list cidrs.csv \
+  --service-map services.csv \
+  --output enriched.csv
+
+# Step 2 — filter enriched targets
+go run ./cmd/preprocess \
+  --input enriched.csv \
+  --cleaned-cidrs cleaned_cidrs.csv \
+  --fab-name dc-east \
+  --output-dir ./scan-input
+
+# Step 3 — scan (replace <timestamp> with the path printed by step 2)
+go run ./cmd/port-scan scan \
+  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
+  -disable-api=true
+```
+
 ## Input Contracts
 
 - CIDR CSV (default mode):
@@ -59,6 +111,74 @@ Exit code behavior:
 - `1`: validation failed (`validate`) or scan runtime error (`scan`)
 - `2`: CLI parsing/config error
 - `130`: scan canceled by `SIGINT` (`Ctrl+C`)
+
+## Architecture and Data Flow
+
+### port-scan Pipeline
+
+```
+CLI Input                 CSV Files                    Processing                 Output
+=========                 ========                     ==========                 ======
+
+ args/flags ─────┐
+                 │
+  [port-scan] ───┼──> Parse flags ──> Validate inputs
+                 │        │                │
+                 │        v                v
+                 │   config.Config    validate.Inputs()
+                 │        │                │
+                 │        v                v
+                 │   CIDR CSV ──> cidrutil.ParseCIDRs() ──> task.Selector
+                 │        │                              │
+                 │        v                              v
+                 │   Port list ──> task.NewPortExpander() ──> PortTask
+                 │        │                              │
+                 │        v                              v
+                 │   Task expansion ──> task.ExpandAll() ──> []Task
+                 │        |                              |
+                 |        v                              v
+                 │   Worker pool <── rate control ──> scanner.ScanTCP()
+                 |        |                              |
+                 |        v                              v
+                 +-------> Batch writer ──> scan_results-*.csv
+                          (timestamped, collision-safe)   opened_results-*.csv
+```
+
+### Pre-processing Pipeline
+
+```
+Mode 1 — From Scratch:
+
+  Filtered targets CSV (rich) ──────────────────────────────> preprocess ──> output/<fab>/<ts>/input.csv
+                                                                   │
+                                                          cleaned_cidrs.csv
+                                                       (drops closed-CIDR targets)
+
+Mode 2 — Re-scan:
+
+  Opened targets CSV (host,port) ──> enrich-targets ──> enriched rich CSV ──> preprocess ──> output/<fab>/<ts>/input.csv
+                                           │                                       │
+                                  cidrs.csv + services.csv               cleaned_cidrs.csv
+                                  (fills 10 rich columns)             (drops closed-CIDR targets)
+```
+
+### cidr-compare Pipeline
+
+```
+Deny CSV ──> IntervalTree.Insert() ──┐
+                                     ├──> IntervalTree.Query() ──> Matching pairs
+Open CSV ──> OpenCSVReader ──────────┘         │
+                                              v
+                                     stdout: "deny_cidr,open_cidr\ndeny,open\n..."
+```
+
+### csv-transform Pipeline
+
+```
+Input CSV ──> spreadsheet.Reader ──> Column index ──> Filter rows ──> Host resolve ──> Port expand ──> Output CSV
+              OpenSheet()            (host, port,   (Pass != FALSE)  (DNS lookup)      (ranges to    (Rich CSV
+                                  pass columns)                                     individuals)   format)
+```
 
 ## How the Scan Pipeline Works
 
@@ -95,6 +215,139 @@ Exit code behavior:
 - If `stderr` is not a TTY, or if `-format json` is selected, `scan` falls back to non-rich output.
 - No new CLI flags are added for the UI in this version.
 
+## Tools Reference
+
+### port-scan
+
+TCP port scanner with pressure-aware pacing and resume support.
+
+**Commands:**
+- `port-scan validate [flags]` - Validate input files only (no network scan)
+- `port-scan scan [flags]` - Run full scan orchestration
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-cidr-file` | string | required | Path to CIDR CSV input file |
+| `-port-file` | string | optional | Path to port list file (`<port>/tcp` lines); required in default mode |
+| `-output` | string | `scan_results.csv` | Output anchor path for scan batch files |
+| `-timeout` | duration | `100ms` | TCP dial timeout per probe |
+| `-delay` | duration | `10ms` | Dispatch delay between tasks |
+| `-bucket-rate` | int | `100` | Leaky bucket refill rate |
+| `-bucket-capacity` | int | `100` | Leaky bucket capacity |
+| `-workers` | int | `10` | Number of scan workers |
+| `-pressure-api` | string | `http://localhost:8080/api/pressure` | Pressure API endpoint |
+| `-pressure-interval` | duration | `5s` | Poll interval for pressure API (duration or integer seconds) |
+| `-pressure-use-auth` | bool | `false` | Use authenticated pressure fetcher with OAuth flow |
+| `-pressure-auth-url` | string | (empty) | OAuth auth endpoint URL (required with `-pressure-use-auth`) |
+| `-pressure-data-url` | string | (empty) | Comma-separated list of pressure data endpoint URLs (required with `-pressure-use-auth`; single URL is backward-compatible) |
+| `-pressure-client-id` | string | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
+| `-pressure-client-secret` | string | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
+| `-disable-api` | bool | `false` | Disable pressure API polling completely |
+| `-quiet` | bool | `false` | Suppress console logs, keep only pressure API logs |
+| `-resume` | string | (empty) | Resume state file path; if set, load/save uses this exact path |
+| `-log-level` | string | `info` | Runtime log level: `debug`, `info`, `error` |
+| `-format` | string | `human` | Output format: `human` or `json` |
+| `-cidr-ip-col` | string | `ip` | Case-sensitive CIDR CSV column name for IP selector source |
+| `-cidr-ip-cidr-col` | string | `ip_cidr` | Case-sensitive CIDR CSV column name for boundary CIDR source |
+
+### enrich-targets
+
+Enriches a minimal `host,port` CSV into rich CSV format required by `port-scan` rich mode and `preprocess`.
+
+**Usage:**
+```bash
+enrich-targets --input <file> --cidr-list <file> --service-map <file> --output <file>
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--input` | string | required | Path to opened targets CSV (`host,port`) |
+| `--cidr-list` | string | required | Path to CIDR reference CSV for host-to-CIDR mapping |
+| `--service-map` | string | required | Path to port-to-service-label CSV |
+| `--output` | string | required | Path to write enriched rich CSV |
+
+**Output format:** Rich CSV with all ten required columns: `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`, `service_label`, `protocol`, `port`, `decision`, `matched_policy_id`, `reason`
+
+### preprocess
+
+Filters a rich CSV by removing targets whose `dst_network_segment` is contained within a closed CIDR, then writes a port-scan-ready input file.
+
+**Usage:**
+```bash
+preprocess --input <file> --cleaned-cidrs <file> --fab-name <name> --output-dir <dir>
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--input` | string | required | Path to rich CSV (from `enrich-targets` or filtered targets) |
+| `--cleaned-cidrs` | string | required | Path to cleaned CIDRs CSV (`fab`, `segment`, `status`) |
+| `--fab-name` | string | required | Data center / fabric name (filters CIDRs for this fabric) |
+| `--output-dir` | string | required | Base output directory; writes to `<output-dir>/<fab-name>/<timestamp>/input.csv` |
+
+**Output:** Timestamped CSV at `<output-dir>/<fab-name>/<timestamp>/input.csv` plus a summary (total / kept / dropped) on stderr.
+
+### cidr-compare
+
+Compare open CIDRs against deny CIDRs using an interval tree for efficient lookup.
+
+**Usage:**
+```bash
+cidr-compare -deny-file <file> -open-file <file>
+```
+
+**Environment Variables:**
+- `CIDR_COMPARE_DENY_FILE` - Path to deny CSV file
+- `CIDR_COMPARE_OPEN_FILE` - Path to open CSV file
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-deny-file` | string | required | Path to deny CSV file (or CIDR_COMPARE_DENY_FILE env var) |
+| `-open-file` | string | required | Path to open CSV file (or CIDR_COMPARE_OPEN_FILE env var) |
+
+**Input format (deny CSV):** CSV with columns `dst_network_segment` (CIDR notation, e.g., `10.0.0.0/24`) and `decision`. Falls back to columns 0 and 1 if headers are missing.
+
+**Input format (open CSV):** CSV with columns `segment` (CIDR notation) and `status`. Falls back to columns 0 and 1 if headers are missing.
+
+**Output format:** CSV with header `deny_cidr,open_cidr` followed by matching pairs where the deny CIDR contains the open CIDR.
+
+### csv-transform
+
+Transforms a spreadsheet-style CSV (e.g. an Excel export with `Host`, `Port`, `Pass the test` columns) into rich CSV format via host resolution and port expansion. This is a separate preparation path for spreadsheet-sourced inputs and is not part of the `enrich-targets`/`preprocess` workflow.
+
+**Usage:**
+```bash
+csv-transform -input <file> -output <file>
+```
+
+**Environment Variables:**
+- `TRANSFORM_INPUT` - Path to input CSV file
+- `TRANSFORM_OUTPUT` - Path to output CSV file
+- `TRANSFORM_SHEET_NAME` - Worksheet name (default: `all-runs`)
+- `TRANSFORM_HOST_COL` - Host column name (default: `Host`)
+- `TRANSFORM_PORT_COL` - Port column name (default: `Port`)
+- `TRANSFORM_PASS_COL` - Pass/fail column name (default: `Pass the test`)
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-input` | string | required | Path to input CSV file (or TRANSFORM_INPUT) |
+| `-output` | string | required | Path to output CSV file (or TRANSFORM_OUTPUT) |
+| `-sheet` | string | `all-runs` | Worksheet name (ignored for CSV) |
+| `-host-col` | string | `Host` | Host column name |
+| `-port-col` | string | `Port` | Port column name |
+| `-pass-col` | string | `Pass the test` | Pass/fail column name |
+
+**Output format:** Rich CSV with columns: `src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason`
+
 ## Flags Quick Reference
 
 This section lists high-impact flags. Full definitions are in [All flags](docs/cli/flags.md).
@@ -115,6 +368,10 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 ## Repository Map
 
 - `cmd/port-scan`: CLI composition root, command routing, user I/O, exit codes
+- `cmd/enrich-targets`: promotes `host,port` CSV to rich CSV format for re-scan workflows
+- `cmd/preprocess`: filters rich CSV by closed-CIDR containment, writes port-scan input
+- `cmd/cidr-compare`: CIDR interval-tree comparison utility
+- `cmd/csv-transform`: spreadsheet-to-rich-CSV transformer (Excel-export path)
 - `pkg/config`: flag parsing and configuration validation
 - `pkg/input`: CIDR/rich input loading and row-level validation
 - `pkg/task`: selector expansion and execution-key helpers
@@ -131,7 +388,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - IPv4 only (selectors, CIDR parsing, and expansion paths).
 - Port input accepts `<port>/tcp` only.
 - Pressure API polling fails hard after 3 consecutive failures.
-- Pressure threshold defaults to `90` and is not exposed as CLI flag.
+- Pressure threshold defaults to `60` and is not exposed as CLI flag.
 - Pause gate blocks new dispatch only; in-flight worker probes continue.
 - Dispatch order is chunk-serial (not cross-CIDR fair round-robin).
 - E2E requires Docker runtime and `docker compose`.
@@ -154,6 +411,10 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 
 - [All flags](docs/cli/flags.md)
 - [Scenario cookbook](docs/cli/scenarios.md)
+- [Pre-processing workflow spec](docs/specs/2026-04-16-preprocess-workflow-spec.md)
 - [E2E overview](docs/e2e/overview.md)
 - [Speed-control E2E](docs/e2e/speedcontrol.md)
 - [Architecture diagram](docs/architecture/diagram.html)
+
+---
+**Revised**: 2026-04-13 | **Author**: docs-team

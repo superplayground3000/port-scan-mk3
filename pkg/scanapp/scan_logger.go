@@ -8,6 +8,29 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/logx"
 )
 
+// Log event constants for structured logging. These ensure consistent event names
+// across the scanning pipeline and provide a single source of truth for log consumers.
+const (
+	// Scan result states
+	LogEventScanned     = "scanned"
+	LogEventError       = "error"
+	LogEventRuntimeErr  = "runtime_error"
+	LogEventNone        = "none"
+
+	// Bucket events
+	LogEventBucketWaitStart    = "bucket_wait_start"
+	LogEventBucketAcquired     = "bucket_acquired"
+	LogEventBucketAcquireError = "bucket_acquire_error"
+
+	// Gate events
+	LogEventGateWaitStart = "gate_wait_start"
+	LogEventGateReleased  = "gate_released"
+
+	// Task events
+	LogEventScanResult      = "scan_result"
+	LogEventScanProbeResult = "scan_probe_result"
+)
+
 type scanLogger struct {
 	level  int
 	asJSON bool

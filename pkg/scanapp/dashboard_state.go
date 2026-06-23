@@ -21,6 +21,15 @@ type dashboardSnapshot struct {
 	APIHealthText         string
 	LastPressureUpdateAt  time.Time
 	LastPressureFailureAt time.Time
+	APISources            []dashboardAPISourceSnapshot
+}
+
+type dashboardAPISourceSnapshot struct {
+	Name            string
+	PressurePercent int
+	HasPressure     bool
+	HealthText      string
+	LastUpdatedAt   time.Time
 }
 
 type dashboardState struct {
@@ -44,7 +53,18 @@ type dashboardState struct {
 	lastPressureUpdateAt  time.Time
 	lastPressureFailureAt time.Time
 
+	apiSourceOrder []string
+	apiSources     map[string]dashboardAPISourceState
+
 	now func() time.Time
+}
+
+type dashboardAPISourceState struct {
+	pressurePercent int
+	hasPressure     bool
+	failStreak      int
+	healthText      string
+	lastUpdatedAt   time.Time
 }
 
 func newDashboardState(total int, now func() time.Time) *dashboardState {
@@ -55,6 +75,7 @@ func newDashboardState(total int, now func() time.Time) *dashboardState {
 	return &dashboardState{
 		totalTasks:    total,
 		apiHealthText: "ok",
+		apiSources:    make(map[string]dashboardAPISourceState),
 		now:           now,
 	}
 }
@@ -123,6 +144,33 @@ func (s *dashboardState) OnPressureFailure(streak int, t time.Time) {
 	s.lastPressureFailureAt = t
 }
 
+func (s *dashboardState) OnPressureSourceSample(source string, pressure int, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	source = dashboardSourceName(source)
+	s.ensureAPISourceLocked(source)
+	s.apiSources[source] = dashboardAPISourceState{
+		pressurePercent: pressure,
+		hasPressure:     true,
+		healthText:      "ok",
+		lastUpdatedAt:   t,
+	}
+}
+
+func (s *dashboardState) OnPressureSourceFailure(source string, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	source = dashboardSourceName(source)
+	s.ensureAPISourceLocked(source)
+	sourceState := s.apiSources[source]
+	sourceState.failStreak++
+	sourceState.healthText = fmt.Sprintf("fail streak %d", sourceState.failStreak)
+	sourceState.lastUpdatedAt = t
+	s.apiSources[source] = sourceState
+}
+
 func (s *dashboardState) Snapshot() dashboardSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -144,7 +192,41 @@ func (s *dashboardState) Snapshot() dashboardSnapshot {
 		APIHealthText:         s.apiHealthText,
 		LastPressureUpdateAt:  s.lastPressureUpdateAt,
 		LastPressureFailureAt: s.lastPressureFailureAt,
+		APISources:            s.apiSourceSnapshotsLocked(),
 	}
+}
+
+func (s *dashboardState) ensureAPISourceLocked(source string) {
+	if _, ok := s.apiSources[source]; ok {
+		return
+	}
+	s.apiSourceOrder = append(s.apiSourceOrder, source)
+	s.apiSources[source] = dashboardAPISourceState{healthText: "ok"}
+}
+
+func (s *dashboardState) apiSourceSnapshotsLocked() []dashboardAPISourceSnapshot {
+	if len(s.apiSourceOrder) == 0 {
+		return nil
+	}
+	sources := make([]dashboardAPISourceSnapshot, 0, len(s.apiSourceOrder))
+	for _, name := range s.apiSourceOrder {
+		sourceState := s.apiSources[name]
+		sources = append(sources, dashboardAPISourceSnapshot{
+			Name:            name,
+			PressurePercent: sourceState.pressurePercent,
+			HasPressure:     sourceState.hasPressure,
+			HealthText:      sourceState.healthText,
+			LastUpdatedAt:   sourceState.lastUpdatedAt,
+		})
+	}
+	return sources
+}
+
+func dashboardSourceName(source string) string {
+	if source == "" {
+		return "src?"
+	}
+	return source
 }
 
 func pruneDashboardEvents(events []time.Time, now time.Time) []time.Time {

@@ -1,3 +1,14 @@
+// Package config parses CLI arguments and holds configuration for the port scanner.
+//
+// All configuration is provided via command-line flags. Flags and their defaults
+// are documented in the Parse function.
+//
+// # Example
+//
+//	cfg, err := config.Parse(os.Args[1:])
+//	if err != nil {
+//	    log.Fatalf("config error: %v", err)
+//	}
 package config
 
 import (
@@ -8,36 +19,95 @@ import (
 	"time"
 )
 
+// Config holds all CLI configuration for the port scanner. Zero values are
+// valid for optional fields; required fields are enforced by Parse.
 type Config struct {
-	CIDRFile             string
-	PortFile             string
-	Output               string
-	Timeout              time.Duration
-	Delay                time.Duration
-	BucketRate           int
-	BucketCapacity       int
-	Workers              int
-	PressureAPI          string
-	PressureInterval     time.Duration
-	DisableAPI           bool
-	PressureAuthURL      string
-	PressureDataURL      string
-	PressureClientID     string
+	// CIDRFile is the path to the CIDR input CSV (required).
+	CIDRFile string
+	// PortFile is the path to the port input file (required in basic mode).
+	PortFile string
+	// Output is the path for the main scan results CSV.
+	Output string
+	// Timeout is the per-scan TCP connection timeout.
+	Timeout time.Duration
+	// Delay is the pause between dispatching consecutive tasks.
+	Delay time.Duration
+	// BucketRate is the leaky-bucket token refill rate (tokens per second).
+	BucketRate int
+	// BucketCapacity is the maximum burst size for the leaky bucket.
+	BucketCapacity int
+	// Workers is the number of concurrent scan goroutines.
+	Workers int
+	// PressureAPI is the URL for the pressure API endpoint.
+	PressureAPI string
+	// PressureInterval is how often to poll the pressure API.
+	PressureInterval time.Duration
+	// DisableAPI disables pressure-based throttling when true.
+	DisableAPI bool
+	// PressureAuthURL is the OAuth token endpoint URL.
+	PressureAuthURL string
+	// PressureDataURLs are the authenticated pressure data endpoint URLs (comma-separated on input).
+	PressureDataURLs []string
+	// PressureClientID is the OAuth client ID for authenticated pressure fetching.
+	PressureClientID string
+	// PressureClientSecret is the OAuth client secret.
 	PressureClientSecret string
-	PressureUseAuth      bool
-	DisablePreScanPing   bool
-	Resume               string
-	LogLevel             string
-	Format               string
-	Quiet                bool
-	CIDRIPCol            string
-	CIDRIPCidrCol        string
+	// PressureUseAuth enables OAuth-authenticated pressure fetching.
+	PressureUseAuth bool
+	// DisablePreScanPing disables the pre-scan ping reachability filter when true.
+	DisablePreScanPing bool
+	// Resume is the path to the resume state file.
+	Resume string
+	// LogLevel is the log verbosity: debug, info, or error.
+	LogLevel string
+	// Format is the output format: human or json.
+	Format string
+	// Quiet suppresses console logs but keeps pressure API logs.
+	Quiet bool
+	// CIDRIPCol is the column name for the IP selector in the CIDR CSV.
+	CIDRIPCol string
+	// CIDRIPCidrCol is the column name for the boundary CIDR in the CIDR CSV.
+	CIDRIPCidrCol string
 }
 
+// Parse processes CLI arguments and returns a validated Config. It follows the
+// convention that a non-nil error means the caller should exit without running
+// the scanner (e.g., -help was requested or a required flag was missing).
+//
+// # Parameters
+//
+//	args: CLI arguments (typically os.Args[1:]).
+//
+// # Returns
+//
+//	A validated Config on success; an error if flag parsing fails or required
+//	flags are missing.
+//
+// # Required Flags
+//
+//	-cidr-file: Path to the CIDR input CSV.
+//
+// # Format Values
+//
+//	"human" (default): Human-readable console output.
+//	"json": Structured JSON output.
+//
+// # Example
+//
+//	cfg, err := config.Parse(os.Args[1:])
+//	if errors.Is(err, flag.ErrHelp) {
+//	    return
+//	}
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 func Parse(args []string) (Config, error) {
 	fs := flag.NewFlagSet("port-scan", flag.ContinueOnError)
 	cfg := Config{}
-	pressureIntervalRaw := "5s"
+	var (
+		pressureIntervalRaw string
+		pressureDataURLRaw  string
+	)
 
 	fs.StringVar(&cfg.CIDRFile, "cidr-file", "", "CIDR CSV path")
 	fs.StringVar(&cfg.PortFile, "port-file", "", "Port CSV path")
@@ -51,7 +121,7 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&pressureIntervalRaw, "pressure-interval", "5s", "pressure poll interval (duration or seconds)")
 	fs.BoolVar(&cfg.DisableAPI, "disable-api", false, "disable pressure api")
 	fs.StringVar(&cfg.PressureAuthURL, "pressure-auth-url", "", "pressure auth endpoint URL")
-	fs.StringVar(&cfg.PressureDataURL, "pressure-data-url", "", "pressure data endpoint URL")
+	fs.StringVar(&pressureDataURLRaw, "pressure-data-url", "", "pressure data endpoint URLs (comma-separated)")
 	fs.StringVar(&cfg.PressureClientID, "pressure-client-id", "", "pressure API client ID")
 	fs.StringVar(&cfg.PressureClientSecret, "pressure-client-secret", "", "pressure API client secret")
 	fs.BoolVar(&cfg.PressureUseAuth, "pressure-use-auth", false, "use authenticated pressure fetcher")
@@ -65,6 +135,16 @@ func Parse(args []string) (Config, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	if pressureDataURLRaw != "" {
+		for _, u := range strings.Split(pressureDataURLRaw, ",") {
+			if trimmed := strings.TrimSpace(u); trimmed != "" {
+				cfg.PressureDataURLs = append(cfg.PressureDataURLs, trimmed)
+			}
+		}
+		if len(cfg.PressureDataURLs) == 0 {
+			return Config{}, errors.New("-pressure-data-url contains only empty values after trimming")
+		}
 	}
 	if cfg.CIDRFile == "" {
 		return Config{}, errors.New("-cidr-file is required")
@@ -91,7 +171,7 @@ func Parse(args []string) (Config, error) {
 		if cfg.PressureAuthURL == "" {
 			return Config{}, errors.New("-pressure-auth-url is required when -pressure-use-auth is set")
 		}
-		if cfg.PressureDataURL == "" {
+		if len(cfg.PressureDataURLs) == 0 {
 			return Config{}, errors.New("-pressure-data-url is required when -pressure-use-auth is set")
 		}
 		if cfg.PressureClientID == "" {
