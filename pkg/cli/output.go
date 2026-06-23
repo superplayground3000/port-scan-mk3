@@ -4,8 +4,8 @@
 //
 // # Responsibilities
 //
-//	- Output formatting (human vs JSON) for validation results
-//	- RecordWriter adapters that bridge writer.CSVWriter → scanapp.RecordWriter
+//   - Output formatting (human vs JSON) for validation results
+//   - RecordWriter adapters that bridge writer.CSVWriter → scanapp.RecordWriter
 package cli
 
 import (

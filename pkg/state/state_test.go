@@ -2,8 +2,8 @@ package state
 
 import (
 	"os"
-	"reflect"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 

@@ -33,9 +33,9 @@ type Result struct {
 //
 // # Validation Rules
 //
-//	- CIDR file must exist and be readable as CSV.
-//	- CIDR file must have the required columns (or be valid rich-mode format).
-//	- In basic mode (non-rich), a port file is required and must be readable.
+//   - CIDR file must exist and be readable as CSV.
+//   - CIDR file must have the required columns (or be valid rich-mode format).
+//   - In basic mode (non-rich), a port file is required and must be readable.
 //
 // # Example
 //

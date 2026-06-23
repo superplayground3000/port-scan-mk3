@@ -29,7 +29,7 @@ func TestPreScanPing_Run_DedupesCheckerCallsAcrossDuplicateIPs(t *testing.T) {
 	}, config.Config{
 		Timeout: 250 * time.Millisecond,
 		Workers: 4,
-		}, checker, state.PreScanPingState{})
+	}, checker, state.PreScanPingState{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestPreScanPing_Run_AggregatesUnreachableRowsPerContextWithoutPortExpansion
 	}, config.Config{
 		Timeout: 100 * time.Millisecond,
 		Workers: 2,
-		}, checker, state.PreScanPingState{})
+	}, checker, state.PreScanPingState{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestPreScanPing_Run_ReusesSavedUnreachableStateWithoutCallingChecker(t *tes
 	}, config.Config{
 		Timeout: 100 * time.Millisecond,
 		Workers: 4,
-		}, checker, saved)
+	}, checker, saved)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestPreScanPing_Run_RichRowsAggregateToSingleUnreachableRowWithDistinctMerg
 	}, config.Config{
 		Timeout: 5 * time.Second,
 		Workers: 2,
-		}, checker, state.PreScanPingState{})
+	}, checker, state.PreScanPingState{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

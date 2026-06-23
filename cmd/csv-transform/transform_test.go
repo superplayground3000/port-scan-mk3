@@ -6,16 +6,16 @@ import (
 
 func TestSplitPorts(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		want     []int
-		wantErr  bool
+		name    string
+		input   string
+		want    []int
+		wantErr bool
 	}{
 		{"single port", "80", []int{80}, false},
 		{"two ports", "80/443", []int{80, 443}, false},
 		{"four ports", "22/80/443/8080", []int{22, 80, 443, 8080}, false},
-		{"empty string", "", nil, false}, // skip
-		{"invalid port abc", "abc", nil, false}, // skip, log to stderr
+		{"empty string", "", nil, false},             // skip
+		{"invalid port abc", "abc", nil, false},      // skip, log to stderr
 		{"mixed invalid port", "80/abc", nil, false}, // skip
 	}
 

@@ -81,11 +81,11 @@ func collectResults(t *testing.T, resultCh <-chan scanResult) []scanResult {
 
 type stubConn struct{}
 
-func (stubConn) Read(_ []byte) (int, error)         { return 0, nil }
-func (stubConn) Write(b []byte) (int, error)        { return len(b), nil }
-func (stubConn) Close() error                       { return nil }
-func (stubConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
-func (stubConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
-func (stubConn) SetDeadline(time.Time) error        { return nil }
-func (stubConn) SetReadDeadline(time.Time) error    { return nil }
-func (stubConn) SetWriteDeadline(time.Time) error   { return nil }
+func (stubConn) Read(_ []byte) (int, error)       { return 0, nil }
+func (stubConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (stubConn) Close() error                     { return nil }
+func (stubConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (stubConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (stubConn) SetDeadline(time.Time) error      { return nil }
+func (stubConn) SetReadDeadline(time.Time) error  { return nil }
+func (stubConn) SetWriteDeadline(time.Time) error { return nil }
