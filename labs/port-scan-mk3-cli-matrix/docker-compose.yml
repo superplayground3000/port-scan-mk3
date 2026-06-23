@@ -1,0 +1,180 @@
+name: lab-port-scan-mk3-cli-matrix
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+  target-open:
+    build: ./mock-target
+    image: psmk3-mock-target
+    restart: "no"
+    environment:
+      OPEN_PORTS: "8080,9000"
+      HEALTH_PORT: "19999"
+    networks:
+      lab: { ipv4_address: 172.30.0.10 }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/mock-target", "-healthcheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  target-closed:
+    build: ./mock-target
+    image: psmk3-mock-target
+    restart: "no"
+    environment:
+      OPEN_PORTS: ""
+      HEALTH_PORT: "19999"
+    networks:
+      lab: { ipv4_address: 172.30.0.11 }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/mock-target", "-healthcheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  target-filtered:
+    build: ./mock-target
+    image: psmk3-mock-target
+    restart: "no"
+    user: "0:0"             # root needed to manage THIS container's own netns iptables
+    cap_add: ["NET_ADMIN"]  # container-namespace capability only; no host change
+    environment:
+      OPEN_PORTS: ""
+      FILTERED_PORTS: "8080,9000,9001,9002,9003,9004"
+      HEALTH_PORT: "19999"
+    networks:
+      lab: { ipv4_address: 172.30.0.12 }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/mock-target", "-healthcheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  pressure-ok:
+    build: ./mock-pressure
+    image: psmk3-mock-pressure
+    restart: "no"
+    environment: { MODE: "ok", PRESSURE: "20", ADDR: ":8080" }
+    networks:
+      lab: { ipv4_address: 172.30.0.20 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  pressure-high:
+    build: ./mock-pressure
+    image: psmk3-mock-pressure
+    restart: "no"
+    environment:
+      MODE: "ok"
+      ADDR: ":8080"
+      PRESSURE_SEQUENCE: "90,90,10,10,10,10,10,10,10,10,10,10"
+      PRESSURE_SEQUENCE_LOOP: "false"
+    networks:
+      lab: { ipv4_address: 172.30.0.21 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  pressure-5xx:
+    build: ./mock-pressure
+    image: psmk3-mock-pressure
+    restart: "no"
+    environment: { MODE: "fail", ADDR: ":8080" }
+    networks:
+      lab: { ipv4_address: 172.30.0.22 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  pressure-timeout:
+    build: ./mock-pressure
+    image: psmk3-mock-pressure
+    restart: "no"
+    environment: { MODE: "timeout", DELAY_MS: "5000", PRESSURE: "20", ADDR: ":8080" }
+    networks:
+      lab: { ipv4_address: 172.30.0.23 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  pressure-auth-1:
+    build: ./mock-pressure
+    image: psmk3-mock-pressure
+    restart: "no"
+    environment:
+      ADDR: ":8080"
+      USE_AUTH: "true"
+      AUTH_CLIENT_ID: "test-client"
+      AUTH_CLIENT_SECRET: "test-secret"
+      PRESSURE_VALUE_1: "10"
+      PRESSURE_VALUE_2: "20"
+    networks:
+      lab: { ipv4_address: 172.30.0.24 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  pressure-auth-2:
+    build: ./mock-pressure
+    image: psmk3-mock-pressure
+    restart: "no"
+    environment:
+      ADDR: ":8080"
+      USE_AUTH: "true"
+      AUTH_CLIENT_ID: "test-client"
+      AUTH_CLIENT_SECRET: "test-secret"
+      PRESSURE_VALUE_1: "15"
+      PRESSURE_VALUE_2: "25"
+    networks:
+      lab: { ipv4_address: 172.30.0.25 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  scanner:
+    build:
+      context: ../..
+      dockerfile: labs/port-scan-mk3-cli-matrix/scanner/Dockerfile
+    image: psmk3-scanner
+    restart: "no"
+    cap_add: ["NET_RAW"]            # pre-scan ICMP ping
+    command: ["sleep", "infinity"]  # long-lived; matrix runs via `docker compose exec`
+    volumes:
+      - ./scripts:/lab/scripts:ro
+      - ./fixtures:/lab/fixtures:ro
+    networks:
+      lab: {}
+    healthcheck:
+      test: ["CMD", "test", "-f", "/usr/local/bin/port-scan"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      target-open: { condition: service_healthy }
+      target-closed: { condition: service_healthy }
+      target-filtered: { condition: service_healthy }
+      pressure-ok: { condition: service_healthy }
+      pressure-high: { condition: service_healthy }
+      pressure-5xx: { condition: service_healthy }
+      pressure-timeout: { condition: service_healthy }
+      pressure-auth-1: { condition: service_healthy }
+      pressure-auth-2: { condition: service_healthy }
