@@ -1,0 +1,3 @@
+dst_network_segment,decision
+172.30.0.0/24,deny
+10.0.0.0/8,deny

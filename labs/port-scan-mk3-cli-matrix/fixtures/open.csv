@@ -1,0 +1,3 @@
+segment,status
+172.30.0.12/32,open
+192.168.1.0/24,open
