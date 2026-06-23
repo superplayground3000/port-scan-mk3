@@ -12,10 +12,10 @@ import (
 // across the scanning pipeline and provide a single source of truth for log consumers.
 const (
 	// Scan result states
-	LogEventScanned     = "scanned"
-	LogEventError       = "error"
-	LogEventRuntimeErr  = "runtime_error"
-	LogEventNone        = "none"
+	LogEventScanned    = "scanned"
+	LogEventError      = "error"
+	LogEventRuntimeErr = "runtime_error"
+	LogEventNone       = "none"
 
 	// Bucket events
 	LogEventBucketWaitStart    = "bucket_wait_start"

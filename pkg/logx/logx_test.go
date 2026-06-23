@@ -9,10 +9,10 @@ import (
 
 // failingWriter is a writer that always fails after N bytes
 type failingWriter struct {
-	w        *bytes.Buffer
-	failAt   int
-	written  int
-	closed   bool
+	w       *bytes.Buffer
+	failAt  int
+	written int
+	closed  bool
 }
 
 func (fw *failingWriter) Write(p []byte) (n int, err error) {

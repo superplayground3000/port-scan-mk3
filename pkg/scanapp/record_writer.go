@@ -43,9 +43,9 @@ type writerRecordAdapter struct {
 
 func (a *writerRecordAdapter) AsWriterRecord() writer.Record { return a.record }
 func (a *writerRecordAdapter) IP() string                    { return a.record.IP }
-func (a *writerRecordAdapter) IPCidr() string               { return a.record.IPCidr }
-func (a *writerRecordAdapter) Port() int                    { return a.record.Port }
-func (a *writerRecordAdapter) Status() string               { return a.record.Status }
+func (a *writerRecordAdapter) IPCidr() string                { return a.record.IPCidr }
+func (a *writerRecordAdapter) Port() int                     { return a.record.Port }
+func (a *writerRecordAdapter) Status() string                { return a.record.Status }
 func (a *writerRecordAdapter) ResponseMS() int64             { return a.record.ResponseMS }
 func (a *writerRecordAdapter) FabName() string               { return a.record.FabName }
 func (a *writerRecordAdapter) CIDRName() string              { return a.record.CIDRName }
@@ -53,9 +53,9 @@ func (a *writerRecordAdapter) ServiceLabel() string          { return a.record.S
 func (a *writerRecordAdapter) Decision() string              { return a.record.Decision }
 func (a *writerRecordAdapter) PolicyID() string              { return a.record.PolicyID }
 func (a *writerRecordAdapter) Reason() string                { return a.record.Reason }
-func (a *writerRecordAdapter) ExecutionKey() string         { return a.record.ExecutionKey }
+func (a *writerRecordAdapter) ExecutionKey() string          { return a.record.ExecutionKey }
 func (a *writerRecordAdapter) SrcIP() string                 { return a.record.SrcIP }
-func (a *writerRecordAdapter) SrcNetworkSegment() string    { return a.record.SrcNetworkSegment }
+func (a *writerRecordAdapter) SrcNetworkSegment() string     { return a.record.SrcNetworkSegment }
 
 // AsScanRecord adapts a writer.Record to the ScanRecord interface.
 // This is used by the scan pipeline to bridge concrete writer types to

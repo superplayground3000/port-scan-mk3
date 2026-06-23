@@ -196,7 +196,7 @@ func TestPollPressureAPI_PressureDropsBelowThreshold_Resumes(t *testing.T) {
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
@@ -234,7 +234,7 @@ func TestPollPressureAPI_RapidOscillation_RepeatedlyPausesAndResumes(t *testing.
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
@@ -276,7 +276,7 @@ func TestPollPressureAPI_ZeroPressure_DoesNotPause(t *testing.T) {
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
@@ -307,7 +307,7 @@ func TestPollPressureAPI_NegativePressureValue_DoesNotPause(t *testing.T) {
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
@@ -337,7 +337,7 @@ func TestPollPressureAPI_FractionalPressureRoundsUp_TriggersPause(t *testing.T) 
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
@@ -363,7 +363,7 @@ func TestPollPressureAPI_FractionalPressureJustBelow_StaysActive(t *testing.T) {
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
