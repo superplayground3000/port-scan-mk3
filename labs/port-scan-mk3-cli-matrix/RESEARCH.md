@@ -9,7 +9,9 @@ transforms — when run against deterministic mock targets and pressure APIs.
 
 ## Essential vs accidental complexity
 
-- **Essential:** TCP connect classification; pre-scan ICMP reachability gating; pressure
+- **Essential:** TCP connect classification; pre-scan ICMP reachability gating, including the
+  configurable `-pre-scan-ping-timeout` (its value flows into the ping budget and the
+  unreachable `reason` text; non-positive values are rejected at config parse); pressure
   polling (simple + OAuth, single + multi-source) with pause/resume and 3-strike fail-safe;
   resume-state round-trip; the four CSV/CIDR helper transforms.
 - **Accidental (mocked away):** real network targets, real pressure/OAuth providers, the

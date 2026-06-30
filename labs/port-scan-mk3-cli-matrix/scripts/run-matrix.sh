@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-matrix.sh — executes the 36-case port-scan-mk3 CLI flag matrix INSIDE the scanner
+# run-matrix.sh — executes the 38-case port-scan-mk3 CLI flag matrix INSIDE the scanner
 # container and asserts observable output. Exits 0 only if every case passes.
 set -uo pipefail
 
@@ -91,7 +91,20 @@ C1() { local d="$OUT/C1"; mkdir -p "$d"
 C2() { local d="$OUT/C2"; mkdir -p "$d"
   port-scan scan -cidr-file "$FIX/unreachable.csv" -port-file "$FIX/ports.csv" -disable-api -output "$d/s.csv" >"$d/o" 2>"$d/e"
   assert_eq "C2 ping-enabled scan exit0" 0 "$?"
-  assert_contains "C2 .99 marked unreachable" "$(latest "$d" unreachable_results)" "^$UNREACH,$UNREACH/32,unreachable,"; }
+  assert_contains "C2 .99 unreachable, default reason 100ms" "$(latest "$d" unreachable_results)" "^$UNREACH,$UNREACH/32,unreachable,ping failed within 100ms,"; }
+C3() { local d="$OUT/C3"; mkdir -p "$d"
+  # -pre-scan-ping-timeout flows into the real ping budget AND the unreachable reason text.
+  port-scan scan -cidr-file "$FIX/unreachable.csv" -port-file "$FIX/ports.csv" \
+    -disable-api -pre-scan-ping-timeout 300ms -output "$d/s.csv" >"$d/o" 2>"$d/e"
+  assert_eq "C3 custom ping-timeout scan exit0" 0 "$?"
+  assert_contains "C3 .99 unreachable reason echoes 300ms" "$(latest "$d" unreachable_results)" "^$UNREACH,$UNREACH/32,unreachable,ping failed within 300ms,"
+  assert_contains "C3 reachable .10 still scanned open"    "$(latest "$d" opened_results)"      "^$OPEN,$OPEN/32,8080,open,"; }
+C4() { local d="$OUT/C4"; mkdir -p "$d"
+  # Non-positive timeout is rejected by config.Parse before any scan work (exit 2, stderr).
+  port-scan scan -cidr-file "$FIX/basic-open.csv" -port-file "$FIX/ports.csv" \
+    -disable-api -pre-scan-ping-timeout 0 -output "$d/s.csv" >"$d/o" 2>"$d/e"; local rc=$?
+  assert_ne "C4 zero ping-timeout rejected (nonzero exit)" 0 "$rc"
+  assert_contains "C4 validation error on stderr" "$d/e" 'pre-scan-ping-timeout must be > 0'; }
 
 # ---------------- D: pressure control ----------------
 D1() { local d="$OUT/D1"; mkdir -p "$d"
@@ -224,7 +237,7 @@ I4() { local d="$OUT/I4"; mkdir -p "$d"
   assert_contains     "I4 env-form .10 included" "$d/t.csv" "$OPEN"
   assert_not_contains "I4 env-form .11 skipped"  "$d/t.csv" "$CLOSED"; }
 
-for c in A1 A2 A3 A4 B_states B4 B5 B6 B7 B8 B9 C1 C2 \
+for c in A1 A2 A3 A4 B_states B4 B5 B6 B7 B8 B9 C1 C2 C3 C4 \
          D1 D2 D3 D4 D5 D6 D7 D8 E1 E2 F1 F2 G1 G2 H1 H2 H3 I1 I2 I3 I4; do
   "$c"
 done

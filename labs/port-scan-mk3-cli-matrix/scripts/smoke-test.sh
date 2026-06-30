@@ -13,5 +13,5 @@ if [ "$RC" -ne 0 ]; then
   docker compose logs --tail=50
   exit 1
 fi
-echo "smoke test PASSED — all 36 CLI matrix cases observed expected output."
+echo "smoke test PASSED — all 38 CLI matrix cases observed expected output."
 exit 0

@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Errata (2026-06-30):** this plan documents the original 36-case build. The shipped lab was
+> later extended to **38 cases** — group C gained C3/C4 covering the `-pre-scan-ping-timeout`
+> flag. The "36" counts below are historical; see the lab's `README.md`/`run-matrix.sh` and
+> `2026-06-23-port-scan-mk3-cli-matrix-lab-design.md` for the current 38-case matrix.
+
 **Goal:** Build a self-contained docker-compose lab under `labs/port-scan-mk3-cli-matrix/` that comprehensively exercises all 5 port-scan-mk3 binaries and ~50 CLI flags across 36 property-asserting test cases, validated to exit 0 via the research-lab `validate_lab.sh`.
 
 **Architecture:** Three custom images (`mock-target` Go, `mock-pressure` Go adapted from `e2e/mock-pressure-api`, `scanner` built from the repo with all 5 binaries) run as 9 services on a static-IP bridge network. A long-lived `scanner` container holds the binaries + fixtures; `scripts/smoke-test.sh` (run on the host by `validate_lab.sh` after `docker compose up -d --wait`) executes `scripts/run-matrix.sh` inside the scanner via `docker compose exec`, which runs the 36-case matrix and asserts observable output (CSV rows, stdout, log lines, exit codes). Filtered ports use in-container `iptables DROP` (`cap_add: NET_ADMIN`) for real connect timeouts; pre-scan ping needs `cap_add: NET_RAW` on the scanner.

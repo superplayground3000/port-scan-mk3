@@ -73,9 +73,14 @@ These five were raised in an early cross-model (Codex) design review, grounded i
 
 ---
 
-## Flag matrix (36 named cases; each asserts the *property*, not just exit code)
+## Flag matrix (38 named cases; each asserts the *property*, not just exit code)
 
-Case counts: A=4, B=9, C=2, D=8, E=2, F=2, G=2, H=3, I=4 → **36**.
+Case counts: A=4, B=9, C=4, D=8, E=2, F=2, G=2, H=3, I=4 → **38**.
+
+> Extended 2026-06-30: group C grew from 2 to 4 cases to cover the new
+> `-pre-scan-ping-timeout` flag — C3 asserts the configured timeout flows into the unreachable
+> `reason` text (`ping failed within 300ms`), C4 asserts a non-positive value is rejected at
+> config parse. See `docs/superpowers/specs/2026-06-30-configurable-pre-scan-ping-timeout-design.md`.
 
 Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binary, then greps/parses the produced artifact (CSV / JSON / stdout) and asserts the expected observable. A single failed assertion fails the lab.
 
@@ -100,11 +105,13 @@ Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binar
 | B8 | `-log-level debug -format json -disable-api` | debug logs present on stderr |
 | B9 | `-quiet -disable-api` | console logs suppressed; results still written |
 
-### C. Reachability group (default ping) (2)
+### C. Reachability group (default ping) (4)
 | # | Flags | Assertion |
 |---|---|---|
 | C1 | default (ping enabled), target reachable | `target-open` scanned, open found |
-| C2 | default (ping enabled), unreachable host in fixture | `status=unreachable`, TCP phase skipped |
+| C2 | default (ping enabled), unreachable host in fixture | `status=unreachable`, default `reason=ping failed within 100ms` |
+| C3 | `-pre-scan-ping-timeout 300ms`, unreachable host in fixture | `reason=ping failed within 300ms` (flag flows into reason); reachable host still scanned open |
+| C4 | `-pre-scan-ping-timeout 0` | nonzero exit; stderr `-pre-scan-ping-timeout must be > 0` (rejected at config parse) |
 
 ### D. Pressure control (8)
 | # | Flags | Assertion |

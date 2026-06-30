@@ -11,7 +11,7 @@ transforms — when run against deterministic mock targets and pressure APIs.
 
 ```bash
 docker compose up -d --wait
-docker compose exec -T scanner bash /lab/scripts/run-matrix.sh   # 36-case matrix
+docker compose exec -T scanner bash /lab/scripts/run-matrix.sh   # 38-case matrix
 ```
 
 Or run the full validated cycle from the repo root:
@@ -26,12 +26,14 @@ bash ~/.claude/skills/research-lab/scripts/validate_lab.sh labs/port-scan-mk3-cl
 PASS A1 validate basic human exit0
 PASS B1 open in opened_results
 PASS B3 filtered close(timeout)
-PASS C2 .99 marked unreachable
+PASS C2 .99 unreachable, default reason 100ms
+PASS C3 .99 unreachable reason echoes 300ms
+PASS C4 zero ping-timeout rejected (nonzero exit)
 PASS D2 scan paused on high pressure
 PASS D3 pressure failed 3 times
 ...
 RESULT: PASS=NN FAIL=0 TOTAL=NN
-smoke test PASSED — all 36 CLI matrix cases observed expected output.
+smoke test PASSED — all 38 CLI matrix cases observed expected output.
 ```
 
 ## What's covered
@@ -40,7 +42,7 @@ smoke test PASSED — all 36 CLI matrix cases observed expected output.
 |---|---|---|
 | A | `port-scan validate` (human/json/rich/invalid) | 4 |
 | B | `port-scan scan` modes & I/O flags | 9 |
-| C | pre-scan ping reachability gating | 2 |
+| C | pre-scan ping reachability gating + configurable `-pre-scan-ping-timeout` | 4 |
 | D | pressure control (simple/auth/multi-source/fail-safe) | 8 |
 | E | resume (authentic SIGINT + mismatch guard) | 2 |
 | F | `preprocess` | 2 |
@@ -54,6 +56,9 @@ smoke test PASSED — all 36 CLI matrix cases observed expected output.
   connect timeouts; the scanner uses `cap_add: NET_RAW` so pre-scan `ping` works. Both are
   container-namespace capabilities — no host changes.
 - Pressure healthchecks hit a non-consuming `/healthz` so they never advance `PRESSURE_SEQUENCE`.
+- The `scanner` image is built from the repo. `validate_lab.sh` runs `up -d --wait` **without**
+  `--build`, so after changing scanner code run `docker compose build scanner` first — otherwise
+  a stale cached image runs and new-flag cases (e.g. C3/C4) fail with unknown-flag errors.
 - See `.env.example` for every tunable env var and `RESEARCH.md` for design rationale.
 
 ## Teardown
