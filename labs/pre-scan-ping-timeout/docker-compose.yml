@@ -1,0 +1,44 @@
+name: lab-pre-scan-ping-timeout
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        # Distinct from the cli-matrix lab (172.30.0.0/24) so both can run at once.
+        # 172.31.0.99 is intentionally left unassigned — the ICMP blackhole target.
+        - subnet: 172.31.0.0/24
+
+services:
+  # --- server role: a pingable host with one open TCP port ---
+  target-open:
+    build: ./mock-target
+    image: psmk3-pspt-target
+    restart: "no"
+    environment:
+      OPEN_PORTS: "8080"      # scanned and found open (host answers ICMP)
+      HEALTH_PORT: "19999"
+    networks:
+      lab: { ipv4_address: 172.31.0.10 }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/mock-target", "-healthcheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # --- client role: the port scanner under test, built from the repo ---
+  scanner:
+    build:
+      context: ../..
+      dockerfile: labs/pre-scan-ping-timeout/scanner/Dockerfile
+    image: psmk3-pspt-scanner
+    restart: "no"
+    cap_add: ["NET_RAW"]      # pre-scan ICMP ping; container-scoped capability, no host change
+    depends_on:
+      target-open:
+        condition: service_healthy
+    networks:
+      lab: { ipv4_address: 172.31.0.50 }
+    # Long-lived so the smoke test drives scans via `docker compose exec`.
+    # No healthcheck: it is an idle driver, readiness == running.
+    command: ["sleep", "infinity"]
