@@ -56,6 +56,8 @@ type Config struct {
 	PressureUseAuth bool
 	// DisablePreScanPing disables the pre-scan ping reachability filter when true.
 	DisablePreScanPing bool
+	// PreScanPingTimeout bounds each pre-scan ping reachability check.
+	PreScanPingTimeout time.Duration
 	// Resume is the path to the resume state file.
 	Resume string
 	// LogLevel is the log verbosity: debug, info, or error.
@@ -126,6 +128,7 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&cfg.PressureClientSecret, "pressure-client-secret", "", "pressure API client secret")
 	fs.BoolVar(&cfg.PressureUseAuth, "pressure-use-auth", false, "use authenticated pressure fetcher")
 	fs.BoolVar(&cfg.DisablePreScanPing, "disable-pre-scan-ping", false, "disable pre-scan ping")
+	fs.DurationVar(&cfg.PreScanPingTimeout, "pre-scan-ping-timeout", 100*time.Millisecond, "pre-scan ping timeout (duration like 100ms or 2s)")
 	fs.StringVar(&cfg.Resume, "resume", "", "resume state file")
 	fs.StringVar(&cfg.LogLevel, "log-level", "info", "debug|info|error")
 	fs.StringVar(&cfg.Format, "format", "human", "human|json")
@@ -166,6 +169,9 @@ func Parse(args []string) (Config, error) {
 	}
 	if cfg.PressureInterval <= 0 {
 		return Config{}, errors.New("-pressure-interval must be > 0")
+	}
+	if cfg.PreScanPingTimeout <= 0 {
+		return Config{}, errors.New("-pre-scan-ping-timeout must be > 0")
 	}
 	if cfg.PressureUseAuth {
 		if cfg.PressureAuthURL == "" {

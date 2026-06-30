@@ -315,3 +315,31 @@ func TestParseConfig_WithWorkerAndBucketFlags_SetsValues(t *testing.T) {
 		t.Fatalf("expected bucket-capacity 500, got %d", cfg.BucketCapacity)
 	}
 }
+
+func TestParse_PreScanPingTimeout_DefaultsTo100ms(t *testing.T) {
+	cfg, err := Parse([]string{"-cidr-file", "targets.csv"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PreScanPingTimeout != 100*time.Millisecond {
+		t.Fatalf("expected default 100ms, got %v", cfg.PreScanPingTimeout)
+	}
+}
+
+func TestParse_PreScanPingTimeout_AcceptsDurationString(t *testing.T) {
+	cfg, err := Parse([]string{"-cidr-file", "targets.csv", "-pre-scan-ping-timeout", "250ms"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PreScanPingTimeout != 250*time.Millisecond {
+		t.Fatalf("expected 250ms, got %v", cfg.PreScanPingTimeout)
+	}
+}
+
+func TestParse_PreScanPingTimeout_RejectsNonPositive(t *testing.T) {
+	for _, val := range []string{"0", "0s", "-5ms"} {
+		if _, err := Parse([]string{"-cidr-file", "targets.csv", "-pre-scan-ping-timeout", val}); err == nil {
+			t.Fatalf("expected error for -pre-scan-ping-timeout=%s", val)
+		}
+	}
+}
