@@ -1,0 +1,4 @@
+segment,status
+172.30.0.12/32,open
+10.5.5.5/32,open
+8.8.8.0/24,open

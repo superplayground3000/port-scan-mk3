@@ -1,0 +1,4 @@
+src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason
+10.0.0.1,10.0.0.0/24,172.30.0.10,172.30.0.10/32,http-alt,tcp,8080,accept,policy-1,MATCH_POLICY_ACCEPT
+10.0.0.1,10.0.0.0/24,172.30.0.12,172.30.0.12/32,dns,tcp,53,accept,policy-2,MATCH_POLICY_ACCEPT
+10.0.0.1,10.0.0.0/24,172.30.0.20,172.30.0.20/32,https,tcp,443,accept,policy-3,MATCH_POLICY_ACCEPT

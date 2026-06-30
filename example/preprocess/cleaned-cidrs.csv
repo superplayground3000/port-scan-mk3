@@ -1,0 +1,3 @@
+fab,segment,status
+fab-east,172.30.0.12/32,close
+fab-east,172.30.0.20/32,open
