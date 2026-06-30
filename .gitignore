@@ -4,6 +4,7 @@ coverage.out
 e2e/out/
 e2e/inputs/
 *.exe
+!dist/windows/*.exe
 *.test
 *.out
 vendor/
@@ -16,4 +17,3 @@ Thumbs.db
 *.log
 .env*
 /xlsx-transform
-dist/
