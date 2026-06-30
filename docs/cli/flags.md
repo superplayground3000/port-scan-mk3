@@ -17,8 +17,9 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 | `-cidr-file` | string | none (required) | `validate`, `scan` | Path to CIDR CSV input file. |
 | `-port-file` | string | optional | `validate`, `scan` | Path to port list file (`<port>/tcp` lines). Required when CIDR input is not rich mode. |
 | `-output` | string | `scan_results.csv` | `validate`, `scan` | Parsed by both `validate` and `scan`. Only `scan` uses it to choose the batch output directory and shared suffix for `scan_results-<suffix>.csv`, `opened_results-<suffix>.csv`, and `unreachable_results-<suffix>.csv`. The output directory also controls the default resume fallback location. |
-| `-timeout` | duration | `100ms` | `validate`, `scan` | TCP dial timeout per probe. This does not control pre-scan ping; the pre-scan ping timeout is fixed internally at `100ms`. |
+| `-timeout` | duration | `100ms` | `validate`, `scan` | TCP dial timeout per probe. This does not control the pre-scan ping; use `-pre-scan-ping-timeout` for that. |
 | `-disable-pre-scan-ping` | bool | `false` | `validate`, `scan` | Disable the default-on pre-scan ping stage. |
+| `-pre-scan-ping-timeout` | duration | `100ms` | `validate`, `scan` | Timeout for each pre-scan ping reachability check. Must be > 0. |
 | `-delay` | duration | `10ms` | `validate`, `scan` | Dispatch delay between tasks. Primarily used by `scan`. |
 | `-bucket-rate` | int | `100` | `validate`, `scan` | Leaky bucket refill rate. Primarily used by `scan`. |
 | `-bucket-capacity` | int | `100` | `validate`, `scan` | Leaky bucket capacity. Primarily used by `scan`. |
@@ -45,7 +46,7 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 - `-format` only accepts `human` or `json`.
 - Pre-scan ping is enabled by default.
 - `-disable-pre-scan-ping=true` skips pre-scan ping and preserves the current direct TCP scan flow.
-- Pre-scan ping uses a fixed internal timeout of `100ms`.
+- Pre-scan ping timeout defaults to `100ms` and is configurable via `-pre-scan-ping-timeout`.
 - `-timeout` only applies to TCP dial probes.
 - `-pressure-interval` must be positive; invalid format or non-positive values are rejected.
 - When `-pressure-use-auth` is set, all four auth flags are required:

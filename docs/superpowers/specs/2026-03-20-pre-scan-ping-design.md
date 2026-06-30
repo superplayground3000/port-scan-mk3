@@ -33,7 +33,9 @@ behavior with `-disable-pre-scan-ping`.
 ### Ping Timeout
 
 - Use a fixed pre-scan ping timeout of `100ms`.
-- This timeout is internal for v1 of the feature and not exposed as a flag.
+- Ping timeout defaulted to a fixed 100ms in v1; as of the 2026-06-30 design it is configurable
+  via the `-pre-scan-ping-timeout` flag (default `100ms`). See
+  [2026-06-30-configurable-pre-scan-ping-timeout-design.md](2026-06-30-configurable-pre-scan-ping-timeout-design.md).
 
 ### Output Files
 
