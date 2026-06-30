@@ -16,7 +16,7 @@ behavior with `-disable-pre-scan-ping`.
 
 ## Non-Goals
 
-- No user-configurable ping timeout in this change.
+- No user-configurable ping timeout in this change. (Superseded 2026-06-30: the timeout is now configurable via `-pre-scan-ping-timeout`.)
 - No ICMP implementation inside Go.
 - No change to existing `scan_results-*.csv` or `opened_results-*.csv` schemas.
 - No per-port unreachable output rows.
@@ -32,7 +32,6 @@ behavior with `-disable-pre-scan-ping`.
 
 ### Ping Timeout
 
-- Use a fixed pre-scan ping timeout of `100ms`.
 - Ping timeout defaulted to a fixed 100ms in v1; as of the 2026-06-30 design it is configurable
   via the `-pre-scan-ping-timeout` flag (default `100ms`). See
   [2026-06-30-configurable-pre-scan-ping-timeout-design.md](2026-06-30-configurable-pre-scan-ping-timeout-design.md).
@@ -334,7 +333,7 @@ Compatibility rules:
 
 - Pre-scan ping is default-on.
 - Users disable it with `-disable-pre-scan-ping`.
-- Ping timeout is fixed at `100ms`.
+- Ping timeout defaulted to `100ms` in v1 and is now configurable via `-pre-scan-ping-timeout` (default `100ms`); see [2026-06-30-configurable-pre-scan-ping-timeout-design.md](2026-06-30-configurable-pre-scan-ping-timeout-design.md).
 - Unreachable output uses the timestamped batch naming convention instead of a
   fixed `unreachable.csv` filename.
 - `unreachable_results` must be fully written before TCP scanning begins.
