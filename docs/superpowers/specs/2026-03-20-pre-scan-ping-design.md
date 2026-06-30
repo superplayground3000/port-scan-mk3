@@ -72,7 +72,7 @@ Proposed columns:
 Field rules:
 
 - `status` is always `unreachable`.
-- `reason` is always `ping failed within 100ms`.
+- `reason` reflects the configured pre-scan ping timeout, e.g. `ping failed within 100ms` (or `ping failed within 300ms` when `-pre-scan-ping-timeout=300ms`). Originally fixed at `100ms` in v1; see [2026-06-30-configurable-pre-scan-ping-timeout-design.md](2026-06-30-configurable-pre-scan-ping-timeout-design.md).
 - When multiple rich-input targets for the same IP are collapsed into one
   unreachable row, metadata fields use the existing merge behavior (`|`-joined
   distinct values).

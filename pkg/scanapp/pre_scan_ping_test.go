@@ -138,8 +138,8 @@ func TestPreScanPing_Run_WithSavedStateAndCanceledContext_Aborts(t *testing.T) {
 		},
 		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
 	}, config.Config{
-		Timeout: 100 * time.Millisecond,
-		Workers: 1,
+		PreScanPingTimeout: 100 * time.Millisecond,
+		Workers:            1,
 	}, checker, saved)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected canceled context error, got %v", err)
@@ -251,8 +251,8 @@ func TestPreScanPing_Run_FailsOnToolLevelCheckerError(t *testing.T) {
 		},
 		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
 	}, config.Config{
-		Timeout: 250 * time.Millisecond,
-		Workers: 1,
+		PreScanPingTimeout: 250 * time.Millisecond,
+		Workers:            1,
 	}, checker, state.PreScanPingState{})
 	if err == nil {
 		t.Fatal("expected tool-level checker failure")

@@ -340,6 +340,8 @@ func TestParse_PreScanPingTimeout_RejectsNonPositive(t *testing.T) {
 	for _, val := range []string{"0", "0s", "-5ms"} {
 		if _, err := Parse([]string{"-cidr-file", "targets.csv", "-pre-scan-ping-timeout", val}); err == nil {
 			t.Fatalf("expected error for -pre-scan-ping-timeout=%s", val)
+		} else if err.Error() != "-pre-scan-ping-timeout must be > 0" {
+			t.Fatalf("unexpected error message for %s: %q", val, err.Error())
 		}
 	}
 }
