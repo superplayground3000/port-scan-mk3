@@ -124,18 +124,19 @@ func TestRun_WhenRichDashboardEnabled_RendersPeriodicUpdatesToStderr(t *testing.
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
-		Format:           "human",
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            100 * time.Millisecond,
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		LogLevel:           "error",
+		Format:             "human",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 
 	stdout := &bytes.Buffer{}

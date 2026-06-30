@@ -30,9 +30,6 @@ func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, ch
 	}
 
 	timeout := cfg.PreScanPingTimeout
-	if timeout <= 0 {
-		timeout = 100 * time.Millisecond
-	}
 	reason := fmt.Sprintf("ping failed within %s", timeout)
 
 	if hasSavedPreScanPingState(saved) {
