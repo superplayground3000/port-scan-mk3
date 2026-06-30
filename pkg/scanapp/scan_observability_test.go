@@ -174,18 +174,19 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "info",
-		Format:           "json",
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            100 * time.Millisecond,
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		LogLevel:           "info",
+		Format:             "json",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -226,18 +227,19 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          50 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "info",
-		Format:           "json",
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            50 * time.Millisecond,
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		LogLevel:           "info",
+		Format:             "json",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 
 	stderr := &bytes.Buffer{}
@@ -272,18 +274,19 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          50 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "info",
-		Format:           "json",
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            50 * time.Millisecond,
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		LogLevel:           "info",
+		Format:             "json",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -322,18 +325,19 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
-		Delay:            10 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 10 * time.Millisecond,
-		DisableAPI:       false,
-		LogLevel:         "error",
-		Format:           "human",
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            100 * time.Millisecond,
+		Delay:              10 * time.Millisecond,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   10 * time.Millisecond,
+		DisableAPI:         false,
+		LogLevel:           "error",
+		Format:             "human",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 
 	recorder := &dashboardSnapshotRecorder{}
@@ -472,19 +476,20 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 10 * time.Millisecond,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
-		Format:           "human",
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            100 * time.Millisecond,
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   10 * time.Millisecond,
+		DisableAPI:         true,
+		Resume:             resumeFile,
+		LogLevel:           "error",
+		Format:             "human",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 
 	firstSnapshotSeen := make(chan struct{})

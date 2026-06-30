@@ -360,6 +360,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 | `-output` | Choose output directory anchor |
 | `-resume` | Read/write state from explicit path |
 | `-disable-pre-scan-ping` | Skip the default pre-scan ping filter and unreachable batch stage |
+| `-pre-scan-ping-timeout` | Pre-scan ping reachability timeout (duration string, default `100ms`) |
 | `-disable-api` | Disable pressure API polling |
 | `-pressure-api` / `-pressure-interval` | Configure pressure-based pause control |
 | `-workers` / `-timeout` / `-delay` | Tune concurrency and probe pacing |

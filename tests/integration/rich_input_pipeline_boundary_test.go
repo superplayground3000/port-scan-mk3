@@ -56,6 +56,7 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 		PortFile:         portFile,
 		Output:           outFile,
 		Timeout:          100 * time.Millisecond,
+		PreScanPingTimeout: 100 * time.Millisecond,
 		Delay:            0,
 		BucketRate:       100,
 		BucketCapacity:   100,

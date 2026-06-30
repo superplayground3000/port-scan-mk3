@@ -92,6 +92,7 @@ All flags apply to both `validate` and `scan` commands unless noted.
 | `-port-file` | (required in basic mode) | Path to the port input file (one `port/tcp` per line). Not required in rich mode. |
 | `-output` | `scan_results.csv` | Base path for result CSV files. Actual files are `scan_results-<ts>.csv` and `opened_results-<ts>.csv` written in the same directory as the output path. |
 | `-timeout` | `100ms` | Per-scan TCP connection timeout (duration string) |
+| `-pre-scan-ping-timeout` | `100ms` | Pre-scan ping reachability timeout (duration string, must be > 0) |
 | `-delay` | `10ms` | Pause between dispatching consecutive tasks |
 | `-bucket-rate` | `100` | Leaky-bucket token refill rate (tokens/second) |
 | `-bucket-capacity` | `100` | Leaky-bucket maximum burst size |
