@@ -21,11 +21,6 @@ type preScanOutcome struct {
 	UnreachableRows    []writer.UnreachableRecord
 }
 
-const (
-	preScanPingTimeout = 100 * time.Millisecond
-	preScanPingReason  = "ping failed within 100ms"
-)
-
 func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, checker ReachabilityChecker, saved state.PreScanPingState) (preScanOutcome, error) {
 	if cfg.DisablePreScanPing {
 		return preScanOutcome{}, nil
@@ -34,9 +29,15 @@ func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, ch
 		return preScanOutcome{}, err
 	}
 
+	timeout := cfg.PreScanPingTimeout
+	if timeout <= 0 {
+		timeout = 100 * time.Millisecond
+	}
+	reason := fmt.Sprintf("ping failed within %s", timeout)
+
 	if hasSavedPreScanPingState(saved) {
 		unreachable := sortedUniqueIPv4U32(saved.UnreachableIPv4U32)
-		rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable))
+		rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable), reason)
 		if err != nil {
 			return preScanOutcome{}, err
 		}
@@ -44,7 +45,7 @@ func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, ch
 			return preScanOutcome{}, err
 		}
 		return preScanOutcome{
-			State:              buildPreScanPingState(unreachable),
+			State:              buildPreScanPingState(unreachable, timeout),
 			UnreachableIPv4U32: unreachable,
 			UnreachableRows:    rows,
 		}, nil
@@ -58,7 +59,7 @@ func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, ch
 	if err != nil {
 		return preScanOutcome{}, err
 	}
-	unreachable, err := runReachabilityChecks(ctx, checker, uniqueIPs, cfg.Workers)
+	unreachable, err := runReachabilityChecks(ctx, checker, uniqueIPs, cfg.Workers, timeout)
 	if err != nil {
 		return preScanOutcome{}, err
 	}
@@ -66,7 +67,7 @@ func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, ch
 		return preScanOutcome{}, err
 	}
 
-	rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable))
+	rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable), reason)
 	if err != nil {
 		return preScanOutcome{}, err
 	}
@@ -75,7 +76,7 @@ func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, ch
 	}
 
 	return preScanOutcome{
-		State:              buildPreScanPingState(unreachable),
+		State:              buildPreScanPingState(unreachable, timeout),
 		UnreachableIPv4U32: unreachable,
 		UnreachableRows:    rows,
 	}, nil
@@ -141,7 +142,7 @@ func collectUniquePreScanIPs(inputs runInputs) ([]string, error) {
 	return ips, nil
 }
 
-func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips []string, workers int) ([]uint32, error) {
+func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips []string, workers int, timeout time.Duration) ([]uint32, error) {
 	if len(ips) == 0 {
 		return nil, nil
 	}
@@ -181,7 +182,7 @@ func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips
 						return
 					}
 
-					result, err := checkReachability(runCtx, checker, ip, preScanPingTimeout)
+					result, err := checkReachability(runCtx, checker, ip, timeout)
 					if err != nil {
 						select {
 						case results <- workerResult{err: err}:
@@ -239,7 +240,7 @@ func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips
 	return unreachable, nil
 }
 
-func collectUnreachableRows(inputs runInputs, reachable func(string) bool) ([]writer.UnreachableRecord, error) {
+func collectUnreachableRows(inputs runInputs, reachable func(string) bool, reason string) ([]writer.UnreachableRecord, error) {
 	predicate := normalizeReachablePredicate(reachable)
 	rows := make([]writer.UnreachableRecord, 0)
 	richOrder := make([]string, 0)
@@ -257,7 +258,7 @@ func collectUnreachableRows(inputs runInputs, reachable func(string) bool) ([]wr
 				IP:                target.ip,
 				IPCidr:            target.ipCidr,
 				Status:            "unreachable",
-				Reason:            preScanPingReason,
+				Reason:            reason,
 				FabName:           target.meta.fabName,
 				CIDRName:          target.meta.cidrName,
 				ServiceLabel:      target.meta.serviceLabel,
@@ -303,10 +304,10 @@ func preScanTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
 	return strategy.targets(rec)
 }
 
-func buildPreScanPingState(unreachable []uint32) state.PreScanPingState {
+func buildPreScanPingState(unreachable []uint32, timeout time.Duration) state.PreScanPingState {
 	return state.PreScanPingState{
 		Enabled:            true,
-		TimeoutMS:          int(preScanPingTimeout / time.Millisecond),
+		TimeoutMS:          int(timeout / time.Millisecond),
 		UnreachableIPv4U32: unreachable,
 	}
 }

@@ -27,8 +27,8 @@ func TestPreScanPing_Run_DedupesCheckerCallsAcrossDuplicateIPs(t *testing.T) {
 		},
 		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
 	}, config.Config{
-		Timeout: 250 * time.Millisecond,
-		Workers: 4,
+		PreScanPingTimeout: 300 * time.Millisecond,
+		Workers:            4,
 	}, checker, state.PreScanPingState{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -40,11 +40,11 @@ func TestPreScanPing_Run_DedupesCheckerCallsAcrossDuplicateIPs(t *testing.T) {
 	if !outcome.State.Enabled {
 		t.Fatalf("expected pre-scan state enabled, got %+v", outcome.State)
 	}
-	if outcome.State.TimeoutMS != 100 {
+	if outcome.State.TimeoutMS != 300 {
 		t.Fatalf("unexpected timeout ms: %+v", outcome.State)
 	}
-	if got := checker.timeoutFor("10.0.0.1"); got != 100*time.Millisecond {
-		t.Fatalf("expected fixed pre-scan timeout, got %v", got)
+	if got := checker.timeoutFor("10.0.0.1"); got != 300*time.Millisecond {
+		t.Fatalf("expected configured pre-scan timeout, got %v", got)
 	}
 	if len(outcome.UnreachableIPv4U32) != 1 || outcome.UnreachableIPv4U32[0] != ipv4ToUint32("10.0.0.1") {
 		t.Fatalf("unexpected unreachable set: %+v", outcome.UnreachableIPv4U32)
@@ -70,8 +70,8 @@ func TestPreScanPing_Run_AggregatesUnreachableRowsPerContextWithoutPortExpansion
 			{Number: 443, Proto: "tcp", Raw: "443/tcp"},
 		},
 	}, config.Config{
-		Timeout: 100 * time.Millisecond,
-		Workers: 2,
+		PreScanPingTimeout: 100 * time.Millisecond,
+		Workers:            2,
 	}, checker, state.PreScanPingState{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -104,8 +104,8 @@ func TestPreScanPing_Run_ReusesSavedUnreachableStateWithoutCallingChecker(t *tes
 		},
 		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
 	}, config.Config{
-		Timeout: 100 * time.Millisecond,
-		Workers: 4,
+		PreScanPingTimeout: 100 * time.Millisecond,
+		Workers:            4,
 	}, checker, saved)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -195,8 +195,8 @@ func TestPreScanPing_Run_RichRowsAggregateToSingleUnreachableRowWithDistinctMerg
 			},
 		},
 	}, config.Config{
-		Timeout: 5 * time.Second,
-		Workers: 2,
+		PreScanPingTimeout: 100 * time.Millisecond,
+		Workers:            2,
 	}, checker, state.PreScanPingState{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -269,7 +269,7 @@ func TestRunReachabilityChecks_FailsFastOnFatalCheckerError(t *testing.T) {
 		},
 	}
 
-	_, err := runReachabilityChecks(context.Background(), checker, []string{"10.0.0.1", "10.0.0.2"}, 1)
+	_, err := runReachabilityChecks(context.Background(), checker, []string{"10.0.0.1", "10.0.0.2"}, 1, 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected fatal checker error")
 	}
@@ -432,6 +432,37 @@ func TestLoadOrBuildChunksWithPredicate_SkipsUnreachableTargetsFromChunkTotals(t
 	}
 	if chunks[0].TotalCount != 2 {
 		t.Fatalf("expected only reachable target to contribute to total count, got %+v", chunks[0])
+	}
+}
+
+func TestPreScanPing_Run_UsesConfiguredTimeoutForCheckStateAndReason(t *testing.T) {
+	checker := &fakePreScanChecker{
+		results: map[string]ReachabilityResult{
+			"10.0.0.7": {IP: "10.0.0.7", Reachable: false, FailureText: "timeout"},
+		},
+	}
+
+	outcome, err := runPreScanPing(context.Background(), runInputs{
+		cidrRecords: []input.CIDRRecord{
+			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.7/32"), FabName: "fab-a", CIDRName: "cidr-a"},
+		},
+		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
+	}, config.Config{
+		PreScanPingTimeout: 300 * time.Millisecond,
+		Workers:            1,
+	}, checker, state.PreScanPingState{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := checker.timeoutFor("10.0.0.7"); got != 300*time.Millisecond {
+		t.Fatalf("expected configured 300ms timeout passed to checker, got %v", got)
+	}
+	if outcome.State.TimeoutMS != 300 {
+		t.Fatalf("expected state timeout 300ms, got %+v", outcome.State)
+	}
+	if len(outcome.UnreachableRows) != 1 || outcome.UnreachableRows[0].Reason != "ping failed within 300ms" {
+		t.Fatalf("expected reason to reflect configured timeout, got %+v", outcome.UnreachableRows)
 	}
 }
 
