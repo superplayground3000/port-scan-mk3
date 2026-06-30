@@ -1,0 +1,68 @@
+name: lab-repeat-scan-wrappers
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        # Distinct from cli-matrix (172.30.0.0/24) and pre-scan-ping (172.31.0.0/24)
+        # so all three labs can run at once. 172.32.0.99 is intentionally left
+        # unassigned — the unreachable host for the pre-scan-ping toggle demo.
+        - subnet: 172.32.0.0/24
+
+services:
+  # --- server role: a pingable host with one open TCP port ---
+  target-open:
+    build: ./mock-target
+    image: psmk3-rsw-target
+    restart: "no"
+    environment:
+      OPEN_PORTS: "8080"      # 8080 open; 8081-8085 closed (instant RST) for the speed demo
+      HEALTH_PORT: "19999"
+    networks:
+      lab: { ipv4_address: 172.32.0.10 }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/mock-target", "-healthcheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # --- client role: the scanner + the Linux wrapper, built from the repo ---
+  scanner:
+    build:
+      context: ../..
+      dockerfile: labs/repeat-scan-wrappers/scanner/Dockerfile
+    image: psmk3-rsw-scanner
+    restart: "no"
+    cap_add: ["NET_RAW"]      # pre-scan ICMP ping; container-scoped capability, no host change
+    depends_on:
+      target-open:
+        condition: service_healthy
+    networks:
+      lab: { ipv4_address: 172.32.0.50 }
+    # Long-lived idle driver: the smoke test runs `scan-loop` via `docker compose exec`.
+    # No healthcheck — readiness == running.
+    command: ["sleep", "infinity"]
+
+  # --- static-analysis role: lint the Windows .ps1 (cannot run it on Linux) ---
+  ps-lint:
+    build: ./ps-lint
+    image: psmk3-rsw-pslint
+    restart: "no"
+    profiles: ["lint"]        # excluded from `up`; the smoke test runs it via `compose run`
+    networks: [lab]           # join the named net so no separate default network is created
+    volumes:
+      - ./windows:/lint:ro
+    # No healthcheck — one-shot lint that runs to completion and exits.
+    command:
+      - pwsh
+      - -NoProfile
+      - -Command
+      - |
+        $$findings = Invoke-ScriptAnalyzer -Path /lint/scan-loop.ps1 -Severity Error,Warning
+        if ($$findings) {
+            $$findings | Format-Table -AutoSize
+            Write-Error "PSScriptAnalyzer found $$($$findings.Count) issue(s) in scan-loop.ps1"
+            exit 1
+        }
+        Write-Output "PSScriptAnalyzer: scan-loop.ps1 is clean (no Error/Warning findings)"
