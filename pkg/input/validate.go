@@ -7,12 +7,6 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
-// ValidateNoOverlap validates CIDR/IP selector rows and rejects conflicting ranges.
-// It is a convenience alias for ValidateIPRows; the two perform identical validation.
-func ValidateNoOverlap(networks []CIDRRecord) error {
-	return ValidateIPRows(networks)
-}
-
 // ValidateIPRows enforces fail-fast input rules on a slice of CIDR records:
 //
 //  1. Each IP selector is contained within its ip_cidr boundary.

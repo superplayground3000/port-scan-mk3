@@ -8,7 +8,7 @@
 
 The following exported symbols lacked Go doc comments before remediation:
 
-- `pkg/input`: `CIDRRecord`, `PortSpec`, `LoadCIDRs`, `LoadCIDRsWithColumns`, `(*CIDRRecord).Parse`, `LoadPorts`, `ValidateNoOverlap`, `ValidateIPRows`
+- `pkg/input`: `CIDRRecord`, `PortSpec`, `LoadCIDRs`, `LoadCIDRsWithColumns`, `(*CIDRRecord).Parse`, `LoadPorts`, `ValidateIPRows`
 - `pkg/scanapp`: `DialFunc`, `RunOptions`, `Run`
 - `pkg/writer`: `Record`, `CSVWriter`, `NewCSVWriter`, `(*CSVWriter).Write`, `(*CSVWriter).WriteHeader`, `OpenOnlyWriter`, `NewOpenOnlyWriter`, `(*OpenOnlyWriter).Write`, `(*OpenOnlyWriter).WriteHeader`
 - `pkg/state`: `Save`, `Load`, `WithSIGINTCancel`

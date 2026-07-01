@@ -177,12 +177,12 @@ func TestValidateIPRows_WhenSelectorsAreDistinctWithinSameIPCidr_ReturnsNil(t *t
 	}
 }
 
-func TestValidateNoOverlap_WhenNetworksDoNotOverlap_ReturnsNil(t *testing.T) {
+func TestValidateIPRows_WhenNetworksDoNotOverlap_ReturnsNil(t *testing.T) {
 	rows := mustLoadRows(t, []CIDRRecord{
 		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24"},
 		{IPRaw: "10.0.1.1", IPCidrRaw: "10.0.1.0/24"},
 	})
-	if err := ValidateNoOverlap(rows); err != nil {
+	if err := ValidateIPRows(rows); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
