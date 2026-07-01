@@ -10,6 +10,7 @@ import "net"
 //
 // Callers must call Parse() to populate the Net and Selector fields before use.
 type CIDRRecord struct {
+	// --- Basic mode: raw input + parsed forms ---
 	// FabName is the fabric/mesh name (optional, basic mode).
 	FabName string
 	// CIDR is the normalized string form of the boundary CIDR.
@@ -31,7 +32,7 @@ type CIDRRecord struct {
 	// IPCidrCol is the column name used for the boundary CIDR.
 	IPCidrCol string
 
-	// Rich input fields (populated when IsRich is true).
+	// --- Rich mode: firewall-policy metadata (populated when IsRich is true) ---
 	// IsRich indicates whether this record was parsed in rich mode.
 	IsRich bool
 	// IsValid is true when the rich row passed all validation checks.

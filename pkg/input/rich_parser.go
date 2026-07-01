@@ -1,40 +1,5 @@
-// Package input parses and validates CSV inputs for the port scanner.
-//
-// It supports two input modes:
-//
-//   - Basic CIDR mode: CSV with ip and ip_cidr columns, loaded via LoadCIDRs or LoadCIDRsWithColumns.
-//   - Rich mode: CSV with structured firewall-policy columns (src_ip, dst_ip, port, decision, etc.).
-//     Rich mode is auto-detected by detectRichHeaderIndices and parsed via ParseRichRows.
-//
-// # Function Flow
-//
-//	CSV File
-//	  |
-//	  v
-//	LoadCIDRs / LoadCIDRsWithColumns
-//	  |
-//	  v
-//	detectRichHeaderIndices  ── rich ──> ParseRichRows
-//	  |
-//	  | basic
-//	  v
-//	Parse CIDRRecord fields
-//	  |
-//	  v
-//	ValidateIPRows (duplicate check + containment)
-//	  |
-//	  v
-//	[]CIDRRecord
-//
-// # Example
-//
-//	records, err := input.LoadCIDRsWithColumns(os.Stdin, "ip", "ip_cidr")
-//	if err != nil {
-//	    log.Fatalf("load failed: %v", err)
-//	}
-//	if err := input.ValidateIPRows(records); err != nil {
-//	    log.Fatalf("validation failed: %v", err)
-//	}
+// rich_parser.go implements rich-mode CSV parsing (firewall-policy schema).
+// See cidr.go for the package overview.
 package input
 
 import (
