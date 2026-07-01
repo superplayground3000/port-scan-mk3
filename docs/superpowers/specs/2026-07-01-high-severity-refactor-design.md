@@ -41,6 +41,17 @@ or larger architectural moves; captured here for a future phase-2 pass:
 - All `[medium]` / `[low]` findings across `pkg/cidrutil`, `pkg/config`, `pkg/cli`,
   `pkg/enrich`, `e2e/`, `labs/`, `scripts/`, etc.
 
+**Deferred during execution (evaluated + skipped on cross-model review):**
+- **C2 — `output_files.go` `os.Stderr` routing:** Codex verdict LEAVE-IT. The direct
+  `os.Stderr` close-error writes on the double-error path are intentional; routing them
+  via `errors.Join` would change observable stderr, so it is not behavior-preserving.
+- **C3 — remove the `ScanRecord` interface:** Codex verdict SKIP. The interface is used
+  in production (`result_aggregator.go` getters) and is exported package API; removal is
+  not behavior/API-preserving in this pass.
+- **Pre-existing (out of scope):** `go test -race` flags a data race in
+  `TestRun_WhenExecutorWorkerPanics` present on the pre-refactor baseline; not introduced
+  here, left for a dedicated follow-up.
+
 ## Phase A — `pkg/input`
 
 **Findings addressed:** god-struct `CIDRRecord`; overloaded `LoadCIDRsWithColumns`;

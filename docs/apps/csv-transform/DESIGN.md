@@ -53,8 +53,9 @@ Parses CLI flags and environment variables. Supports:
 - Environment variables: `TRANSFORM_INPUT`, `TRANSFORM_OUTPUT`, `TRANSFORM_HOST_COL`, `TRANSFORM_PORT_COL`, `TRANSFORM_PASS_COL`, `TRANSFORM_SHEET_NAME`
 
 `runMain` maps the parsed `TransformConfig` 1:1 onto `csvtransform.Config` and
-calls `csvtransform.Run(cfg, stderr)`; a non-nil error is reported and mapped
-to exit code 1, matching the config-error path's exit code 2.
+calls `csvtransform.Run(cfg, stderrOut)`, wiring `stderrOut` (the process stderr)
+as the warning sink. A non-nil `Run` error is reported and mapped to exit code 1;
+this is distinct from the config-parse error path, which exits with code 2.
 
 ### csvtransform.Config / csvtransform.Run (`pkg/csvtransform`)
 
