@@ -40,9 +40,37 @@ type RunOptions struct {
 	controllerObserver        controllerTelemetryObserver
 }
 
+// preparedRun bundles the state produced by prepareRun and consumed by the
+// executeScan and finalizeRun stages.
+type preparedRun struct {
+	logger  *scanLogger
+	plan    runPlan
+	outputs *batchOutputs
+	preScan preScanOutcome
+}
+
 // Run executes a full scan flow: load inputs, dispatch scan tasks, write batch
 // outputs, and persist resume state on interruption/failure.
 func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
+	prepared, err := prepareRun(ctx, cfg, opts, stderr)
+	if err != nil {
+		return err
+	}
+	var scanSuccess bool
+	defer func() {
+		_ = prepared.outputs.Finalize(scanSuccess)
+	}()
+
+	summary, startedAt, dispatchErr, runErr := executeScan(ctx, cfg, opts, prepared, stdout, stderr)
+	err = finalizeRun(cfg, opts, prepared, summary, startedAt, dispatchErr, runErr)
+	scanSuccess = err == nil
+	return err
+}
+
+// prepareRun loads inputs, resolves output paths, runs the pre-scan ping,
+// builds the runtime plan, and opens batch outputs. It returns the prepared
+// state used by later stages or the first error encountered.
+func prepareRun(ctx context.Context, cfg config.Config, opts RunOptions, stderr io.Writer) (preparedRun, error) {
 	deps := defaultRunDependencies()
 	logger := newLoggerWithQuiet(cfg.LogLevel, cfg.Format == "json", stderr, cfg.Quiet)
 	if strings.TrimSpace(cfg.CIDRIPCol) == "" {
@@ -53,34 +81,34 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	}
 
 	if err := ensureFDLimit(cfg.Workers); err != nil {
-		return err
+		return preparedRun{}, err
 	}
 
 	inputs, err := loadRunInputs(cfg, deps)
 	if err != nil {
-		return err
+		return preparedRun{}, err
 	}
 
 	now := time.Now()
 	outputPaths, err := resolveRunOutputPaths(cfg, deps, now)
 	if err != nil {
-		return err
+		return preparedRun{}, err
 	}
 
 	resumeSnapshot, err := loadResumeSnapshot(cfg)
 	if err != nil {
-		return err
+		return preparedRun{}, err
 	}
 
 	preScan, err := runPreScanPing(ctx, inputs, cfg, resolveReachabilityChecker(cfg, opts), resumeSnapshot.PreScanPing)
 	if err != nil {
-		return err
+		return preparedRun{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return preparedRun{}, err
 	}
 	if err := finalizeUnreachableResults(outputPaths.unreachablePath, preScan.UnreachableRows); err != nil {
-		return err
+		return preparedRun{}, err
 	}
 
 	plan, err := prepareRuntimePlan(
@@ -92,7 +120,7 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		shouldUseResumeChunks(cfg, resumeSnapshot.PreScanPing, preScan),
 	)
 	if err != nil {
-		return err
+		return preparedRun{}, err
 	}
 	plan.outputPaths = outputPaths
 	plan.scanOutputPath = outputPaths.scanPath
@@ -100,12 +128,25 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 
 	outputs, err := openBatchOutputs(plan.scanOutputPath, plan.openOnlyPath)
 	if err != nil {
-		return err
+		return preparedRun{}, err
 	}
-	var scanSuccess bool
-	defer func() {
-		_ = outputs.Finalize(scanSuccess)
-	}()
+
+	return preparedRun{
+		logger:  logger,
+		plan:    plan,
+		outputs: outputs,
+		preScan: preScan,
+	}, nil
+}
+
+// executeScan owns the concurrency orchestration: it derives runCtx, starts the
+// dashboard, controller, executor, and dispatch goroutines, runs the select
+// event loop, and closes buckets. runCtx/cancel and dashboard.Stop remain
+// deferred here, firing when executeScan returns.
+func executeScan(ctx context.Context, cfg config.Config, opts RunOptions, p preparedRun, stdout, stderr io.Writer) (summary resultSummary, startedAt time.Time, dispatchErr, runErr error) {
+	logger := p.logger
+	plan := p.plan
+	outputs := p.outputs
 
 	workers := cfg.Workers
 	if workers <= 0 {
@@ -175,13 +216,8 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		close(taskCh)
 	}()
 
-	var (
-		dispatchDone bool
-		dispatchErr  error
-		runErr       error
-		summary      resultSummary
-	)
-	startedAt := time.Now()
+	var dispatchDone bool
+	startedAt = time.Now()
 	for !dispatchDone || resultCh != nil {
 		select {
 		case apiErr := <-apiErrCh:
@@ -226,6 +262,16 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		}
 	}
 
+	return summary, startedAt, dispatchErr, runErr
+}
+
+// finalizeRun persists the resume snapshot and emits the completion summary,
+// returning the effective run error (runErr, then dispatchErr, then nil).
+func finalizeRun(cfg config.Config, opts RunOptions, p preparedRun, summary resultSummary, startedAt time.Time, dispatchErr, runErr error) error {
+	logger := p.logger
+	plan := p.plan
+	preScan := p.preScan
+
 	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, preScan.State, dispatchErr, runErr); err != nil {
 		return err
 	}
@@ -239,7 +285,6 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		return dispatchErr
 	}
 	emitCompletionSummary(logger, summary, startedAt, nil)
-	scanSuccess = true
 	return nil
 }
 
