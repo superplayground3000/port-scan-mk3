@@ -391,6 +391,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - `pkg/preprocess`: closed-CIDR containment filtering (preprocess core)
 - `pkg/preprocesscfg`: shared column names, status values, and placeholder defaults for enrich/preprocess
 - `pkg/spreadsheet`: spreadsheet/CSV reader abstraction (csv-transform core)
+- `pkg/csvtransform`: spreadsheet-to-rich-CSV transform pipeline (filter, resolve, port-expand, write); csv-transform core logic
 - `tests/integration`: integration contracts
 - `e2e`: dockerized end-to-end verification and artifact checks
 

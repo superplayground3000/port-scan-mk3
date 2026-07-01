@@ -1,6 +1,6 @@
 # csv-transform Specification
 
-**Tool**: `cmd/csv-transform` | **Revised**: 2026-05-03
+**Tool**: `cmd/csv-transform` | **Core**: `pkg/csvtransform` | **Revised**: 2026-07-01
 
 ## Overview
 
@@ -74,6 +74,9 @@ src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,por
 # Build
 go build -o csv-transform ./cmd/csv-transform
 
-# Test
+# Test (CLI flag/wiring tests)
 go test ./cmd/csv-transform/...
+
+# Test (transform pipeline core)
+go test ./pkg/csvtransform/...
 ```

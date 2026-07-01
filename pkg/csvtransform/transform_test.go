@@ -1,6 +1,7 @@
-package main
+package csvtransform
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -15,13 +16,13 @@ func TestSplitPorts(t *testing.T) {
 		{"two ports", "80/443", []int{80, 443}, false},
 		{"four ports", "22/80/443/8080", []int{22, 80, 443, 8080}, false},
 		{"empty string", "", nil, false},             // skip
-		{"invalid port abc", "abc", nil, false},      // skip, log to stderr
+		{"invalid port abc", "abc", nil, false},      // skip, log to warn
 		{"mixed invalid port", "80/abc", nil, false}, // skip
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := SplitPorts(tt.input)
+			got, err := SplitPorts(tt.input, &bytes.Buffer{})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SplitPorts(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 				return

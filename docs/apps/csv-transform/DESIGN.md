@@ -1,8 +1,11 @@
 # csv-transform Design Document
 
-**Tool**: `cmd/csv-transform` | **Revised**: 2026-05-03
+**Tool**: `cmd/csv-transform` | **Core**: `pkg/csvtransform` | **Revised**: 2026-07-01
 
 ## Architecture
+
+`cmd/csv-transform` is thin CLI wiring (flag/env parsing, exit codes) over the
+reusable `pkg/csvtransform` pipeline:
 
 ```
 Input CSV
@@ -14,7 +17,7 @@ spreadsheet.Reader (pkg/spreadsheet)
 Column Indexing (header row)
     │
     ▼
-Row Processing Loop
+Row Processing Loop  (pkg/csvtransform.Run)
     │
     ├── Filter: pass column == "FALSE" (case-insensitive)
     │
@@ -30,7 +33,7 @@ Output CSV (Rich format)
 
 ## Components
 
-### TransformConfig
+### TransformConfig (`cmd/csv-transform`)
 
 ```go
 type TransformConfig struct {
@@ -43,15 +46,30 @@ type TransformConfig struct {
 }
 ```
 
-### ParseConfigFromArgs
+### ParseConfigFromArgs (`cmd/csv-transform`)
 
 Parses CLI flags and environment variables. Supports:
 - CLI flags: `--input`, `--output`, `--host-col`, `--port-col`, `--pass-col`, `--sheet`
 - Environment variables: `TRANSFORM_INPUT`, `TRANSFORM_OUTPUT`, `TRANSFORM_HOST_COL`, `TRANSFORM_PORT_COL`, `TRANSFORM_PASS_COL`, `TRANSFORM_SHEET_NAME`
 
-### runTransform
+`runMain` maps the parsed `TransformConfig` 1:1 onto `csvtransform.Config` and
+calls `csvtransform.Run(cfg, stderr)`; a non-nil error is reported and mapped
+to exit code 1, matching the config-error path's exit code 2.
 
-Wires together CSV reading, column indexing, filtering, host resolution, port expansion, and CSV output.
+### csvtransform.Config / csvtransform.Run (`pkg/csvtransform`)
+
+```go
+type Config struct {
+    Input, Output, SheetName, HostCol, PortCol, PassCol string
+}
+
+func Run(cfg Config, warn io.Writer) error
+```
+
+Wires together CSV reading, column indexing, filtering, host resolution, port
+expansion, and CSV output. Problematic rows are logged to the injected `warn`
+writer and skipped (never `os.Stderr` directly, and `warn` is never nil/buffered
+by the caller).
 
 **Row processing logic:**
 1. Check row has sufficient columns
@@ -60,18 +78,23 @@ Wires together CSV reading, column indexing, filtering, host resolution, port ex
 4. Split "/"-separated port string into individual ports
 5. Expand each (host, port) pair into output row
 
-### SplitPorts
+Note: an invalid port token produces **two** warnings in sequence — `SplitPorts`
+logs `invalid port %q: %v` first, then `Run` logs the row-level
+`skipping row %d: invalid port value %q` when it observes `ports == nil`. This
+double-warning ordering is intentional and covered by tests.
+
+### SplitPorts (`pkg/csvtransform`)
 
 ```go
-func SplitPorts(portStr string) ([]int, error)
+func SplitPorts(portStr string, warn io.Writer) ([]int, error)
 ```
 
 Splits a "/"`-separated port string into individual port integers:
 - Empty string returns `nil` (caller skips row)
-- Invalid ports are skipped silently (logged to stderr)
+- Invalid ports are skipped silently (logged to `warn`)
 - Returns `nil` if all ports invalid
 
-### ResolveHost
+### ResolveHost (`pkg/csvtransform`)
 
 ```go
 func ResolveHost(host string) (string, error)
@@ -80,9 +103,10 @@ func ResolveHost(host string) (string, error)
 Resolves a host (IP or hostname) to an IPv4 string:
 - IPv4 addresses returned as-is
 - Hostnames resolved via `net.LookupIP`
-- On resolution failure, original hostname string is returned (downstream validation catches it)
+- On resolution failure, original hostname string is returned **silently, with
+  no warning emitted** (downstream validation catches it)
 
-### ShouldIncludeRow
+### ShouldIncludeRow (`pkg/csvtransform`)
 
 ```go
 func ShouldIncludeRow(passVal string) bool
@@ -100,12 +124,15 @@ Provides a unified interface for reading CSV and Excel files:
 
 ```
 cmd/csv-transform/
-├── main.go          # CLI entry, TransformConfig, runTransform
-├── transform.go     # SplitPorts, ResolveHost, ShouldIncludeRow
+├── main.go          # CLI entry, TransformConfig, flag/env parsing, runMain wiring to csvtransform.Run
+├── main_test.go      # config/flag tests + black-box runMain test
+└── README.md
+
+pkg/csvtransform/
+├── transform.go      # SplitPorts(warn), ResolveHost, ShouldIncludeRow, csvHeader, default* consts
 ├── transform_test.go
-├── main.go          # Entry point
-├── main_test.go
-└── integration_test.go
+├── pipeline.go       # Config, Run(cfg, warn) — the transform pipeline core
+└── pipeline_test.go
 
 pkg/spreadsheet/
 ├── reader.go        # Unified CSV/Excel reader

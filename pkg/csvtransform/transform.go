@@ -1,17 +1,34 @@
-package main
+// Package csvtransform transforms wide test-result CSVs into the rich scan-input
+// schema. It is the reusable core behind the csv-transform command.
+package csvtransform
 
 import (
 	"fmt"
+	"io"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 )
 
+// CSV header for Rich output format.
+const csvHeader = "src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason"
+
+// Default field values per spec.
+const (
+	defaultSrcIP           = "10.0.0.1"
+	defaultSrcNetwork      = "10.0.0.0/24"
+	defaultDstNetwork      = "10.0.0.0/24"
+	defaultServiceLabel    = "unknown"
+	defaultProtocol        = "tcp"
+	defaultDecision        = "accept"
+	defaultMatchedPolicyID = "transformed"
+	defaultReason          = "MATCH_POLICY_ACCEPT"
+)
+
 // SplitPorts splits a "/"-separated port string into individual port integers.
 // Empty string returns nil (caller skips row).
-// Invalid ports are skipped silently (logged to stderr).
-func SplitPorts(portStr string) ([]int, error) {
+// Invalid ports are skipped silently (logged to warn).
+func SplitPorts(portStr string, warn io.Writer) ([]int, error) {
 	if strings.TrimSpace(portStr) == "" {
 		return nil, nil
 	}
@@ -26,7 +43,7 @@ func SplitPorts(portStr string) ([]int, error) {
 		}
 		port, err := strconv.Atoi(p)
 		if err != nil {
-			fmt.Fprintf(stderr, "invalid port %q: %v\n", p, err)
+			fmt.Fprintf(warn, "invalid port %q: %v\n", p, err)
 			return nil, nil // skip entire row on any invalid port
 		}
 		ports = append(ports, port)
@@ -37,9 +54,6 @@ func SplitPorts(portStr string) ([]int, error) {
 	}
 	return ports, nil
 }
-
-// stderr is used for logging invalid port warnings.
-var stderr = os.Stderr
 
 // ResolveHost resolves a host (IP or hostname) to an IPv4 string.
 // IPv4 addresses are returned as-is.
