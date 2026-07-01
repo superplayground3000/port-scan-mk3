@@ -114,6 +114,20 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 		return records, nil
 	}
 
+	out, err := parseBasicCIDRRows(rows, ipCol, ipCidrCol)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateIPRows(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// parseBasicCIDRRows parses basic-mode CIDR CSV rows (header + data rows) into
+// CIDRRecord values using the given ip and ip_cidr column names. It does not
+// perform cross-row validation; callers must invoke ValidateIPRows separately.
+func parseBasicCIDRRows(rows [][]string, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
 	header := normalizeHeader(rows[0])
 	ipIdx := headerIndex(header, ipCol)
 	if ipIdx < 0 {
@@ -164,9 +178,6 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 			return nil, fmt.Errorf("invalid cidr row %d: %w", i+1, err)
 		}
 		out = append(out, rec)
-	}
-	if err := ValidateIPRows(out); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
