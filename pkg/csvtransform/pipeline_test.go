@@ -315,3 +315,49 @@ func TestRunTransform_ProblematicRowsLoggedAndSkipped(t *testing.T) {
 		t.Errorf("expected 2 data rows, got %d: %v", len(records)-1, records[1:])
 	}
 }
+
+func TestRun_NilWarn_DoesNotPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "input.csv")
+	// CSV with a problematic row that triggers the warn path
+	csvContent := `Host,Port,Pass the test
+192.168.1.1,80,FALSE
+192.168.1.2,abc,FALSE
+`
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatalf("failed to write CSV: %v", err)
+	}
+
+	outputPath := filepath.Join(tmpDir, "out.csv")
+
+	cfg := Config{
+		Input:     csvPath,
+		Output:    outputPath,
+		SheetName: "all-runs",
+		HostCol:   "Host",
+		PortCol:   "Port",
+		PassCol:   "Pass the test",
+	}
+
+	// Call Run with nil warn; should not panic
+	if err := Run(cfg, nil); err != nil {
+		t.Fatalf("Run with nil warn failed: %v", err)
+	}
+
+	// Verify output was written correctly (only valid row)
+	fd, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("failed to open output CSV: %v", err)
+	}
+	defer fd.Close()
+
+	records, err := csv.NewReader(fd).ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read CSV: %v", err)
+	}
+
+	// Should have 1 data row (first row valid, second row has invalid port)
+	if len(records) != 2 { // header + 1 data row
+		t.Errorf("expected 1 data row, got %d: %v", len(records)-1, records[1:])
+	}
+}

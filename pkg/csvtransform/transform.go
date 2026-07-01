@@ -29,6 +29,9 @@ const (
 // Empty string returns nil (caller skips row).
 // Invalid ports are skipped silently (logged to warn).
 func SplitPorts(portStr string, warn io.Writer) ([]int, error) {
+	if warn == nil {
+		warn = io.Discard
+	}
 	if strings.TrimSpace(portStr) == "" {
 		return nil, nil
 	}

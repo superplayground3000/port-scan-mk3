@@ -41,6 +41,17 @@ func TestSplitPorts(t *testing.T) {
 	}
 }
 
+func TestSplitPorts_NilWarn_DoesNotPanic(t *testing.T) {
+	// invalid token triggers the warn path; nil sink must be tolerated
+	got, err := SplitPorts("443/abc", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %v, want nil (row skipped)", got)
+	}
+}
+
 func TestResolveHost(t *testing.T) {
 	tests := []struct {
 		name    string

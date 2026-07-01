@@ -23,6 +23,9 @@ type Config struct {
 // Run wires CSV reading, column indexing, filtering, host resolution, port
 // expansion, and CSV output. Problematic rows are logged to warn and skipped.
 func Run(cfg Config, warn io.Writer) error {
+	if warn == nil {
+		warn = io.Discard
+	}
 	reader := spreadsheet.NewReader(cfg.Input)
 	rows, err := reader.OpenSheet(cfg.SheetName)
 	if err != nil {
