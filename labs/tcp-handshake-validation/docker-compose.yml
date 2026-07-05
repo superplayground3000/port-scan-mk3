@@ -1,0 +1,48 @@
+name: lab-tcp-handshake-validation
+
+# Fully isolated: a private bridge network, no host port mappings (the scanner
+# reaches the target over the lab network by IP), and no host network changes.
+services:
+  target:
+    build:
+      context: ./server
+    networks:
+      lab:
+        ipv4_address: 172.31.199.10
+    restart: "no"
+    # Healthcheck is the HEALTHCHECK in server/Dockerfile (self-dial over loopback).
+
+  scanner:
+    build:
+      # Context is the REPO ROOT so the real port-scan-mk3 binary is built.
+      context: ../..
+      dockerfile: labs/tcp-handshake-validation/client/Dockerfile
+    depends_on:
+      target:
+        condition: service_healthy
+    environment:
+      TARGET_IP: "172.31.199.10"
+      OPEN_PORT: "9000"
+      CLOSED_PORT: "9001"
+    # Least privilege: drop everything, add back only CAP_NET_RAW for tcpdump's
+    # live capture. NET_ADMIN / privileged are NOT needed and NOT granted.
+    cap_drop: ["ALL"]
+    cap_add: ["NET_RAW"]
+    networks:
+      - lab
+    volumes:
+      - tcp-handshake-validation-data:/work/out
+    restart: "no"
+    # Behind a profile so `docker compose up --wait` starts only the target;
+    # the smoke test runs the scanner on demand with `docker compose run`.
+    profiles: ["scan"]
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.199.0/24
+
+volumes:
+  tcp-handshake-validation-data: {}
