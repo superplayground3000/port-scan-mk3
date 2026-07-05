@@ -10,17 +10,11 @@ import (
 )
 
 func TestCLIRequiredFlags(t *testing.T) {
-	// Build the binary first
-	cmd := exec.Command("go", "build", "-o", "cidr-compare-test", ".")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("failed to build: %s", string(output))
-	}
-	defer os.Remove("cidr-compare-test")
+	bin := buildTestBinary(t)
 
 	// Run with no args - should exit with code 1 and show usage
-	cmd = exec.Command("./cidr-compare-test")
-	output, err = cmd.CombinedOutput()
+	cmd := exec.Command(bin)
+	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("expected error when running without flags")
 	}
@@ -33,13 +27,7 @@ func TestCLIRequiredFlags(t *testing.T) {
 }
 
 func TestEnvVarFallback(t *testing.T) {
-	// Build the binary first
-	buildCmd := exec.Command("go", "build", "-o", "cidr-compare-test", ".")
-	output, err := buildCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("failed to build: %s", string(output))
-	}
-	defer os.Remove("cidr-compare-test")
+	bin := buildTestBinary(t)
 
 	// Create temp files
 	denyContent := "dst_network_segment,decision\n10.0.0.0/8,deny\n"
@@ -60,8 +48,8 @@ func TestEnvVarFallback(t *testing.T) {
 	}()
 
 	// Run with no flags but env vars set
-	runCmd := exec.Command("./cidr-compare-test")
-	output, err = runCmd.CombinedOutput()
+	runCmd := exec.Command(bin)
+	output, err := runCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("command failed: %v, output: %s", err, string(output))
 	}

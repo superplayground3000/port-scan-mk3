@@ -63,13 +63,6 @@ jobs:
   windows-build-test:
     name: Cross-platform build + test (Windows)
     runs-on: windows-latest
-    # Non-blocking for now: the Windows build passes, but several tests carry
-    # pre-existing cross-platform assumptions (forward-slash path assertions,
-    # `./binary` exec without `.exe`, a hardcoded `/tmp` resume default, and a
-    # Unix-only fd-limit test). Tracked for a follow-up fix; see
-    # docs/MAINTENANCE.md "Known cross-platform follow-ups". Flip to blocking
-    # once those are fixed.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -84,12 +77,6 @@ jobs:
   e2e:
     name: Isolated e2e (Docker Compose)
     runs-on: ubuntu-latest
-    # Non-blocking for now: one failure-injection scenario (api_timeout) is
-    # timing-sensitive — the tiny fail-scenario scan can finish before the
-    # pressure-timeout becomes fatal on fast runners, so it exits 0 instead of
-    # failing. Tracked for a follow-up fix that makes the scenario deterministic;
-    # see docs/MAINTENANCE.md "Known e2e follow-ups". Flip to blocking once fixed.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
