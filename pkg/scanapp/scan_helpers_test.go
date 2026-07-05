@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -655,7 +656,10 @@ func TestResumePath_WhenMultipleSourcesProvided_UsesPriorityOrder(t *testing.T) 
 	if got := resumePath(config.Config{Resume: "cfg.json"}, RunOptions{}); got != "cfg.json" {
 		t.Fatalf("unexpected resume path: %s", got)
 	}
-	if got := resumePath(config.Config{Output: "/tmp/scan_results.csv"}, RunOptions{}); got != "/tmp/"+defaultResumeStateFile {
+	// resumePath derives the default from the output directory via filepath.Join,
+	// so the separator is OS-native; build the expectation the same way.
+	wantDefault := filepath.Join(filepath.Dir("/tmp/scan_results.csv"), defaultResumeStateFile)
+	if got := resumePath(config.Config{Output: "/tmp/scan_results.csv"}, RunOptions{}); got != wantDefault {
 		t.Fatalf("unexpected default resume path: %s", got)
 	}
 }
@@ -690,6 +694,12 @@ func TestChunkStateHelpers_WhenRuntimesMixed_ReturnExpectedSnapshots(t *testing.
 }
 
 func TestEnsureFDLimit_WhenWorkersExceedLimit_ReturnsError(t *testing.T) {
+	// ensureFDLimit enforces the POSIX RLIMIT_NOFILE limit, which does not exist
+	// on Windows (there it is a documented no-op), so this expectation is
+	// Unix-only.
+	if runtime.GOOS == "windows" {
+		t.Skip("fd limit enforcement is Unix-only; ensureFDLimit is a no-op on Windows")
+	}
 	err := ensureFDLimit(1_000_000_000)
 	if err == nil {
 		t.Fatal("expected fd limit error for huge workers")

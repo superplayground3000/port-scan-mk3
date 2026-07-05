@@ -121,6 +121,12 @@ run_expected_failure() {
 
   rm -f "$OUT_DIR/resume_state.json"
   set +e
+  # -delay 700ms is deliberate, not 0ms. Pressure only becomes fatal after 3
+  # consecutive failures; for the api_timeout scenario each failed poll blocks on
+  # the 2s HTTP client timeout, so the fatal fires ~6s in. The per-task delay
+  # keeps the 16-target scan running well past that (>=11s) on any runner,
+  # regardless of network or rate-limiter timing, so the failure is deterministic.
+  # Do not lower it without re-checking that api_timeout still fails.
   run_scan \
     -cidr-file /inputs/cidr_fail.csv \
     -port-file /inputs/ports.csv \
@@ -132,7 +138,7 @@ run_expected_failure() {
     -workers 1 \
     -bucket-rate 1 \
     -bucket-capacity 1 \
-    -delay 0ms \
+    -delay 700ms \
     -timeout 200ms \
     -log-level error \
     >"$OUT_DIR/scenario_${scenario}.log" 2>&1
