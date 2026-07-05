@@ -16,8 +16,9 @@ name: CI
 on:
   push:
     branches: [master]
+  # Run on every pull request regardless of base branch, so stacked/follow-up
+  # PRs are also gated before they merge.
   pull_request:
-    branches: [master]
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
