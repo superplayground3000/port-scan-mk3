@@ -20,3 +20,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+          # Required by gitleaks-action@v2 for organization-owned repos.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

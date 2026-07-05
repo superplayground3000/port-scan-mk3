@@ -105,7 +105,35 @@ Never lower the threshold, delete tests, or extend `EXCLUDE_PATTERN` in
 `scripts/coverage_gate.sh` to pass — that requires user approval
 ([`40-maintenance-protocol.md`](../.claude/rules/40-maintenance-protocol.md)).
 
-## 6. Release evidence
+## 6. Known cross-platform & e2e follow-ups (tracked debt)
+
+The first CI run surfaced pre-existing issues that predate the CI itself. The
+Linux quality gate is green and **blocking**; the Windows and e2e jobs run as
+**non-blocking** (`continue-on-error: true` in `ci.yml`) until these are fixed.
+Do not delete the jobs — fix the causes and flip them back to blocking.
+
+**Windows test portability** (`go build` on Windows passes; these tests fail):
+- `cmd/cidr-compare` tests exec a helper via `./cidr-compare-test` — needs a
+  `.exe` suffix / proper path on Windows.
+- `pkg/preprocess` `TestOutputPath*` assert forward-slash paths but production
+  uses `filepath` (backslashes on Windows) — fix the test expectations to build
+  paths with `filepath.Join`.
+- `pkg/scanapp` default resume path is hardcoded `/tmp/resume_state.json` — make
+  it `os.TempDir()`-based (a real production portability fix), and update the
+  test.
+- `TestEnsureFDLimit_WhenWorkersExceedLimit_ReturnsError` relies on the Unix
+  `RLIMIT_NOFILE` check — skip it on Windows (`runtime.GOOS == "windows"`).
+
+**e2e determinism:**
+- The `api_timeout` failure-injection scenario in `e2e/run_e2e.sh` is
+  timing-sensitive: the scan can complete before the pressure-timeout turns
+  fatal on fast runners. Make the scenario deterministic (e.g. more work, or a
+  hard fail signal) so the assertion is stable.
+
+Each fix must follow test-first (constitution III). When a job is green on
+Windows/CI, remove its `continue-on-error` in `.github/workflows/ci.yml`.
+
+## 7. Release evidence
 
 Product releases use semver and ship `docs/release-notes/<version>.md` with
 features, fixes, breaking changes, and migration guidance (constitution VII).
