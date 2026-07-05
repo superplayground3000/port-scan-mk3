@@ -9,6 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # gitleaks-action@v2 accesses the PR (to summarize findings) on
+      # pull_request events; without this it fails with "Resource not
+      # accessible by integration".
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,3 +24,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+          # Required by gitleaks-action@v2 for organization-owned repos.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

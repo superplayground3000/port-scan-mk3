@@ -406,10 +406,14 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 
 ## Testing and Verification
 
-- Unit + integration: `go test ./...`
-- Coverage gate (85%): `bash scripts/coverage_gate.sh`
-- E2E gate: `bash e2e/run_e2e.sh`
+- **Full quality gate (run before every "done"): `make verify`** — gofmt, `go vet`,
+  build, `go test -race -shuffle=on`, and the 85% coverage gate. Mirrors CI.
+- Full gate **plus** isolated Docker e2e: `make verify-e2e`
+- Individual steps: `make test` · `make cover` · `make e2e` · `make fmt` (`make help` lists all)
 - Speed-control verification report: `bash e2e/speedcontrol/run_speedcontrol_e2e.sh`
+- CI runs these gates on every push and PR (`.github/workflows/ci.yml`).
+- See [Maintainability Baseline](docs/MAINTENANCE.md) for the full contract, cross-platform
+  notes, and a complete runnable example.
 
 ## Secret Scanning (gitleaks)
 
@@ -420,6 +424,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 
 ## Docs
 
+- [Maintainability Baseline](docs/MAINTENANCE.md) — quality gates, cross-platform, runnable example
 - [All flags](docs/cli/flags.md)
 - [Scenario cookbook](docs/cli/scenarios.md)
 - [Pre-processing workflow spec](docs/specs/2026-04-16-preprocess-workflow-spec.md)
