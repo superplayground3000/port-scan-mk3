@@ -52,19 +52,19 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 	}
 
 	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            100 * time.Millisecond,
 		PreScanPingTimeout: 100 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureAPI:      "http://127.0.0.1:1",
-		PressureInterval: time.Second,
-		DisableAPI:       true,
-		Format:           "human",
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureAPI:        "http://127.0.0.1:1",
+		PressureInterval:   time.Second,
+		DisableAPI:         true,
+		Format:             "human",
 	}
 
 	if err := scanapp.Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, scanapp.RunOptions{DisableKeyboard: true}); err != nil {

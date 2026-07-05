@@ -139,19 +139,19 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		CIDRFile:            cidrFile,
-		PortFile:            portFile,
-		Output:              outFile,
-		Timeout:             100 * time.Millisecond,
-		Delay:               0,
-		BucketRate:          100,
-		BucketCapacity:      100,
-		Workers:             1,
-		PressureInterval:    5 * time.Second,
-		DisableAPI:          true,
-		Resume:              resumeFile,
-		LogLevel:            "error",
-		PreScanPingTimeout:  100 * time.Millisecond,
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             outFile,
+		Timeout:            100 * time.Millisecond,
+		Delay:              0,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		Resume:             resumeFile,
+		LogLevel:           "error",
+		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)

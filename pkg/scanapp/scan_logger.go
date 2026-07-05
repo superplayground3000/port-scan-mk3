@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/logx"
 )
@@ -36,6 +37,10 @@ type scanLogger struct {
 	asJSON bool
 	out    io.Writer
 	quiet  bool
+	// mu serializes writes to out. The logger is shared across scan worker
+	// goroutines, and the underlying io.Writer (e.g. bytes.Buffer, os.Stderr)
+	// is not safe for concurrent writes.
+	mu sync.Mutex
 }
 
 func newLogger(level string, asJSON bool, out io.Writer) *scanLogger {
@@ -92,6 +97,10 @@ func (l *scanLogger) logWithFields(level int, levelName, msg string, fields map[
 	if fields == nil {
 		fields = map[string]any{}
 	}
+	// Serialize writes: the logger is shared across worker goroutines and the
+	// underlying io.Writer is not safe for concurrent use.
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.asJSON {
 		logx.LogJSON(l.out, levelName, msg, fields)
 		return
