@@ -347,10 +347,10 @@ func TestBuildRichGroups_WhenReasonIsPrecheckAllowAll_ExpandsDstNetworkSegmentTa
 		t.Fatalf("unexpected err: %v", err)
 	}
 	got := groups["10.0.0.0/30"]
-	if len(got.targets) != 4 {
-		t.Fatalf("expected 4 expanded targets from /30, got %d", len(got.targets))
+	if len(got.targets) != 3 {
+		t.Fatalf("expected 3 expanded targets from /30 (broadcast .3 excluded), got %d", len(got.targets))
 	}
-	wantIPs := []string{"10.0.0.0", "10.0.0.1", "10.0.0.2", "10.0.0.3"}
+	wantIPs := []string{"10.0.0.0", "10.0.0.1", "10.0.0.2"}
 	for i, wantIP := range wantIPs {
 		target := got.targets[i]
 		if target.ip != wantIP {
@@ -431,8 +431,8 @@ func TestBuildRichGroups_WhenPrecheckAndMatchOverlap_MergesByExpandedExecutionKe
 		t.Fatalf("unexpected err: %v", err)
 	}
 	got := groups["10.0.0.0/30"]
-	if len(got.targets) != 4 {
-		t.Fatalf("expected 4 targets after overlap merge, got %d", len(got.targets))
+	if len(got.targets) != 3 {
+		t.Fatalf("expected 3 targets after overlap merge (broadcast .3 excluded), got %d", len(got.targets))
 	}
 
 	var merged scanTarget

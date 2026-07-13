@@ -121,6 +121,12 @@ run_expected_failure() {
 
   rm -f "$OUT_DIR/resume_state.json"
   set +e
+  # -disable-pre-scan-ping makes the run duration deterministic: every selector
+  # IP becomes a TCP task paced at -bucket-rate 1 (~1/s), so the scan reliably
+  # outlasts the pressure fail-fast window (3 failures x ~2s client timeout).
+  # Otherwise the duration is dominated by flaky ARP timing of unreachable IPs,
+  # and a small change in target count (e.g. broadcast exclusion) can tip the
+  # scan below the fail-fast threshold and make it exit 0.
   run_scan \
     -cidr-file /inputs/cidr_fail.csv \
     -port-file /inputs/ports.csv \
@@ -134,6 +140,7 @@ run_expected_failure() {
     -bucket-capacity 1 \
     -delay 0ms \
     -timeout 200ms \
+    -disable-pre-scan-ping \
     -log-level error \
     >"$OUT_DIR/scenario_${scenario}.log" 2>&1
   local code=$?

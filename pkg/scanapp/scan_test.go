@@ -584,8 +584,10 @@ func TestRun_WhenLegacyResumeAndCurrentPreScanFiltersUnreachable_SucceedsWithout
 	if strings.Contains(string(scanData), "127.0.0.1") {
 		t.Fatalf("did not expect filtered unreachable ip in scan output, got %s", string(scanData))
 	}
-	if lineCount(string(scanData)) != 4 {
-		t.Fatalf("expected header plus three scanned rows after filtering, got %s", string(scanData))
+	// /30 expands to .0,.1,.2 (broadcast .3 excluded); .1 is filtered unreachable,
+	// leaving .0 and .2 scanned => header + 2 rows.
+	if lineCount(string(scanData)) != 3 {
+		t.Fatalf("expected header plus two scanned rows after filtering, got %s", string(scanData))
 	}
 
 	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
@@ -948,7 +950,8 @@ func TestBuildRuntime_WhenChunkPortsEmpty_UsesDefaultInputPorts(t *testing.T) {
 	if len(rts) != 1 {
 		t.Fatalf("unexpected runtime len: %d", len(rts))
 	}
-	if rts[0].state.TotalCount != 4 {
+	// /30 expands to 3 targets (broadcast excluded) x 1 default port => 3.
+	if rts[0].state.TotalCount != 3 {
 		t.Fatalf("unexpected total count: %d", rts[0].state.TotalCount)
 	}
 }
