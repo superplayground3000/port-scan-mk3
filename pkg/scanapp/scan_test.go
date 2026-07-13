@@ -600,6 +600,63 @@ func TestRun_WhenLegacyResumeAndCurrentPreScanFiltersUnreachable_SucceedsWithout
 	}
 }
 
+func TestRun_WhenResumeReusesChunksAndBroadcastExclusionChangesTotal_FailsWithClearError(t *testing.T) {
+	// -disable-pre-scan-ping makes shouldUseResumeChunks return true, so the saved
+	// chunks are reused unchanged. A snapshot written before broadcast exclusion
+	// carries the old (inclusive) TotalCount; the runtime now expects one fewer
+	// target and must fail with an actionable "start fresh" message rather than a
+	// silent mismatch.
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	resumeFile := filepath.Join(tmp, "resume.json")
+
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.0/30,10.0.0.0/30,seg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Save(resumeFile, []task.Chunk{{
+		CIDR:         "10.0.0.0/30",
+		CIDRName:     "seg",
+		Ports:        []string{"1/tcp"},
+		NextIndex:    1,
+		ScannedCount: 1,
+		TotalCount:   4, // pre-broadcast-exclusion count (now expected: 3)
+		Status:       "scanning",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             filepath.Join(tmp, "out.csv"),
+		Timeout:            20 * time.Millisecond,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		DisablePreScanPing: true,
+		Resume:             resumeFile,
+		LogLevel:           "error",
+	}
+
+	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("expected resume-incompatibility error, got nil")
+	}
+	if !strings.Contains(err.Error(), "incompatible with the current target set") ||
+		!strings.Contains(err.Error(), "fresh scan") {
+		t.Fatalf("expected actionable resume message, got: %v", err)
+	}
+}
+
 func TestRun_WhenPreScanPingDisabled_SkipsCheckerAndDoesNotFilterTargets(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")

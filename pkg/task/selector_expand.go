@@ -17,11 +17,10 @@ import (
 // range (e.g., "10.0.0.0/8"). IPv6 inputs are rejected. The output is sorted
 // in ascending numeric order and contains no duplicates.
 //
-// For a CIDR range with prefix /30 or larger, the broadcast address (all host
-// bits set, e.g. .255 in a /24) is excluded because it is not a scannable host;
-// the network address (all host bits clear) is retained. /31 and /32 have no
-// broadcast and are expanded in full. An address supplied as an explicit single
-// IP (or /32) is always kept, even if it happens to be a broadcast-looking .255.
+// Expansion is inclusive of every address in the range. Broadcast-address
+// exclusion is applied separately against the boundary subnet by the caller
+// (see FilterBoundaryBroadcast), because the broadcast is a property of the
+// network segment, not of an arbitrary selector sub-range.
 //
 // # Parameters
 //
@@ -35,7 +34,7 @@ import (
 // # Example
 //
 //	ips, err := task.ExpandIPSelectors([]string{"192.168.1.0/30", "192.168.1.1"})
-//	// ips == ["192.168.1.0", "192.168.1.1", "192.168.1.2"]  // .3 broadcast excluded
+//	// ips == ["192.168.1.0", "192.168.1.1", "192.168.1.2", "192.168.1.3"]
 func ExpandIPSelectors(selectors []string) ([]string, error) {
 	uniq := make(map[uint32]struct{})
 	for _, raw := range selectors {
@@ -61,17 +60,9 @@ func ExpandIPSelectors(selectors []string) ([]string, error) {
 		}
 		startN := binary.BigEndian.Uint32(start.To4())
 		endN := binary.BigEndian.Uint32(end.To4())
-		// A CIDR block reserves its last address (all host bits set) as the
-		// broadcast address, which must not be scanned. The network address
-		// (all host bits clear) is retained. /31 and /32 have no broadcast
-		// (RFC 3021 point-to-point and single host), so nothing is excluded.
-		ones, _ := n.Mask.Size()
-		excludeBroadcast := ones <= 30
-		for curr := startN; ; curr++ {
-			if !(excludeBroadcast && curr == endN) {
-				uniq[curr] = struct{}{}
-			}
-			if curr == endN {
+		for curr := startN; curr <= endN; curr++ {
+			uniq[curr] = struct{}{}
+			if curr == ^uint32(0) {
 				break
 			}
 		}

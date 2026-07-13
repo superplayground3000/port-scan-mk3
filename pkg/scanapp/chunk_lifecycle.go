@@ -149,7 +149,7 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 			ch.TotalCount = expectedTotal
 		}
 		if ch.TotalCount != expectedTotal {
-			return nil, fmt.Errorf("chunk total_count mismatch for %s: state=%d expected=%d", ch.CIDR, ch.TotalCount, expectedTotal)
+			return nil, fmt.Errorf("resume state for %s is incompatible with the current target set (saved total_count=%d, now expected=%d); this happens when the input CSV changed or after upgrading to a build that excludes broadcast addresses. Start a fresh scan (remove -resume or delete the resume file)", ch.CIDR, ch.TotalCount, expectedTotal)
 		}
 		if ch.NextIndex >= ch.TotalCount {
 			ch.Status = "completed"
