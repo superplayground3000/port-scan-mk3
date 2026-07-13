@@ -205,6 +205,51 @@ func TestBuildCIDRGroups_WhenInputsVary_ReturnsErrorsAndSortedTargets(t *testing
 	}
 }
 
+func TestBuildCIDRGroups_WhenTargetIsBoundaryBroadcast_ExcludesIt(t *testing.T) {
+	_, net24, _ := net.ParseCIDR("10.0.0.0/24")
+
+	// An explicitly listed single IP that is the boundary broadcast is excluded.
+	explicit := []input.CIDRRecord{{CIDR: "10.0.0.0/24", IPRaw: "10.0.0.255", Net: net24, FabName: "f", CIDRName: "c"}}
+	groups, err := buildCIDRGroups(explicit)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(groups["10.0.0.0/24"].targets) != 0 {
+		t.Fatalf("explicit broadcast must be excluded, got %#v", groups["10.0.0.0/24"].targets)
+	}
+
+	// A full /24 selector drops the broadcast but keeps the network address.
+	full := []input.CIDRRecord{{CIDR: "10.0.0.0/24", IPRaw: "10.0.0.0/24", Net: net24, FabName: "f", CIDRName: "c"}}
+	groups, err = buildCIDRGroups(full)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	got := groups["10.0.0.0/24"].targets
+	if len(got) != 255 {
+		t.Fatalf("expected 255 targets (256 minus broadcast), got %d", len(got))
+	}
+	if got[0].ip != "10.0.0.0" {
+		t.Fatalf("network .0 must be kept, got %s", got[0].ip)
+	}
+	for _, tg := range got {
+		if tg.ip == "10.0.0.255" {
+			t.Fatal("broadcast 10.0.0.255 must be excluded")
+		}
+	}
+
+	// Boundary-relative: 10.0.0.255 is a valid host inside a /23 and is kept.
+	_, net23, _ := net.ParseCIDR("10.0.0.0/23")
+	inRange := []input.CIDRRecord{{CIDR: "10.0.0.0/23", IPRaw: "10.0.0.255", Net: net23, FabName: "f", CIDRName: "c"}}
+	groups, err = buildCIDRGroups(inRange)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	got = groups["10.0.0.0/23"].targets
+	if len(got) != 1 || got[0].ip != "10.0.0.255" {
+		t.Fatalf("10.0.0.255 is a valid /23 host and must be kept, got %#v", got)
+	}
+}
+
 func TestBuildRuntime_WhenTotalCountMismatch_ReturnsError(t *testing.T) {
 	rows := []input.CIDRRecord{
 		{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.1/32")},
@@ -217,6 +262,10 @@ func TestBuildRuntime_WhenTotalCountMismatch_ReturnsError(t *testing.T) {
 	_, err := buildRuntime(chunks, rows, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1})
 	if err == nil {
 		t.Fatal("expected total_count mismatch error")
+	}
+	if !strings.Contains(err.Error(), "incompatible with the current target set") ||
+		!strings.Contains(err.Error(), "fresh scan") {
+		t.Fatalf("expected actionable resume-incompatibility message, got: %v", err)
 	}
 }
 
@@ -347,10 +396,10 @@ func TestBuildRichGroups_WhenReasonIsPrecheckAllowAll_ExpandsDstNetworkSegmentTa
 		t.Fatalf("unexpected err: %v", err)
 	}
 	got := groups["10.0.0.0/30"]
-	if len(got.targets) != 4 {
-		t.Fatalf("expected 4 expanded targets from /30, got %d", len(got.targets))
+	if len(got.targets) != 3 {
+		t.Fatalf("expected 3 expanded targets from /30 (broadcast .3 excluded), got %d", len(got.targets))
 	}
-	wantIPs := []string{"10.0.0.0", "10.0.0.1", "10.0.0.2", "10.0.0.3"}
+	wantIPs := []string{"10.0.0.0", "10.0.0.1", "10.0.0.2"}
 	for i, wantIP := range wantIPs {
 		target := got.targets[i]
 		if target.ip != wantIP {
@@ -431,8 +480,8 @@ func TestBuildRichGroups_WhenPrecheckAndMatchOverlap_MergesByExpandedExecutionKe
 		t.Fatalf("unexpected err: %v", err)
 	}
 	got := groups["10.0.0.0/30"]
-	if len(got.targets) != 4 {
-		t.Fatalf("expected 4 targets after overlap merge, got %d", len(got.targets))
+	if len(got.targets) != 3 {
+		t.Fatalf("expected 3 targets after overlap merge (broadcast .3 excluded), got %d", len(got.targets))
 	}
 
 	var merged scanTarget

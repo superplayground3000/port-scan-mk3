@@ -17,6 +17,11 @@ import (
 // range (e.g., "10.0.0.0/8"). IPv6 inputs are rejected. The output is sorted
 // in ascending numeric order and contains no duplicates.
 //
+// Expansion is inclusive of every address in the range. Broadcast-address
+// exclusion is applied separately against the boundary subnet by the caller
+// (see FilterBoundaryBroadcast), because the broadcast is a property of the
+// network segment, not of an arbitrary selector sub-range.
+//
 // # Parameters
 //
 //	selectors: Slice of IP selector strings (IP or CIDR notation).

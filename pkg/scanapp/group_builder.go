@@ -2,6 +2,7 @@ package scanapp
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
@@ -118,6 +119,10 @@ func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
 	if err != nil {
 		return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
 	}
+	// The broadcast address of the boundary subnet is not a scannable host and
+	// is excluded regardless of whether it arrived via CIDR expansion or as an
+	// explicitly listed single IP.
+	ips = task.FilterBoundaryBroadcast(ips, rec.Net)
 
 	targets := make([]scanTarget, 0, len(ips))
 	for _, ip := range ips {
@@ -330,6 +335,11 @@ func richTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
 	ips, err := richTargetIPs(rec)
 	if err != nil {
 		return nil, err
+	}
+	// Exclude the broadcast address of the destination network segment, whether
+	// it came from expanding the segment or from an explicit dst_ip.
+	if _, seg, perr := net.ParseCIDR(cidr); perr == nil {
+		ips = task.FilterBoundaryBroadcast(ips, seg)
 	}
 	targets := make([]scanTarget, 0, len(ips))
 	for _, ip := range ips {

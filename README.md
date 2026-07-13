@@ -187,6 +187,10 @@ Input CSV ──> spreadsheet.Reader ──> Column index ──> Filter rows �
 3. Run a pre-scan ping stage by default, once per unique IPv4 target, with a fixed `100ms` timeout per IP.
 4. Finalize `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv` before any TCP work starts.
 5. Expand only reachable selectors into concrete IPv4 targets and build scan tasks.
+   The broadcast address of each row's boundary subnet (`ip_cidr` /
+   `dst_network_segment`, prefix /30 or larger) is never scanned — whether it
+   came from CIDR expansion or an explicitly listed IP — while the network
+   address is kept.
 6. Dispatch tasks with rate control and optional pressure-based pause.
 7. Run TCP probes in worker pool and stream progress events.
 8. Write timestamped batch output files:

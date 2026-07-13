@@ -584,8 +584,10 @@ func TestRun_WhenLegacyResumeAndCurrentPreScanFiltersUnreachable_SucceedsWithout
 	if strings.Contains(string(scanData), "127.0.0.1") {
 		t.Fatalf("did not expect filtered unreachable ip in scan output, got %s", string(scanData))
 	}
-	if lineCount(string(scanData)) != 4 {
-		t.Fatalf("expected header plus three scanned rows after filtering, got %s", string(scanData))
+	// /30 expands to .0,.1,.2 (broadcast .3 excluded); .1 is filtered unreachable,
+	// leaving .0 and .2 scanned => header + 2 rows.
+	if lineCount(string(scanData)) != 3 {
+		t.Fatalf("expected header plus two scanned rows after filtering, got %s", string(scanData))
 	}
 
 	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
@@ -595,6 +597,118 @@ func TestRun_WhenLegacyResumeAndCurrentPreScanFiltersUnreachable_SucceedsWithout
 	}
 	if !strings.Contains(string(unreachableData), "127.0.0.1,127.0.0.0/30,unreachable") {
 		t.Fatalf("expected unreachable row for filtered legacy resume ip, got %s", string(unreachableData))
+	}
+}
+
+func TestRun_WhenResumeReusesChunksAndBroadcastExclusionChangesTotal_FailsWithClearError(t *testing.T) {
+	// -disable-pre-scan-ping makes shouldUseResumeChunks return true, so the saved
+	// chunks are reused unchanged. A snapshot written before broadcast exclusion
+	// carries the old (inclusive) TotalCount; the runtime now expects one fewer
+	// target and must fail with an actionable "start fresh" message rather than a
+	// silent mismatch.
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	resumeFile := filepath.Join(tmp, "resume.json")
+
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.0/30,10.0.0.0/30,seg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Save(resumeFile, []task.Chunk{{
+		CIDR:         "10.0.0.0/30",
+		CIDRName:     "seg",
+		Ports:        []string{"1/tcp"},
+		NextIndex:    1,
+		ScannedCount: 1,
+		TotalCount:   4, // pre-broadcast-exclusion count (now expected: 3)
+		Status:       "scanning",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             filepath.Join(tmp, "out.csv"),
+		Timeout:            20 * time.Millisecond,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		DisablePreScanPing: true,
+		Resume:             resumeFile,
+		LogLevel:           "error",
+	}
+
+	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("expected resume-incompatibility error, got nil")
+	}
+	if !strings.Contains(err.Error(), "incompatible with the current target set") ||
+		!strings.Contains(err.Error(), "fresh scan") {
+		t.Fatalf("expected actionable resume message, got: %v", err)
+	}
+}
+
+func TestRun_WhenResumeCIDRIsEntirelyBroadcast_FailsWithClearError(t *testing.T) {
+	// Edge case: a resumed CIDR whose only target is its boundary broadcast now
+	// filters to an empty group, so the reused chunk's CIDR is absent from the
+	// rebuilt groups. That must still yield the actionable "start fresh" guidance,
+	// not an opaque "not found in cidr file" error.
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	resumeFile := filepath.Join(tmp, "resume.json")
+
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.255,10.0.0.0/24,seg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Save(resumeFile, []task.Chunk{{
+		CIDR:         "10.0.0.0/24",
+		CIDRName:     "seg",
+		Ports:        []string{"1/tcp"},
+		NextIndex:    0,
+		ScannedCount: 0,
+		TotalCount:   1, // the broadcast was a target before 1.4.0
+		Status:       "scanning",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             filepath.Join(tmp, "out.csv"),
+		Timeout:            20 * time.Millisecond,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		DisablePreScanPing: true,
+		Resume:             resumeFile,
+		LogLevel:           "error",
+	}
+
+	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("expected clear resume error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no scannable targets") || !strings.Contains(err.Error(), "fresh scan") {
+		t.Fatalf("expected actionable resume message, got: %v", err)
 	}
 }
 
@@ -948,7 +1062,8 @@ func TestBuildRuntime_WhenChunkPortsEmpty_UsesDefaultInputPorts(t *testing.T) {
 	if len(rts) != 1 {
 		t.Fatalf("unexpected runtime len: %d", len(rts))
 	}
-	if rts[0].state.TotalCount != 4 {
+	// /30 expands to 3 targets (broadcast excluded) x 1 default port => 3.
+	if rts[0].state.TotalCount != 3 {
 		t.Fatalf("unexpected total count: %d", rts[0].state.TotalCount)
 	}
 }
