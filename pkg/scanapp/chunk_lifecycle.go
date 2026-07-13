@@ -120,7 +120,7 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 		ch := &chunks[i]
 		group, ok := groups[ch.CIDR]
 		if !ok {
-			return nil, fmt.Errorf("cidr %s from chunk not found in cidr file", ch.CIDR)
+			return nil, fmt.Errorf("resume state references %s, which has no scannable targets in the current input (it may have been removed from the CSV, or all of its targets are now excluded such as broadcast addresses); start a fresh scan (remove -resume or delete the resume file)", ch.CIDR)
 		}
 
 		portRows := ch.Ports

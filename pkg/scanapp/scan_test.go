@@ -657,6 +657,61 @@ func TestRun_WhenResumeReusesChunksAndBroadcastExclusionChangesTotal_FailsWithCl
 	}
 }
 
+func TestRun_WhenResumeCIDRIsEntirelyBroadcast_FailsWithClearError(t *testing.T) {
+	// Edge case: a resumed CIDR whose only target is its boundary broadcast now
+	// filters to an empty group, so the reused chunk's CIDR is absent from the
+	// rebuilt groups. That must still yield the actionable "start fresh" guidance,
+	// not an opaque "not found in cidr file" error.
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	resumeFile := filepath.Join(tmp, "resume.json")
+
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.255,10.0.0.0/24,seg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Save(resumeFile, []task.Chunk{{
+		CIDR:         "10.0.0.0/24",
+		CIDRName:     "seg",
+		Ports:        []string{"1/tcp"},
+		NextIndex:    0,
+		ScannedCount: 0,
+		TotalCount:   1, // the broadcast was a target before 1.4.0
+		Status:       "scanning",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:           cidrFile,
+		PortFile:           portFile,
+		Output:             filepath.Join(tmp, "out.csv"),
+		Timeout:            20 * time.Millisecond,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		Workers:            1,
+		PressureInterval:   5 * time.Second,
+		DisableAPI:         true,
+		DisablePreScanPing: true,
+		Resume:             resumeFile,
+		LogLevel:           "error",
+	}
+
+	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("expected clear resume error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no scannable targets") || !strings.Contains(err.Error(), "fresh scan") {
+		t.Fatalf("expected actionable resume message, got: %v", err)
+	}
+}
+
 func TestRun_WhenPreScanPingDisabled_SkipsCheckerAndDoesNotFilterTargets(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
