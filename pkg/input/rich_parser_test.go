@@ -38,6 +38,41 @@ func TestLoadCIDRsWithColumns_WhenRichHeaderCaseAndTrimVary_ParsesAndKeepsRowRes
 	}
 }
 
+func TestLoadCIDRsWithColumns_WhenRichHeaderHasExtraColumns_IgnoresThemAndMapsByName(t *testing.T) {
+	// The extra columns are interspersed among (not just appended after) the
+	// required rich fields, so a positional parser would read the wrong cells.
+	// Correct name-based mapping must ignore them and still resolve the schema.
+	csv := strings.Join([]string{
+		"extra_a,src_ip,src_network_segment,extra_b,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason,extra_c",
+		"junk-a,10.0.0.10,10.0.0.0/24,junk-b,192.168.1.10,192.168.1.0/24,web,tcp,443,accept,P-1,baseline,junk-c",
+	}, "\n")
+
+	rows, err := LoadCIDRsWithColumns(strings.NewReader(csv), "ip", "ip_cidr")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row result, got %d", len(rows))
+	}
+
+	rec := rows[0]
+	if !rec.IsRich || !rec.IsValid {
+		t.Fatalf("expected valid rich row with extra columns ignored: %+v", rec)
+	}
+	if rec.ExecutionKey != "192.168.1.10:443/tcp" {
+		t.Fatalf("extra columns shifted mapping: got execution key %q", rec.ExecutionKey)
+	}
+	if rec.SrcIP != "10.0.0.10" || rec.DstIP != "192.168.1.10" {
+		t.Fatalf("unexpected src/dst mapping: %+v", rec)
+	}
+	if rec.Port != 443 || rec.Decision != "accept" || rec.ServiceLabel != "web" {
+		t.Fatalf("unexpected mapped rich fields: %+v", rec)
+	}
+	if rec.PolicyID != "P-1" || rec.Reason != "baseline" {
+		t.Fatalf("unexpected policy/reason mapping: %+v", rec)
+	}
+}
+
 func TestLoadCIDRsWithColumns_WhenAllRichRowsInvalid_ReturnsNoUsableError(t *testing.T) {
 	csv := strings.Join([]string{
 		"src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason",
