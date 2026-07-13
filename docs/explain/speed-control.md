@@ -401,7 +401,85 @@ worker 可提供的吞吐上限約為：
 - 開頭一小段快速推進
 - 然後落到約 `10 tasks/sec`
 
-## 7. 程式碼對照
+## 7. Workers × Timeout × Rate（實測關係）
+
+§6.5 給了穩態公式，本節用 e2e mock 實測把「`-workers` 到底怎麼影響速度」講清楚。
+
+### 7.1 關鍵直覺
+
+`-workers` 決定的是「同時進行中的 TCP dial 上限」（見 `pkg/scanapp/executor.go`
+的 worker pool，以及 `taskCh` buffer = `workers * 2`）。因此它是否成為瓶頸，
+完全取決於單一 dial 有多慢：
+
+- **反應快的 target（closed/RST，延遲約 1ms）**：`workers / latency` 極大，
+  瓶頸永遠是 dispatcher（`-bucket-rate` 或 `-delay`），加 worker 沒有幫助。
+- **反應慢的 target（被 drop、走到 `-timeout`）**：每個 dial 卡滿 `-timeout`，
+  吞吐量 ≈ `workers / timeout`，此時 worker 數會線性放大速度。
+
+### 7.2 實測數據
+
+條件：單一 host（一個 chunk = 一個 bucket）、64 個 target、`-timeout 200ms`、
+`-disable-api`、`-bucket-rate` 拉高到不構成限制、`-delay 0`。扣掉容器啟動
+baseline（約 `0.25s`）後的 dispatch 時間：
+
+**慢速（timeout dials）— 受 worker 限制，線性擴展：**
+
+| workers | dispatch 時間 | 實測 eff | 預測 `workers/timeout` |
+|---|---|---|---|
+| 1  | 12.85s | ~5/s    | 5/s   |
+| 4  | 3.25s  | 19.7/s  | 20/s  |
+| 16 | 0.80s  | 79.8/s  | 80/s  |
+| 64 | 0.21s  | 304.8/s | 320/s |
+
+**快速（RST dials）— worker 數幾乎無影響：**
+
+| workers | wall 時間 |
+|---|---|
+| 1  | 0.255s |
+| 8  | 0.245s |
+| 64 | 0.230s |
+
+快速情境下 1 到 64 個 worker 幾乎沒差，瓶頸在 dispatcher，不在 worker。
+
+### 7.3 Sizing 規則（Little's law）
+
+要在 dial 最慢耗時 `T`（通常等於 `-timeout`）下穩定達到目標速率 `R`：
+
+```text
+workers >= R * T
+```
+
+例如目標 `256 targets/sec`、`-timeout 200ms`：
+
+- 需要 `workers >= 256 * 0.2 ≈ 52`
+- 只給 `-workers 32`，在 timeout-heavy 網路上會被卡在約 `160/s`，
+  低於 `-bucket-rate 256` 卻不會報錯（靜默降速）
+
+反之，`-workers` 再多也不會超過 `-bucket-rate`；一旦
+`workers / latency >= bucket_rate`，多出來的 worker 只會閒置。
+
+### 7.4 兩個旋鈕的分工
+
+- `-bucket-rate`：設定速度的「上限」。
+- `-workers`：決定在給定 dial 延遲下「能不能達到」那個上限。
+
+因此針對「部分 target 會 timeout」的網路，要真正跑到 256/s 的建議組合是：
+
+```bash
+port-scan scan -cidr-file rich.csv \
+  -bucket-rate 256 -bucket-capacity 256 -delay 0 \
+  -workers 64 -timeout 200ms \
+  -output scan_results.csv
+```
+
+`-workers 64`（≥ `256 × 0.2`）確保即使 dial 卡在 timeout，worker 吞吐量也能餵滿
+256/s 的 bucket 配額。
+
+> 數據來源：對 `e2e/docker-compose.yml` 的 `mock-target-open` 實測；快速情境打
+> closed port（RST），慢速情境打子網未指派的 IP 並加 `-disable-pre-scan-ping`
+> 強制 TCP dial 走到 timeout。
+
+## 8. 程式碼對照
 
 - Global controller: `pkg/speedctrl/controller.go`
 - Keyboard manual pause: `pkg/speedctrl/keyboard.go`
