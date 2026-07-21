@@ -6,6 +6,30 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-07-21 — Per-process ping ceiling equal to reply-wait killed Windows ping
+- Symptom: on Windows every pre-scan target was reported unreachable ("ping
+  failed within 100ms") even for hosts replying in <5ms; raising
+  `-pre-scan-ping-timeout` made results correct again (user-confirmed).
+- Root cause: `commandReachabilityChecker.CheckDetailed` bounded the whole
+  `ping` subprocess wall-clock with the reply-wait timeout
+  (`PreScanPingTimeout`, default 100ms) via `context.WithTimeout(ctx, timeout)`.
+  Windows `ping -n 1 -w <ms>` self-terminates its reply wait via `-w`, but
+  process launch/print/exit overhead alone exceeds 100ms, so the context
+  deadline killed ping before it reported the reply. Linux `ping -c 1` has no
+  reply-wait flag, so there the context deadline is the reply-wait bound and
+  must stay `~= timeout` — the bug was Windows-only.
+- Fix / rule: `pingProcessTimeout(goos, timeout)` — Windows returns
+  `timeout + pingProcessStartupAllowance` (fixed 2s) for the process ceiling
+  while the reply-wait still uses `timeout`; the `-c` path returns `timeout`
+  unchanged. When a per-process timeout wraps an external tool, budget for
+  process startup separately from the tool's own wait, and never assume a
+  subprocess launches within a sub-second reply-wait window. See
+  [[00-diagnostic]] Problem 1 pattern (a gate/bound that looks right but is
+  platform-fragile).
+- Evidence: `TestCommandReachabilityChecker_CheckDetailed_WindowsAllowsForProcessStartup`
+  red before the fix (10ms deadline kills an 80ms process), green after;
+  `make verify` exit 0 (coverage 85.7%), `make verify-e2e` exit 0; PR #40.
+
 ## 2026-07-05 — Governance rules named tools/agents that do not exist
 - Symptom: a fresh-context adversarial review flagged `10-model-dispatch.md` for
   listing a `Workflow` tool, a `code-reviewer` agent type, and treating the
