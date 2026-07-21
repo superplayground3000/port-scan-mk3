@@ -63,7 +63,7 @@ func (c *commandReachabilityChecker) CheckDetailed(ctx context.Context, ip strin
 		runner = execCommandRunner{}
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeout(ctx, pingProcessTimeout(c.goos, timeout))
 	defer cancel()
 
 	if err := runner.Run(runCtx, name, args...); err != nil {
@@ -91,6 +91,30 @@ func checkReachability(ctx context.Context, checker ReachabilityChecker, ip stri
 		return detailed.CheckDetailed(ctx, ip, timeout)
 	}
 	return checker.Check(ctx, ip, timeout), nil
+}
+
+// pingProcessStartupAllowance is extra wall-clock granted to the ping subprocess
+// beyond its reply-wait timeout, to cover process creation, output, and teardown.
+// It matters on Windows, where ping self-terminates its reply wait via -w, so the
+// process still needs time to launch and exit after a fast reply arrives.
+const pingProcessStartupAllowance = 2 * time.Second
+
+// pingProcessTimeout returns the wall-clock ceiling for the whole ping process.
+// On platforms whose ping command self-bounds the reply wait (Windows -w), the
+// ceiling adds a startup allowance so a fast reply is not killed during process
+// launch. On the -c path (Linux/others) the context is the only reply-wait bound,
+// so the ceiling equals the reply-wait timeout to keep unreachable hosts fast.
+func pingProcessTimeout(goos string, timeout time.Duration) time.Duration {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goos == "windows" {
+		if timeout < 0 {
+			timeout = 0
+		}
+		return timeout + pingProcessStartupAllowance
+	}
+	return timeout
 }
 
 func buildPingCommand(goos, ip string, timeout time.Duration) (string, []string, error) {
