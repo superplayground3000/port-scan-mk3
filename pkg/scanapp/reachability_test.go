@@ -169,9 +169,32 @@ func TestCommandReachabilityChecker_CheckDetailed_TreatsPerIPTimeoutAsUnreachabl
 	}
 }
 
+func TestCommandReachabilityChecker_CheckDetailed_WindowsAllowsForProcessStartup(t *testing.T) {
+	runner := &fakeReachabilityRunner{completeAfter: 80 * time.Millisecond}
+	checker := &commandReachabilityChecker{goos: "windows", runner: runner}
+
+	got, err := checker.CheckDetailed(context.Background(), "10.0.0.7", 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.Reachable {
+		t.Fatalf("expected reachable despite process startup exceeding reply-wait timeout, got %#v", got)
+	}
+}
+
+func TestPingProcessTimeout(t *testing.T) {
+	if got := pingProcessTimeout("windows", 100*time.Millisecond); got != 100*time.Millisecond+pingProcessStartupAllowance {
+		t.Fatalf("windows: got %v", got)
+	}
+	if got := pingProcessTimeout("linux", 100*time.Millisecond); got != 100*time.Millisecond {
+		t.Fatalf("linux: got %v", got)
+	}
+}
+
 type fakeReachabilityRunner struct {
 	runErr         error
 	waitForContext bool
+	completeAfter  time.Duration
 	name           string
 	args           []string
 	observedCtx    context.Context
@@ -181,6 +204,14 @@ func (f *fakeReachabilityRunner) Run(ctx context.Context, name string, args ...s
 	f.observedCtx = ctx
 	f.name = name
 	f.args = append([]string(nil), args...)
+	if f.completeAfter > 0 {
+		select {
+		case <-time.After(f.completeAfter):
+			return f.runErr
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if f.waitForContext {
 		<-ctx.Done()
 		return ctx.Err()

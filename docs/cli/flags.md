@@ -19,7 +19,7 @@ This is the complete CLI flag reference for `port-scan-mk3`, sourced from curren
 | `-output` | string | `scan_results.csv` | `validate`, `scan` | Parsed by both `validate` and `scan`. Only `scan` uses it to choose the batch output directory and shared suffix for `scan_results-<suffix>.csv`, `opened_results-<suffix>.csv`, and `unreachable_results-<suffix>.csv`. The output directory also controls the default resume fallback location. |
 | `-timeout` | duration | `100ms` | `validate`, `scan` | TCP dial timeout per probe. This does not control the pre-scan ping; use `-pre-scan-ping-timeout` for that. |
 | `-disable-pre-scan-ping` | bool | `false` | `validate`, `scan` | Disable the default-on pre-scan ping stage. |
-| `-pre-scan-ping-timeout` | duration | `100ms` | `validate`, `scan` | Timeout for each pre-scan ping reachability check. Must be > 0. |
+| `-pre-scan-ping-timeout` | duration | `100ms` | `validate`, `scan` | Timeout for each pre-scan ping reachability check. Must be > 0. On Windows an internal fixed startup allowance is added on top of this value for the process wall-clock ceiling so a fast reply is not killed during ping's process launch; the reply-wait itself still uses this value. |
 | `-delay` | duration | `10ms` | `validate`, `scan` | Dispatch delay between tasks. Primarily used by `scan`. |
 | `-bucket-rate` | int | `100` | `validate`, `scan` | Leaky bucket refill rate. Primarily used by `scan`. |
 | `-bucket-capacity` | int | `100` | `validate`, `scan` | Leaky bucket capacity. Primarily used by `scan`. |
