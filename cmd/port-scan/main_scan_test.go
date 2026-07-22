@@ -16,6 +16,28 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 )
 
+// mustGenerateBucketSnapshot runs the generate-buckets subcommand to produce the
+// resume bucket snapshot that scan now requires (-resume). It writes buckets.json
+// into dir and returns its path. portFile is optional (rich CSVs need none).
+func mustGenerateBucketSnapshot(t *testing.T, dir, cidrFile, portFile string) string {
+	t.Helper()
+	snapshot := filepath.Join(dir, "buckets.json")
+	args := []string{
+		"generate-buckets",
+		"-cidr-file", cidrFile,
+		"-buckets-out", snapshot,
+		"-workers", "1",
+	}
+	if portFile != "" {
+		args = append(args, "-port-file", portFile)
+	}
+	stderr := &bytes.Buffer{}
+	if code := runMain(args, &bytes.Buffer{}, stderr); code != 0 {
+		t.Fatalf("generate-buckets failed exit=%d stderr=%s", code, stderr.String())
+	}
+	return snapshot
+}
+
 func TestRunMain_ScanWritesCSV(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -48,12 +70,15 @@ func TestRunMain_ScanWritesCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	snapshot := mustGenerateBucketSnapshot(t, tmp, cidrFile, portFile)
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	code := runMain([]string{
 		"scan",
 		"-cidr-file", cidrFile,
 		"-port-file", portFile,
+		"-resume", snapshot,
 		"-output", outFile,
 		"-workers", "1",
 		"-delay", "0ms",
@@ -95,21 +120,35 @@ func TestScanApp_CancelSavesResumeState(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Scan now requires a bucket snapshot via -resume, so build one first (this
+	// used to rely on scan building fresh chunks inline).
+	bucketsOut := filepath.Join(tmp, "buckets.json")
+	genCfg := config.Config{
+		CIDRFile:      cidrFile,
+		PortFile:      portFile,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+		Workers:       1,
+		BucketsOut:    bucketsOut,
+	}
+	if err := scanapp.GenerateBuckets(context.Background(), genCfg, &bytes.Buffer{}, scanapp.GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("generate buckets: %v", err)
+	}
+
 	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              5 * time.Millisecond,
-		BucketRate:         1,
-		BucketCapacity:     1,
-		Workers:            1,
-		PressureAPI:        "http://127.0.0.1:1",
-		PressureInterval:   10 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		Resume:             "",
-		LogLevel:           "error",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          50 * time.Millisecond,
+		Delay:            5 * time.Millisecond,
+		BucketRate:       1,
+		BucketCapacity:   1,
+		Workers:          1,
+		PressureAPI:      "http://127.0.0.1:1",
+		PressureInterval: 10 * time.Second,
+		DisableAPI:       true,
+		Resume:           bucketsOut,
+		LogLevel:         "error",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -159,10 +198,13 @@ func TestRunMain_ScanWritesOpenedResultsCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	snapshot := mustGenerateBucketSnapshot(t, tmp, cidrFile, portFile)
+
 	code := runMain([]string{
 		"scan",
 		"-cidr-file", cidrFile,
 		"-port-file", portFile,
+		"-resume", snapshot,
 		"-output", outFile,
 		"-workers", "1",
 		"-delay", "0ms",
@@ -190,71 +232,28 @@ func TestRunMain_ScanWritesOpenedResultsCSV(t *testing.T) {
 	}
 }
 
-func TestRunMain_WhenDisablePreScanPingFlagProvided_ScanContractStillSucceeds(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
-		}
-	}()
-
-	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
-	openPort, _ := strconv.Atoi(portStr)
-
+// TestRunMain_Scan_RejectsDisablePreScanPingFlag replaces the former
+// "...ScanContractStillSucceeds" test. Its original intent — that scan tolerates
+// -disable-pre-scan-ping and still writes a (header-only) unreachable file — is
+// obsolete: after the split, scan never pings and owns no ping flags or
+// unreachable artifact (that is preping's job). The meaningful contract now is
+// that the removed flag is an unknown-flag parse error, which this asserts.
+// (Complements TestRunMain_Scan_RejectsPingFlags, which covers
+// -pre-scan-ping-timeout.)
+func TestRunMain_Scan_RejectsDisablePreScanPingFlag(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
-	portFile := filepath.Join(tmp, "ports.csv")
-	outFile := filepath.Join(tmp, "scan_results.csv")
-
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(portFile, []byte(strconv.Itoa(openPort)+"/tcp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
 	code := runMain([]string{
 		"scan",
 		"-cidr-file", cidrFile,
-		"-port-file", portFile,
-		"-output", outFile,
-		"-workers", "1",
-		"-delay", "0ms",
-		"-timeout", "100ms",
-		"-disable-api=true",
 		"-disable-pre-scan-ping=true",
-	}, stdout, stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	scanPath := mustFindOneMain(t, filepath.Join(tmp, "scan_results-*.csv"))
-	scanData, err := os.ReadFile(scanPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(scanData), "127.0.0.1,127.0.0.1/32,"+strconv.Itoa(openPort)+",open") {
-		t.Fatalf("expected scan output with disable flag, got %s", string(scanData))
-	}
-
-	unreachablePath := mustFindOneMain(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(strings.TrimSpace(string(unreachableData)), "\n") != 0 {
-		t.Fatalf("expected unreachable output header only with disable flag on reachable input, got %s", string(unreachableData))
+	}, &bytes.Buffer{}, &bytes.Buffer{})
+	if code != 2 {
+		t.Fatalf("expected exit 2 for scan with -disable-pre-scan-ping, got %d", code)
 	}
 }
 
@@ -303,11 +302,14 @@ func TestRunMain_WhenRichCSVAndPortFileMissing_ScanSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	snapshot := mustGenerateBucketSnapshot(t, tmp, cidrFile, "")
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	code := runMain([]string{
 		"scan",
 		"-cidr-file", cidrFile,
+		"-resume", snapshot,
 		"-output", requestedOutput,
 		"-workers", "1",
 		"-delay", "0ms",
@@ -328,7 +330,14 @@ func TestRunMain_WhenRichCSVAndPortFileMissing_ScanSucceeds(t *testing.T) {
 	}
 }
 
-func TestRunMain_WhenDefaultCSVAndPortFileMissing_ReturnsExit1(t *testing.T) {
+// TestRunMain_WhenGenerateBucketsBasicCSVAndPortFileMissing_ReturnsExit1 carries
+// forward the intent of the former scan-side "default CSV + missing port-file"
+// test. After the split, port ownership moved to generate-buckets (scan reads
+// ports from the snapshot), so the "-port-file is required" failure for a basic
+// (non-rich) CSV now surfaces there. Missing -resume on scan is a *parse* error
+// (exit 2), covered by TestRunMain_Scan_RequiresResume; this asserts the runtime
+// input error (exit 1) at the step that now owns -port-file.
+func TestRunMain_WhenGenerateBucketsBasicCSVAndPortFileMissing_ReturnsExit1(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
@@ -338,13 +347,10 @@ func TestRunMain_WhenDefaultCSVAndPortFileMissing_ReturnsExit1(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	code := runMain([]string{
-		"scan",
+		"generate-buckets",
 		"-cidr-file", cidrFile,
-		"-output", filepath.Join(tmp, "out.csv"),
+		"-buckets-out", filepath.Join(tmp, "buckets.json"),
 		"-workers", "1",
-		"-delay", "0ms",
-		"-timeout", "100ms",
-		"-disable-api=true",
 	}, stdout, stderr)
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stderr=%s", code, stderr.String())
@@ -386,12 +392,15 @@ func TestRunMain_ScanSuccess_WritesTimestampedBatchPairInRequestedDirectory(t *t
 		t.Fatal(err)
 	}
 
+	snapshot := mustGenerateBucketSnapshot(t, tmp, cidrFile, portFile)
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	code := runMain([]string{
 		"scan",
 		"-cidr-file", cidrFile,
 		"-port-file", portFile,
+		"-resume", snapshot,
 		"-output", requestedOutput,
 		"-workers", "1",
 		"-delay", "0ms",
