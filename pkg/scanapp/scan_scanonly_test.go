@@ -68,31 +68,10 @@ func assertNoBatchOutputs(t *testing.T, dir string) {
 	}
 }
 
-// TestResolveReachabilityChecker_SelectsCheckerForPrepingPath documents the
-// retained helper's contract. Decision B removed all pinging from scan, so Run
-// no longer calls it, but preping and CLI wiring (T6) still rely on this
-// selection: disabled → nil, injected checker wins, else the default command
-// checker.
-func TestResolveReachabilityChecker_SelectsCheckerForPrepingPath(t *testing.T) {
-	if got := resolveReachabilityChecker(config.Config{DisablePreScanPing: true}, RunOptions{}); got != nil {
-		t.Fatalf("expected nil checker when pre-scan ping disabled, got %T", got)
-	}
-
-	injected := &failIfCalledChecker{t: t}
-	if got := resolveReachabilityChecker(config.Config{}, RunOptions{ReachabilityChecker: injected}); got != injected {
-		t.Fatalf("expected injected checker to be returned, got %T", got)
-	}
-
-	got := resolveReachabilityChecker(config.Config{}, RunOptions{})
-	if _, ok := got.(*commandReachabilityChecker); !ok {
-		t.Fatalf("expected default *commandReachabilityChecker, got %T", got)
-	}
-}
-
 // TestFinalizeUnreachableResults_OpenSuccessAndError covers the retained helper
 // directly: an empty row set produces a valid header-only file, and an
 // unwritable destination surfaces the open error. (Run no longer calls this
-// under decision B; preping owns it, but it lives in scan.go.)
+// under decision B; preping owns it, and it now lives in preping.go.)
 func TestFinalizeUnreachableResults_OpenSuccessAndError(t *testing.T) {
 	tmp := t.TempDir()
 	good := filepath.Join(tmp, "unreachable.csv")
