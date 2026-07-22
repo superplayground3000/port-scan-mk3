@@ -35,7 +35,7 @@ func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer
 		return err
 	}
 
-	inputs, err := loadRunInputs(cfg, deps)
+	inputs, err := loadPrepingInputs(cfg, deps)
 	if err != nil {
 		return err
 	}

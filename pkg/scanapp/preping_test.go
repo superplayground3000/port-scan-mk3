@@ -53,6 +53,48 @@ func readCSVRecords(t *testing.T, path string) [][]string {
 	return records
 }
 
+func TestRunPreping_BasicCSVWithoutPortFile_Succeeds(t *testing.T) {
+	// Preping is per-IP and needs no ports. A basic (non-rich) CSV without a
+	// -port-file must still ping — preping's flag surface intentionally omits
+	// -port-file (design §6), so requiring it would make basic-CSV preping
+	// impossible via the CLI and regress the pre-split behavior.
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	output := filepath.Join(tmp, "scan_results.csv")
+	if err := os.WriteFile(cidrFile,
+		[]byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\nfab2,10.0.0.2,10.0.0.2/32,web\n"),
+		0o644); err != nil {
+		t.Fatalf("write cidr file: %v", err)
+	}
+	checker := &fakePreScanChecker{
+		results: map[string]ReachabilityResult{
+			"10.0.0.2": {IP: "10.0.0.2", Reachable: false, FailureText: "timeout"},
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := RunPreping(context.Background(), config.Config{
+		CIDRFile:           cidrFile,
+		PortFile:           "", // no ports — must not be required for preping
+		Output:             output,
+		Workers:            4,
+		PreScanPingTimeout: 300 * time.Millisecond,
+		ProgressInterval:   1,
+	}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
+	if err != nil {
+		t.Fatalf("RunPreping on basic CSV without -port-file errored: %v", err)
+	}
+
+	path := strings.TrimSpace(stdout.String())
+	records := readCSVRecords(t, path)
+	if len(records) != 2 {
+		t.Fatalf("expected header + 1 unreachable row, got %d rows: %v", len(records), records)
+	}
+	if records[1][0] != "10.0.0.2" {
+		t.Fatalf("expected unreachable ip 10.0.0.2, got %q", records[1][0])
+	}
+}
+
 func TestRunPreping_WritesUnreachableCSVWithExistingSchema(t *testing.T) {
 	cidrFile, portFile, output := writePrepingInputs(t,
 		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\nfab2,10.0.0.2,10.0.0.2/32,web\n",

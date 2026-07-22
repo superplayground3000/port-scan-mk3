@@ -37,6 +37,18 @@ func loadRunInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
 	}, nil
 }
 
+// loadPrepingInputs loads only the CIDR records needed by the pre-scan ping
+// phase. Preping is per-IP and never uses ports, so — unlike loadRunInputs — it
+// does not require a -port-file for basic (non-rich) input. portSpecs is always
+// nil in the result.
+func loadPrepingInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
+	cidrRecords, err := deps.loadCIDRRecords(cfg.CIDRFile, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)
+	if err != nil {
+		return runInputs{}, err
+	}
+	return runInputs{cidrRecords: cidrRecords, portSpecs: nil}, nil
+}
+
 func readCIDRFile(path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error) {
 	f, err := os.Open(path)
 	if err != nil {
