@@ -241,6 +241,55 @@ func TestRun_ProducesEnrichedRowsFromRichCSVAndSnapshot(t *testing.T) {
 	}
 }
 
+// TestRun_BasicResumeWithoutPortFile_Succeeds asserts that scan does not require
+// -port-file for basic (non-rich) input when resuming: the bucket's chunks
+// already carry the ports, so -port-file is genuinely unused at scan time.
+// Design §6 calls scan's -port-file "normally ignored"; requiring it for basic
+// input contradicts that. generate-buckets (run first, with ports) fills the
+// chunks; scan then needs no ports.
+func TestRun_BasicResumeWithoutPortFile_Succeeds(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	outFile := filepath.Join(tmp, "out.csv")
+	bucketsFile := filepath.Join(tmp, "buckets.json")
+
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:         cidrFile,
+		PortFile:         portFile, // needed to BUILD the bucket (basic mode)
+		Output:           outFile,
+		Timeout:          20 * time.Millisecond,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		PressureInterval: 5 * time.Second,
+		DisableAPI:       true,
+		LogLevel:         "error",
+	}
+	generateBucketFile(t, cfg, bucketsFile, "")
+
+	// Now scan WITHOUT a port file — the chunks carry the ports.
+	cfg.Resume = bucketsFile
+	cfg.PortFile = ""
+	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
+	}); err != nil {
+		t.Fatalf("basic-mode scan with -resume and no -port-file must succeed, got: %v", err)
+	}
+	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
+	if _, err := os.Stat(scanPath); err != nil {
+		t.Fatalf("expected scan results, got %v", err)
+	}
+}
+
 // TestRun_DoesNotWriteUnreachableCSV asserts scan no longer emits an
 // unreachable_results CSV (that artifact belongs to preping under decision B).
 func TestRun_DoesNotWriteUnreachableCSV(t *testing.T) {

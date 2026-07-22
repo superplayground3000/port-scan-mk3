@@ -19,7 +19,10 @@ func loadRunInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
 		return runInputs{}, err
 	}
 	if cfg.PortFile == "" {
-		if hasRichRecords(cidrRecords) {
+		// Rich input carries its port per record. When resuming, the bucket's
+		// chunks already carry the ports, so scan needs no -port-file either;
+		// only a fresh basic build (e.g. generate-buckets) requires it.
+		if hasRichRecords(cidrRecords) || cfg.Resume != "" {
 			return runInputs{
 				cidrRecords: cidrRecords,
 				portSpecs:   nil,
