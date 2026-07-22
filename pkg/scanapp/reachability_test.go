@@ -182,6 +182,32 @@ func TestCommandReachabilityChecker_CheckDetailed_WindowsAllowsForProcessStartup
 	}
 }
 
+func TestCommandReachabilityChecker_CheckDetailed_TreatsProcessKillRaceAsUnreachable(t *testing.T) {
+	// When the per-process ceiling fires, os/exec kills the ping subprocess. On
+	// Windows that kill can race the ping's own exit and surface as
+	// "TerminateProcess: Access is denied" instead of context.DeadlineExceeded.
+	// That is still just a timed-out ping (unreachable), never a fatal error
+	// that aborts the whole pre-scan phase.
+	killRaceErr := errors.New("exec: canceling Cmd: TerminateProcess: Access is denied")
+	runner := &fakeReachabilityRunner{waitForContext: true, postContextErr: killRaceErr}
+	checker := &commandReachabilityChecker{goos: "linux", runner: runner}
+
+	got, err := checker.CheckDetailed(context.Background(), "10.0.0.7", 10*time.Millisecond)
+
+	if err != nil {
+		t.Fatalf("expected per-process kill race to stay non-fatal, got %v", err)
+	}
+	if got.Reachable {
+		t.Fatalf("expected unreachable result, got %#v", got)
+	}
+	if got.FailureText != killRaceErr.Error() {
+		t.Fatalf("unexpected failure text: %q", got.FailureText)
+	}
+	if !errors.Is(runner.observedCtx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("expected per-process deadline to have fired, got %v", runner.observedCtx.Err())
+	}
+}
+
 func TestPingProcessTimeout(t *testing.T) {
 	if got := pingProcessTimeout("windows", 100*time.Millisecond); got != 100*time.Millisecond+pingProcessStartupAllowance {
 		t.Fatalf("windows: got %v", got)
@@ -194,6 +220,7 @@ func TestPingProcessTimeout(t *testing.T) {
 type fakeReachabilityRunner struct {
 	runErr         error
 	waitForContext bool
+	postContextErr error
 	completeAfter  time.Duration
 	name           string
 	args           []string
@@ -214,6 +241,9 @@ func (f *fakeReachabilityRunner) Run(ctx context.Context, name string, args ...s
 	}
 	if f.waitForContext {
 		<-ctx.Done()
+		if f.postContextErr != nil {
+			return f.postContextErr
+		}
 		return ctx.Err()
 	}
 	return f.runErr

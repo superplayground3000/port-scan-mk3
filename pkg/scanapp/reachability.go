@@ -72,6 +72,15 @@ func (c *commandReachabilityChecker) CheckDetailed(ctx context.Context, ip strin
 			return result, ctxErr
 		}
 
+		// The per-process ceiling (runCtx) fired: the host simply did not reply
+		// in time, so it is unreachable, not a fatal error. Classify off runCtx
+		// rather than the returned error, because on Windows the deadline kill
+		// races the ping's own exit and surfaces as
+		// "TerminateProcess: Access is denied" instead of context.DeadlineExceeded.
+		if runCtx.Err() != nil {
+			return result, nil
+		}
+
 		var exitErr *exec.ExitError
 		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &exitErr) {
 			return result, nil
@@ -97,7 +106,12 @@ func checkReachability(ctx context.Context, checker ReachabilityChecker, ip stri
 // beyond its reply-wait timeout, to cover process creation, output, and teardown.
 // It matters on Windows, where ping self-terminates its reply wait via -w, so the
 // process still needs time to launch and exit after a fast reply arrives.
-const pingProcessStartupAllowance = 2 * time.Second
+// The allowance is generous (10s) because under high fan-out (many workers,
+// zero dispatch delay) Windows process creation is heavily contended, and a
+// ping that is slow to *start* must not be killed and misreported as
+// unreachable. The kill itself is now non-fatal (see CheckDetailed), so a large
+// allowance only trades a bounded worst-case wait for fewer false negatives.
+const pingProcessStartupAllowance = 10 * time.Second
 
 // pingProcessTimeout returns the wall-clock ceiling for the whole ping process.
 // On platforms whose ping command self-bounds the reply wait (Windows -w), the

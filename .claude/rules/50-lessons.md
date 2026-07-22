@@ -6,6 +6,34 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-07-22 — Windows ping deadline-kill race aborted the whole pre-scan
+- Symptom: on Windows under high fan-out (`-workers 64`, `-delay 0`,
+  `-pre-scan-ping-timeout 100ms`) the scan died with
+  `exec: canceling Cmd: TerminateProcess: Access is denied`. It fired
+  regardless of whether the host would have replied — a load-dependent race,
+  not a per-host property.
+- Root cause: two compounding issues in `commandReachabilityChecker.CheckDetailed`.
+  (1) When the per-process ceiling (`runCtx`) fired, `os/exec` killed the ping;
+  on Windows that kill races the ping's own exit and `TerminateProcess` returns
+  ACCESS_DENIED (the process already exited). The returned error is then neither
+  `context.DeadlineExceeded` nor `*exec.ExitError`, so it fell through to
+  `return result, err` — treated as **fatal**, and one worker's fatal error
+  cancels the whole pre-scan pool (`pre_scan_ping.go`). (2) The 2s startup
+  allowance was too tight: 64 concurrent `ping.exe` with zero delay contend
+  hard on Windows process creation, so pings that were merely slow to *start*
+  hit the ceiling.
+- Fix / rule: classify the timeout off `runCtx.Err()`, not the returned error's
+  type — if `runCtx` fired (and the parent ctx did not), the host just didn't
+  reply in time → unreachable, non-fatal, however the kill manifested. Also
+  raised `pingProcessStartupAllowance` 2s → 10s. General rule: when a
+  context-bounded subprocess is killed, decide fatal-vs-expected from the
+  *context you set*, never from the OS-specific error text the kill produces
+  (it varies by platform and races process exit). Extends the [[50-lessons]]
+  2026-07-21 entry (same code, next platform-fragility trap).
+- Evidence: `TestCommandReachabilityChecker_CheckDetailed_TreatsProcessKillRaceAsUnreachable`
+  red before (fatal `TerminateProcess: Access is denied`), green after;
+  `make verify` exit 0; `reachability.go` CheckDetailed + `pingProcessStartupAllowance`.
+
 ## 2026-07-21 — Per-process ping ceiling equal to reply-wait killed Windows ping
 - Symptom: on Windows every pre-scan target was reported unreachable ("ping
   failed within 100ms") even for hosts replying in <5ms; raising
@@ -19,7 +47,7 @@ them. Keep each entry short and evidence-backed.
   reply-wait flag, so there the context deadline is the reply-wait bound and
   must stay `~= timeout` — the bug was Windows-only.
 - Fix / rule: `pingProcessTimeout(goos, timeout)` — Windows returns
-  `timeout + pingProcessStartupAllowance` (fixed 2s) for the process ceiling
+  `timeout + pingProcessStartupAllowance` (a fixed allowance) for the process ceiling
   while the reply-wait still uses `timeout`; the `-c` path returns `timeout`
   unchanged. When a per-process timeout wraps an external tool, budget for
   process startup separately from the tool's own wait, and never assume a
