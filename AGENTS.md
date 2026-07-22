@@ -49,3 +49,20 @@ Never claim "done", "fixed", or "passing" without the command output.
 - `cmd/` CLI entrypoints · `pkg/` reusable domain logic · `internal/testkit`
   test helpers · `e2e/` isolated Docker e2e · `scripts/` gate scripts ·
   `docs/` docs and release notes · `.claude/rules/` governance + constitution.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (`superplayground3000/port-scan-mk3`),
+managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (created lazily by
+`/domain-modeling`). See `docs/agents/domain.md`.
