@@ -60,12 +60,12 @@ func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, o
 
 	inputs, err := loadRunInputs(cfg, defaultRunDependencies())
 	if err != nil {
-		return err
+		return fmt.Errorf("generate-buckets: load inputs: %w", err)
 	}
 
 	blocklist, err := parseUnreachableBlocklist(cfg.UnreachableFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("generate-buckets: parse blocklist: %w", err)
 	}
 	reachable := reachablePredicate(blocklist)
 
@@ -79,7 +79,7 @@ func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, o
 		groups, err = buildCIDRGroupsWithPredicate(inputs.cidrRecords, reachable)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("generate-buckets: build CIDR groups: %w", err)
 	}
 
 	keys := make([]string, 0, len(groups))
@@ -103,7 +103,7 @@ func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, o
 
 	chunks := make([]task.Chunk, len(keys))
 	if err := fanOutGroupChunks(ctx, keys, groups, richMode, rawPorts, cfg.Workers, reporter, chunks); err != nil {
-		return err
+		return fmt.Errorf("generate-buckets: build chunks: %w", err)
 	}
 	reporter.Done()
 
@@ -120,7 +120,10 @@ func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, o
 			UnreachableIPv4U32: blocklist,
 		},
 	}
-	return state.SaveSnapshot(cfg.BucketsOut, snap)
+	if err := state.SaveSnapshot(cfg.BucketsOut, snap); err != nil {
+		return fmt.Errorf("generate-buckets: write snapshot %s: %w", cfg.BucketsOut, err)
+	}
+	return nil
 }
 
 // fanOutGroupChunks converts each CIDR group into a task.Chunk across a pool of
@@ -206,7 +209,7 @@ func parseUnreachableBlocklist(path string) ([]uint32, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("open unreachable blocklist %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -218,7 +221,7 @@ func parseUnreachableBlocklist(path string) ([]uint32, error) {
 		if err == io.EOF {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read unreachable blocklist %s header: %w", path, err)
 	}
 	ipIdx := -1
 	for i, name := range header {
@@ -239,7 +242,7 @@ func parseUnreachableBlocklist(path string) ([]uint32, error) {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read unreachable blocklist %s: %w", path, err)
 		}
 		if ipIdx >= len(row) {
 			continue

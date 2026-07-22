@@ -3,6 +3,7 @@ package scanapp
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -267,6 +268,73 @@ func TestGenerateBuckets_SnapshotAcceptedByRuntime(t *testing.T) {
 	reachable := reachablePredicate(snap.PreScanPing.UnreachableIPv4U32)
 	if _, err := buildRuntimeWithPredicate(snap.Chunks, records, nil, runtimePolicyFromConfig(cfg), reachable); err != nil {
 		t.Fatalf("snapshot rejected by runtime (invariant violated): %v", err)
+	}
+}
+
+// writeLargeRichBucketCSV writes a rich CSV with n distinct dst CIDR groups
+// (two targets each), so the fan-out pool is genuinely exercised rather than
+// capped to a handful of goroutines by workers > len(keys).
+func writeLargeRichBucketCSV(t *testing.T, dir string, n int) string {
+	t.Helper()
+	path := filepath.Join(dir, "rich-large.csv")
+	var b bytes.Buffer
+	b.WriteString(richBucketCSVHeader)
+	for g := 0; g < n; g++ {
+		seg := 100 + g // stays < 256 for reasonable n
+		for _, host := range []int{5, 6} {
+			fmt.Fprintf(&b,
+				"10.60.%d.1,10.60.0.0/16,10.%d.0.%d,10.%d.0.0/24,svc-%d,tcp,443,accept,P-%d-%d,allow\n",
+				g, seg, host, seg, g, g, host)
+		}
+	}
+	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestGenerateBuckets_Deterministic_LargeFanOut stresses real worker fan-out
+// (dozens of groups, 16 workers) and asserts byte-identical output vs the
+// single-worker baseline. Run under -race, this also guards fanOutGroupChunks
+// against races that the small (3-group) fixtures cannot surface.
+func TestGenerateBuckets_Deterministic_LargeFanOut(t *testing.T) {
+	tmp := t.TempDir()
+	const groups = 40
+	cidrFile := writeLargeRichBucketCSV(t, tmp, groups)
+
+	out1 := filepath.Join(tmp, "large-w1.json")
+	out16 := filepath.Join(tmp, "large-w16.json")
+
+	cfg1 := bucketConfig(cidrFile, "", out1, 1)
+	cfg16 := bucketConfig(cidrFile, "", out16, 16)
+	if err := GenerateBuckets(context.Background(), cfg1, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("workers=1: %v", err)
+	}
+	if err := GenerateBuckets(context.Background(), cfg16, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("workers=16: %v", err)
+	}
+
+	b1, err := os.ReadFile(out1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b16, err := os.ReadFile(out16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b1, b16) {
+		t.Fatalf("serialized snapshots differ across worker counts at %d groups", groups)
+	}
+
+	snap, err := state.LoadSnapshot(out16)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if len(snap.Chunks) != groups {
+		t.Fatalf("expected %d chunks, got %d", groups, len(snap.Chunks))
+	}
+	if got := sumTotalCount(snap); got != groups*2 {
+		t.Fatalf("expected %d total targets, got %d", groups*2, got)
 	}
 }
 
