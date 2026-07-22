@@ -190,6 +190,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), cfg, stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -243,6 +244,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 	}
 
 	stderr := &bytes.Buffer{}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	err := Run(context.Background(), cfg, io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
@@ -293,6 +295,7 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 	defer cancel()
 
 	stderr := &bytes.Buffer{}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	err := Run(ctx, cfg, io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
@@ -341,6 +344,7 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	}
 
 	recorder := &dashboardSnapshotRecorder{}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {

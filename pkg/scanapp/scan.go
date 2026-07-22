@@ -2,6 +2,7 @@ package scanapp
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
-	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
@@ -18,6 +18,12 @@ const (
 	defaultResumeStateFile = "resume_state.json"
 	defaultPressureLimit   = 60
 )
+
+// errScanRequiresResume is returned by Run when no bucket file is supplied.
+// Decision B makes scan a pure scanner: it consumes a resume snapshot produced
+// by generate-buckets and never builds fresh chunks or pings. There is
+// deliberately no fresh-build fallback.
+var errScanRequiresResume = errors.New("scan requires -resume <bucket file>; run generate-buckets first")
 
 // DialFunc abstracts TCP dialing for tests and runtime customization.
 type DialFunc func(context.Context, string, string) (net.Conn, error)
@@ -52,6 +58,13 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		cfg.CIDRIPCidrCol = "ip_cidr"
 	}
 
+	// Decision B: scan is a pure scanner. It requires a bucket file via -resume,
+	// constructs no reachability checker, never pings, and never builds fresh
+	// chunks. The "never pings" guarantee is structural — no checker is wired in.
+	if strings.TrimSpace(cfg.Resume) == "" {
+		return errScanRequiresResume
+	}
+
 	if err := ensureFDLimit(cfg.Workers); err != nil {
 		return err
 	}
@@ -67,30 +80,20 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		return err
 	}
 
-	resumeSnapshot, err := loadResumeSnapshot(cfg)
-	if err != nil {
-		return err
-	}
-
-	preScan, err := runPreScanPing(ctx, inputs, cfg, resolveReachabilityChecker(cfg, opts), resumeSnapshot.PreScanPing)
+	snapshot, err := loadResumeSnapshot(cfg)
 	if err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := finalizeUnreachableResults(outputPaths.unreachablePath, preScan.UnreachableRows); err != nil {
-		return err
-	}
 
-	plan, err := prepareRuntimePlan(
-		cfg,
-		inputs,
-		deps,
-		runReachablePredicate(cfg, preScan),
-		resumeSnapshot.Chunks,
-		shouldUseResumeChunks(cfg, resumeSnapshot.PreScanPing, preScan),
-	)
+	// The reachable predicate is derived directly from the snapshot blocklist the
+	// generate-buckets step recorded; scan does not re-derive reachability by
+	// pinging. An empty blocklist yields an all-reachable predicate.
+	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
+
+	plan, err := prepareRuntimePlan(cfg, inputs, deps, reachable, snapshot.Chunks, true)
 	if err != nil {
 		return err
 	}
@@ -226,7 +229,7 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		}
 	}
 
-	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, preScan.State, dispatchErr, runErr); err != nil {
+	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, snapshot.PreScanPing, dispatchErr, runErr); err != nil {
 		return err
 	}
 
@@ -243,6 +246,10 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	return nil
 }
 
+// resolveReachabilityChecker selects the reachability checker used by the
+// preping path. Scan (Run) no longer calls it — decision B removed all pinging
+// from scan — but it is retained for the preping library entry and CLI wiring
+// (T6). See docs/plans/2026-07-22-split-preping-and-port-scan-design.md §5.2.
 func resolveReachabilityChecker(cfg config.Config, opts RunOptions) ReachabilityChecker {
 	if cfg.DisablePreScanPing {
 		return nil
@@ -265,24 +272,4 @@ func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecor
 		}
 	}
 	return output.Finalize(true)
-}
-
-func runReachablePredicate(cfg config.Config, preScan preScanOutcome) func(string) bool {
-	if cfg.DisablePreScanPing {
-		return nil
-	}
-	return reachablePredicate(preScan.UnreachableIPv4U32)
-}
-
-func shouldUseResumeChunks(cfg config.Config, saved state.PreScanPingState, preScan preScanOutcome) bool {
-	if cfg.Resume == "" {
-		return false
-	}
-	if cfg.DisablePreScanPing {
-		return true
-	}
-	if hasSavedPreScanPingState(saved) {
-		return true
-	}
-	return len(preScan.UnreachableIPv4U32) == 0
 }

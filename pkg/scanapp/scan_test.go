@@ -171,50 +171,6 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 	}
 }
 
-func TestRun_WhenCanceledWithoutResumePath_SavesFallbackResumeState(t *testing.T) {
-	tmp := t.TempDir()
-	cidrFile := filepath.Join(tmp, "cidr.csv")
-	portFile := filepath.Join(tmp, "ports.csv")
-	outFile := filepath.Join(tmp, "out.csv")
-
-	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/24,127.0.0.0/24,loopback\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(portFile, []byte("1/tcp\n2/tcp\n3/tcp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              5 * time.Millisecond,
-		BucketRate:         1,
-		BucketCapacity:     1,
-		Workers:            1,
-		PressureInterval:   10 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		LogLevel:           "error",
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		cancel()
-	}()
-
-	err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true})
-	if err == nil {
-		t.Fatal("expected cancellation error")
-	}
-	resumeFile := filepath.Join(tmp, defaultResumeStateFile)
-	if _, statErr := os.Stat(resumeFile); statErr != nil {
-		t.Fatalf("expected fallback resume file %s, got err=%v", resumeFile, statErr)
-	}
-}
-
 func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "fail", http.StatusInternalServerError)
@@ -235,20 +191,22 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	}
 
 	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            20 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         1,
-		BucketCapacity:     1,
-		Workers:            1,
-		PressureAPI:        api.URL,
-		PressureInterval:   5 * time.Millisecond,
-		DisableAPI:         false,
-		DisablePreScanPing: true,
-		LogLevel:           "error",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          20 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       1,
+		BucketCapacity:   1,
+		Workers:          1,
+		PressureAPI:      api.URL,
+		PressureInterval: 5 * time.Millisecond,
+		DisableAPI:       false,
+		LogLevel:         "error",
 	}
+	// Decision B: scan requires a bucket file. ResumeStatePath still directs where
+	// the fatal-error resume snapshot is written (it wins over cfg.Resume).
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
 	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
@@ -264,108 +222,18 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	if _, statErr := os.Stat(resumeFile); statErr != nil {
 		t.Fatalf("expected resume state on fatal api error, got: %v", statErr)
 	}
-}
-
-func TestRun_WhenPreScanPingFindsUnreachable_FinalizesUnreachableOutputBeforeFirstDial(t *testing.T) {
-	tmp := t.TempDir()
-	cidrFile := filepath.Join(tmp, "cidr.csv")
-	portFile := filepath.Join(tmp, "ports.csv")
-	outFile := filepath.Join(tmp, "out.csv")
-
-	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,blocked\nfab2,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// Decision B: scan persists the snapshot's pre-scan-ping metadata (stamped by
+	// generate-buckets) unchanged, so a subsequent resume keeps the blocklist.
+	persisted, loadErr := state.LoadSnapshot(resumeFile)
+	if loadErr != nil {
+		t.Fatalf("expected loadable persisted snapshot, got: %v", loadErr)
 	}
-	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	checker := &fakeRunReachabilityChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.1":  {IP: "10.0.0.1", Reachable: false},
-			"127.0.0.1": {IP: "127.0.0.1", Reachable: true},
-		},
-	}
-
-	var (
-		hookOnce   sync.Once
-		hookCalled bool
-		hookErr    error
-	)
-	dial := func(context.Context, string, string) (net.Conn, error) {
-		hookOnce.Do(func() {
-			hookCalled = true
-			path := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-			if strings.HasSuffix(path, ".tmp") {
-				hookErr = fmt.Errorf("expected final unreachable path, got tmp path %s", path)
-				return
-			}
-			if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-				hookErr = fmt.Errorf("expected no unreachable tmp file before first dial, err=%v", err)
-				return
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				hookErr = err
-				return
-			}
-			if !strings.Contains(string(data), "10.0.0.1,10.0.0.1/32,unreachable") {
-				hookErr = fmt.Errorf("expected unreachable row before first dial, got %s", string(data))
-			}
-		})
-		return nil, errors.New("forced dial failure")
-	}
-
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
-	}
-
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-		Dial:                dial,
-		DisableKeyboard:     true,
-		ReachabilityChecker: checker,
-	}); err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
-	if !hookCalled {
-		t.Fatal("expected first dial hook to run")
-	}
-	if hookErr != nil {
-		t.Fatalf("first dial barrier check failed: %v", hookErr)
-	}
-
-	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(unreachableData), "10.0.0.1,10.0.0.1/32,unreachable") {
-		t.Fatalf("expected unreachable csv row, got %s", string(unreachableData))
-	}
-
-	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
-	scanData, err := os.ReadFile(scanPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(scanData), "10.0.0.1") {
-		t.Fatalf("did not expect unreachable target in scan output, got %s", string(scanData))
-	}
-	if !strings.Contains(string(scanData), "127.0.0.1,127.0.0.1/32,1,close") {
-		t.Fatalf("expected reachable target to be scanned, got %s", string(scanData))
+	if !persisted.PreScanPing.Enabled {
+		t.Fatalf("expected persisted snapshot to preserve pre-scan-ping metadata, got %+v", persisted.PreScanPing)
 	}
 }
 
-func TestRun_WhenResumeSnapshotContainsPreScanState_ReusesCheckerAndBlocksSavedUnreachableIPs(t *testing.T) {
+func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
@@ -419,16 +287,13 @@ func TestRun_WhenResumeSnapshotContainsPreScanState_ReusesCheckerAndBlocksSavedU
 		t.Fatalf("run failed: %v", err)
 	}
 	if calls := checker.calls(); len(calls) != 0 {
-		t.Fatalf("expected saved pre-scan state to skip checker, got %v", calls)
+		t.Fatalf("expected scan-only run to never invoke the checker, got %v", calls)
 	}
 
-	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(unreachableData), "10.0.0.1,10.0.0.1/32,unreachable") {
-		t.Fatalf("expected saved unreachable ip to be written, got %s", string(unreachableData))
+	// Decision B: scan does not write the unreachable CSV (that is preping's
+	// artifact). It only excludes the snapshot's blocklisted IPs from scanning.
+	if matches, _ := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); len(matches) != 0 {
+		t.Fatalf("scan must not write unreachable_results CSV, got %v", matches)
 	}
 
 	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
@@ -520,83 +385,6 @@ func TestRun_WhenResumeSnapshotPreScanStateAndContextCanceled_AbortsWithoutWriti
 		t.Fatalf("unexpected glob error: %v", globErr)
 	} else if len(matches) != 0 {
 		t.Fatalf("expected no finalized scan output on canceled saved pre-scan, got %v", matches)
-	}
-}
-
-func TestRun_WhenLegacyResumeAndCurrentPreScanFiltersUnreachable_SucceedsWithoutChunkMismatch(t *testing.T) {
-	tmp := t.TempDir()
-	cidrFile := filepath.Join(tmp, "cidr.csv")
-	portFile := filepath.Join(tmp, "ports.csv")
-	outFile := filepath.Join(tmp, "out.csv")
-	resumeFile := filepath.Join(tmp, "resume.json")
-
-	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/30,127.0.0.0/30,loopback\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Save(resumeFile, []task.Chunk{{
-		CIDR:         "127.0.0.0/30",
-		CIDRName:     "loopback",
-		Ports:        []string{"1/tcp"},
-		NextIndex:    1,
-		ScannedCount: 1,
-		TotalCount:   4,
-		Status:       "scanning",
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	checker := &fakeRunReachabilityChecker{
-		results: map[string]ReachabilityResult{
-			"127.0.0.1": {IP: "127.0.0.1", Reachable: false},
-		},
-	}
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
-	}
-
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-		Dial:                func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
-		DisableKeyboard:     true,
-		ReachabilityChecker: checker,
-	}); err != nil {
-		t.Fatalf("expected legacy resume to continue without chunk mismatch, got %v", err)
-	}
-
-	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
-	scanData, err := os.ReadFile(scanPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(scanData), "127.0.0.1") {
-		t.Fatalf("did not expect filtered unreachable ip in scan output, got %s", string(scanData))
-	}
-	// /30 expands to .0,.1,.2 (broadcast .3 excluded); .1 is filtered unreachable,
-	// leaving .0 and .2 scanned => header + 2 rows.
-	if lineCount(string(scanData)) != 3 {
-		t.Fatalf("expected header plus two scanned rows after filtering, got %s", string(scanData))
-	}
-
-	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(unreachableData), "127.0.0.1,127.0.0.0/30,unreachable") {
-		t.Fatalf("expected unreachable row for filtered legacy resume ip, got %s", string(unreachableData))
 	}
 }
 
@@ -712,136 +500,12 @@ func TestRun_WhenResumeCIDRIsEntirelyBroadcast_FailsWithClearError(t *testing.T)
 	}
 }
 
-func TestRun_WhenPreScanPingDisabled_SkipsCheckerAndDoesNotFilterTargets(t *testing.T) {
+func TestRun_WhenAllTargetsBlocklisted_SucceedsWithHeaderOnlyScanOutputs(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "out.csv")
-
-	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,blocked\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	checker := &fakeRunReachabilityChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.1": {IP: "10.0.0.1", Reachable: false},
-		},
-	}
-
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            20 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		LogLevel:           "error",
-	}
-
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-		Dial:                func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
-		DisableKeyboard:     true,
-		ReachabilityChecker: checker,
-	}); err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
-	if calls := checker.calls(); len(calls) != 0 {
-		t.Fatalf("expected disabled pre-scan ping to skip checker, got %v", calls)
-	}
-
-	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lineCount(string(unreachableData)) != 1 {
-		t.Fatalf("expected unreachable output header only when disabled, got %s", string(unreachableData))
-	}
-
-	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
-	scanData, err := os.ReadFile(scanPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(scanData), "10.0.0.1,10.0.0.1/32,1,close") {
-		t.Fatalf("expected target to remain in scan output when pre-scan disabled, got %s", string(scanData))
-	}
-}
-
-func TestRun_WhenPreScanPingContextCanceled_AbortsWithoutWritingFakeUnreachableResults(t *testing.T) {
-	tmp := t.TempDir()
-	cidrFile := filepath.Join(tmp, "cidr.csv")
-	portFile := filepath.Join(tmp, "ports.csv")
-	outFile := filepath.Join(tmp, "out.csv")
-
-	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,blocked\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	checker := &fakeRunReachabilityChecker{
-		waitForContext: map[string]bool{
-			"10.0.0.1": true,
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
-
-	dialCount := 0
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
-	}
-
-	err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-		Dial: func(context.Context, string, string) (net.Conn, error) {
-			dialCount++
-			return nil, errors.New("unexpected dial")
-		},
-		DisableKeyboard:     true,
-		ReachabilityChecker: checker,
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context canceled error, got %v", err)
-	}
-	if dialCount != 0 {
-		t.Fatalf("expected canceled pre-scan to skip tcp dials, got %d", dialCount)
-	}
-	if matches, globErr := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); globErr != nil {
-		t.Fatalf("unexpected glob error: %v", globErr)
-	} else if len(matches) != 0 {
-		t.Fatalf("expected no finalized unreachable output on canceled pre-scan, got %v", matches)
-	}
-}
-
-func TestRun_WhenAllTargetsUnreachable_SucceedsWithHeaderOnlyScanOutputs(t *testing.T) {
-	tmp := t.TempDir()
-	cidrFile := filepath.Join(tmp, "cidr.csv")
-	portFile := filepath.Join(tmp, "ports.csv")
-	outFile := filepath.Join(tmp, "out.csv")
+	unreachableFile := filepath.Join(tmp, "unreachable.csv")
 
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,blocked\nfab2,10.0.0.2,10.0.0.2/32,blocked-2\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -849,12 +513,10 @@ func TestRun_WhenAllTargetsUnreachable_SucceedsWithHeaderOnlyScanOutputs(t *test
 	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	checker := &fakeRunReachabilityChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.1": {IP: "10.0.0.1", Reachable: false},
-			"10.0.0.2": {IP: "10.0.0.2", Reachable: false},
-		},
+	// Both targets blocklisted → generate-buckets yields zero chunks, so scan has
+	// nothing to dispatch and produces header-only outputs.
+	if err := os.WriteFile(unreachableFile, []byte("ip,ip_cidr,status\n10.0.0.1,10.0.0.1/32,unreachable\n10.0.0.2,10.0.0.2/32,unreachable\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	dialCount := 0
@@ -871,19 +533,19 @@ func TestRun_WhenAllTargetsUnreachable_SucceedsWithHeaderOnlyScanOutputs(t *test
 		DisableAPI:       true,
 		LogLevel:         "error",
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
 		},
-		DisableKeyboard:     true,
-		ReachabilityChecker: checker,
+		DisableKeyboard: true,
 	}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 	if dialCount != 0 {
-		t.Fatalf("expected no tcp dials for all-unreachable run, got %d", dialCount)
+		t.Fatalf("expected no tcp dials for all-blocklisted run, got %d", dialCount)
 	}
 
 	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
@@ -904,20 +566,17 @@ func TestRun_WhenAllTargetsUnreachable_SucceedsWithHeaderOnlyScanOutputs(t *test
 		t.Fatalf("expected opened output header only, got %s", string(openData))
 	}
 
-	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lineCount(string(unreachableData)) != 3 {
-		t.Fatalf("expected unreachable output header plus two rows, got %s", string(unreachableData))
+	// Scan no longer writes the unreachable CSV under decision B.
+	if matches, _ := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); len(matches) != 0 {
+		t.Fatalf("scan must not write unreachable_results CSV, got %v", matches)
 	}
 }
 
-func TestRun_WhenRichAllTargetsUnreachable_SucceedsWithoutDispatchingTCP(t *testing.T) {
+func TestRun_WhenRichAllTargetsBlocklisted_SucceedsWithoutDispatchingTCP(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "rich.csv")
 	outFile := filepath.Join(tmp, "out.csv")
+	unreachableFile := filepath.Join(tmp, "unreachable.csv")
 
 	if err := os.WriteFile(cidrFile, []byte(
 		"src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n"+
@@ -926,11 +585,9 @@ func TestRun_WhenRichAllTargetsUnreachable_SucceedsWithoutDispatchingTCP(t *test
 	), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	checker := &fakeRunReachabilityChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.9": {IP: "10.0.0.9", Reachable: false},
-		},
+	// Both rich records target 10.0.0.9; blocklisting it yields zero chunks.
+	if err := os.WriteFile(unreachableFile, []byte("ip,ip_cidr,status\n10.0.0.9,10.0.0.0/24,unreachable\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	dialCount := 0
@@ -946,19 +603,19 @@ func TestRun_WhenRichAllTargetsUnreachable_SucceedsWithoutDispatchingTCP(t *test
 		DisableAPI:       true,
 		LogLevel:         "error",
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
 		},
-		DisableKeyboard:     true,
-		ReachabilityChecker: checker,
+		DisableKeyboard: true,
 	}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 	if dialCount != 0 {
-		t.Fatalf("expected rich all-unreachable run to skip tcp dials, got %d", dialCount)
+		t.Fatalf("expected rich all-blocklisted run to skip tcp dials, got %d", dialCount)
 	}
 
 	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
@@ -979,13 +636,9 @@ func TestRun_WhenRichAllTargetsUnreachable_SucceedsWithoutDispatchingTCP(t *test
 		t.Fatalf("expected rich opened output header only, got %s", string(openData))
 	}
 
-	unreachablePath := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv"))
-	unreachableData, err := os.ReadFile(unreachablePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lineCount(string(unreachableData)) != 2 {
-		t.Fatalf("expected rich unreachable output header plus merged row, got %s", string(unreachableData))
+	// Scan no longer writes the unreachable CSV under decision B.
+	if matches, _ := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); len(matches) != 0 {
+		t.Fatalf("scan must not write unreachable_results CSV, got %v", matches)
 	}
 }
 
@@ -1381,6 +1034,7 @@ func TestRun_WhenIPColumnListsSubset_ScansOnlyListedIPs(t *testing.T) {
 		LogLevel:           "error",
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -1448,6 +1102,7 @@ func TestRun_WhenCIDRColumnNamesBlank_UsesDefaultInputColumns(t *testing.T) {
 		CIDRIPCidrCol:      "",
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -1509,6 +1164,7 @@ func TestRun_WhenScanCompletes_WritesOpenRecordsToOpenedResultsCSV(t *testing.T)
 		LogLevel:           "error",
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -1574,6 +1230,7 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 		DisableAPI:       true,
 		LogLevel:         "error",
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeFile,
@@ -1585,11 +1242,12 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 	}
 }
 
-func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndFallbackResume(t *testing.T) {
+func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "scan_results.csv")
+	resumeFile := filepath.Join(tmp, "resume_state.json")
 
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/24,127.0.0.0/24,loopback\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1599,20 +1257,20 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndFallbackResume(t *tes
 	}
 
 	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              5 * time.Millisecond,
-		BucketRate:         1,
-		BucketCapacity:     1,
-		Workers:            1,
-		PressureInterval:   10 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		LogLevel:           "info",
-		Format:             "json",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          50 * time.Millisecond,
+		Delay:            5 * time.Millisecond,
+		BucketRate:       1,
+		BucketCapacity:   1,
+		Workers:          1,
+		PressureInterval: 10 * time.Second,
+		DisableAPI:       true,
+		LogLevel:         "info",
+		Format:           "json",
 	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -1622,7 +1280,11 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndFallbackResume(t *tes
 		cancel()
 	}()
 
-	err := Run(ctx, cfg, stdout, stderr, RunOptions{DisableKeyboard: true})
+	// A separate ResumeStatePath receives the persisted resume snapshot; it does
+	// not pre-exist, so its presence proves the cancel path wrote resume state.
+	// (Decision B removed the implicit default-location fallback for scan: scan
+	// always has an input -resume, so persistence targets ResumeStatePath here.)
+	err := Run(ctx, cfg, stdout, stderr, RunOptions{DisableKeyboard: true, ResumeStatePath: resumeFile})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled error, got %v", err)
 	}
@@ -1632,9 +1294,8 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndFallbackResume(t *tes
 	if !strings.Contains(stderr.String(), `"error_cause":"canceled"`) {
 		t.Fatalf("expected canceled error cause in logs, got %s", stderr.String())
 	}
-	resumeFile := filepath.Join(tmp, defaultResumeStateFile)
 	if _, statErr := os.Stat(resumeFile); statErr != nil {
-		t.Fatalf("expected fallback resume file %s, got err=%v", resumeFile, statErr)
+		t.Fatalf("expected persisted resume file %s, got err=%v", resumeFile, statErr)
 	}
 }
 
@@ -1674,6 +1335,7 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 		cancel()
 	}()
 
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	_ = Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeFile,
