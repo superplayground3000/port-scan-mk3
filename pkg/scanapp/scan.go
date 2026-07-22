@@ -11,7 +11,6 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
-	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
 const (
@@ -244,32 +243,4 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	emitCompletionSummary(logger, summary, startedAt, nil)
 	scanSuccess = true
 	return nil
-}
-
-// resolveReachabilityChecker selects the reachability checker used by the
-// preping path. Scan (Run) no longer calls it — decision B removed all pinging
-// from scan — but it is retained for the preping library entry and CLI wiring
-// (T6). See docs/plans/2026-07-22-split-preping-and-port-scan-design.md §5.2.
-func resolveReachabilityChecker(cfg config.Config, opts RunOptions) ReachabilityChecker {
-	if cfg.DisablePreScanPing {
-		return nil
-	}
-	if opts.ReachabilityChecker != nil {
-		return opts.ReachabilityChecker
-	}
-	return &commandReachabilityChecker{}
-}
-
-func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecord) error {
-	output, err := openUnreachableOutput(finalPath)
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		if err := output.writer.Write(row); err != nil {
-			_ = output.Finalize(false)
-			return err
-		}
-	}
-	return output.Finalize(true)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
+	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
 // RunPreping executes the standalone pre-scan ping phase: it loads the target
@@ -85,13 +86,31 @@ func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer
 }
 
 // resolvePrepingChecker selects the reachability checker for preping. Preping's
-// whole purpose is to ping, so (unlike scan's resolveReachabilityChecker) it
-// never returns nil for DisablePreScanPing: it uses the injected checker when
-// present (tests) and otherwise the OS ping-command checker, which preserves the
-// Windows deadline-kill classification and pingProcessStartupAllowance behavior.
+// whole purpose is to ping, so it always returns a checker: the injected one
+// when present (tests) and otherwise the OS ping-command checker, which
+// preserves the Windows deadline-kill classification and
+// pingProcessStartupAllowance behavior. (Scan, by contrast, wires in no checker
+// at all under decision B, so its "never pings" guarantee is structural.)
 func resolvePrepingChecker(opts RunOptions) ReachabilityChecker {
 	if opts.ReachabilityChecker != nil {
 		return opts.ReachabilityChecker
 	}
 	return &commandReachabilityChecker{}
+}
+
+// finalizeUnreachableResults writes rows to a fresh unreachable_results CSV at
+// finalPath and finalizes it (header-only when rows is empty). RunPreping is its
+// sole caller; it lives here (not scan.go) so the preping path owns its writer.
+func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecord) error {
+	output, err := openUnreachableOutput(finalPath)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := output.writer.Write(row); err != nil {
+			_ = output.Finalize(false)
+			return err
+		}
+	}
+	return output.Finalize(true)
 }

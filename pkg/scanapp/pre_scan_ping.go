@@ -9,75 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
-	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
-
-type preScanOutcome struct {
-	State              state.PreScanPingState
-	UnreachableIPv4U32 []uint32
-	UnreachableRows    []writer.UnreachableRecord
-}
-
-func runPreScanPing(ctx context.Context, inputs runInputs, cfg config.Config, checker ReachabilityChecker, saved state.PreScanPingState) (preScanOutcome, error) {
-	if cfg.DisablePreScanPing {
-		return preScanOutcome{}, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return preScanOutcome{}, err
-	}
-
-	timeout := cfg.PreScanPingTimeout
-	reason := fmt.Sprintf("ping failed within %s", timeout)
-
-	if hasSavedPreScanPingState(saved) {
-		unreachable := sortedUniqueIPv4U32(saved.UnreachableIPv4U32)
-		rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable), reason)
-		if err != nil {
-			return preScanOutcome{}, err
-		}
-		if err := ctx.Err(); err != nil {
-			return preScanOutcome{}, err
-		}
-		return preScanOutcome{
-			State:              buildPreScanPingState(unreachable, timeout),
-			UnreachableIPv4U32: unreachable,
-			UnreachableRows:    rows,
-		}, nil
-	}
-
-	if checker == nil {
-		return preScanOutcome{}, fmt.Errorf("reachability checker is required")
-	}
-
-	uniqueIPs, err := collectUniquePreScanIPs(inputs)
-	if err != nil {
-		return preScanOutcome{}, err
-	}
-	unreachable, err := runReachabilityChecks(ctx, checker, uniqueIPs, cfg.Workers, timeout)
-	if err != nil {
-		return preScanOutcome{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return preScanOutcome{}, err
-	}
-
-	rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable), reason)
-	if err != nil {
-		return preScanOutcome{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return preScanOutcome{}, err
-	}
-
-	return preScanOutcome{
-		State:              buildPreScanPingState(unreachable, timeout),
-		UnreachableIPv4U32: unreachable,
-		UnreachableRows:    rows,
-	}, nil
-}
 
 func reachablePredicate(sortedUnreachable []uint32) func(string) bool {
 	blocked := sortedUniqueIPv4U32(sortedUnreachable)
@@ -92,10 +26,6 @@ func reachablePredicate(sortedUnreachable []uint32) func(string) bool {
 		})
 		return idx >= len(blocked) || blocked[idx] != ipv4
 	}
-}
-
-func hasSavedPreScanPingState(saved state.PreScanPingState) bool {
-	return saved.Enabled || saved.TimeoutMS != 0 || len(saved.UnreachableIPv4U32) > 0
 }
 
 func sortedUniqueIPv4U32(values []uint32) []uint32 {
@@ -139,17 +69,13 @@ func collectUniquePreScanIPs(inputs runInputs) ([]string, error) {
 	return ips, nil
 }
 
-func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips []string, workers int, timeout time.Duration) ([]uint32, error) {
-	return runReachabilityChecksWithProgress(ctx, checker, ips, workers, timeout, nil)
-}
-
-// runReachabilityChecksWithProgress is the worker-pool implementation behind
-// runReachabilityChecks. onChecked, when non-nil, is invoked exactly once per IP
-// after its reachability check returns (reachable, unreachable, or errored), so
-// callers can tick a progress reporter per checked IP. It is called from worker
-// goroutines, so onChecked must be safe for concurrent use (progress.Reporter
-// is). Passing nil reproduces the original runReachabilityChecks behavior byte
-// for byte, keeping existing callers (runPreScanPing) unchanged.
+// runReachabilityChecksWithProgress pings every IP concurrently over a worker
+// pool and returns the sorted set of unreachable IPs (as uint32). onChecked,
+// when non-nil, is invoked exactly once per IP after its reachability check
+// returns (reachable, unreachable, or errored), so callers can tick a progress
+// reporter per checked IP. It is called from worker goroutines, so onChecked
+// must be safe for concurrent use (progress.Reporter is). Passing nil skips
+// progress reporting. RunPreping is the sole production caller.
 func runReachabilityChecksWithProgress(ctx context.Context, checker ReachabilityChecker, ips []string, workers int, timeout time.Duration, onChecked func()) ([]uint32, error) {
 	if len(ips) == 0 {
 		return nil, nil
@@ -313,14 +239,6 @@ func preScanTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
 		return nil, err
 	}
 	return strategy.targets(rec)
-}
-
-func buildPreScanPingState(unreachable []uint32, timeout time.Duration) state.PreScanPingState {
-	return state.PreScanPingState{
-		Enabled:            true,
-		TimeoutMS:          int(timeout / time.Millisecond),
-		UnreachableIPv4U32: unreachable,
-	}
 }
 
 func richUnreachableRowKey(row writer.UnreachableRecord) string {

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,6 +191,87 @@ func TestRunPreping_NoTargets_WritesHeaderOnlyValidCSV(t *testing.T) {
 	if !reflect.DeepEqual(records[0], expectedUnreachableHeader) {
 		t.Fatalf("header mismatch:\n got  %v\n want %v", records[0], expectedUnreachableHeader)
 	}
+}
+
+// TestRunPreping_WhenContextCanceledMidFlight_AbortsWithoutWritingOutput drives
+// RunPreping (the live production preping entry) against a checker that blocks
+// until the context is canceled, cancels while a reachability check is in
+// flight, and asserts the run aborts with context.Canceled without writing a
+// partial/fake unreachable CSV or printing a resolved path. This cancellation is
+// reachable in production only via RunPreping's runReachabilityChecksWithProgress
+// path, so it must stay covered. It would fail (a CSV would be written and a path
+// printed) if the worker pool swallowed the cancellation instead of propagating
+// it.
+func TestRunPreping_WhenContextCanceledMidFlight_AbortsWithoutWritingOutput(t *testing.T) {
+	cidrFile, portFile, output := writePrepingInputs(t,
+		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\n",
+		"80/tcp\n",
+	)
+	checker := &blockingReachabilityChecker{started: make(chan struct{})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunPreping(ctx, config.Config{
+			CIDRFile:           cidrFile,
+			PortFile:           portFile,
+			Output:             output,
+			Workers:            1,
+			PreScanPingTimeout: time.Hour, // large: the abort is the cancel, not a ping timeout
+			ProgressInterval:   1,
+		}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
+	}()
+
+	select {
+	case <-checker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("checker was never invoked; cannot cancel mid-flight")
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled from mid-flight cancel, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPreping did not return after cancellation")
+	}
+
+	// No unreachable CSV may be written on cancel (no partial/fake output).
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(output), "unreachable_results-*.csv"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected no unreachable output on cancel, got %v", matches)
+	}
+	// No resolved path may be printed on cancel (nothing to chain).
+	if strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("expected no resolved path printed on cancel, got %q", stdout.String())
+	}
+}
+
+// blockingReachabilityChecker signals started on its first check and then blocks
+// until the caller's context is canceled, returning ctx.Err(). It lets a test
+// deterministically cancel RunPreping while a reachability check is in flight.
+type blockingReachabilityChecker struct {
+	started   chan struct{}
+	startOnce sync.Once
+}
+
+func (b *blockingReachabilityChecker) Check(ctx context.Context, ip string, timeout time.Duration) ReachabilityResult {
+	result, _ := b.CheckDetailed(ctx, ip, timeout)
+	return result
+}
+
+func (b *blockingReachabilityChecker) CheckDetailed(ctx context.Context, ip string, _ time.Duration) (ReachabilityResult, error) {
+	b.startOnce.Do(func() { close(b.started) })
+	<-ctx.Done()
+	return ReachabilityResult{IP: ip}, ctx.Err()
 }
 
 func splitNonEmptyLines(s string) []string {
