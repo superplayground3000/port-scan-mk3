@@ -77,23 +77,30 @@ func loadOrBuildChunksWithPredicate(cfg config.Config, cidrRecords []input.CIDRR
 
 	out := make([]task.Chunk, 0, len(cidrs))
 	for _, cidr := range cidrs {
-		g := groups[cidr]
-		total := len(g.targets) * len(portSpecs)
-		cidrName := ""
-		if len(g.targets) > 0 {
-			cidrName = g.targets[0].meta.cidrName
-		}
-		out = append(out, task.Chunk{
-			CIDR:         cidr,
-			CIDRName:     cidrName,
-			Ports:        rawPorts,
-			NextIndex:    0,
-			ScannedCount: 0,
-			TotalCount:   total,
-			Status:       "pending",
-		})
+		out = append(out, basicChunkFromGroup(cidr, groups[cidr], rawPorts))
 	}
 	return out, nil
+}
+
+// basicChunkFromGroup builds the basic-mode chunk for a single CIDR group. Each
+// target is scanned across every rawPort, so TotalCount == len(targets) *
+// len(rawPorts). This is the single source of truth for basic-mode counting;
+// both fresh scan builds and generate-buckets route through it so the
+// total_count invariant (buildRuntimeWithPredicate) holds by construction.
+func basicChunkFromGroup(cidr string, g cidrGroup, rawPorts []string) task.Chunk {
+	cidrName := ""
+	if len(g.targets) > 0 {
+		cidrName = g.targets[0].meta.cidrName
+	}
+	return task.Chunk{
+		CIDR:         cidr,
+		CIDRName:     cidrName,
+		Ports:        rawPorts,
+		NextIndex:    0,
+		ScannedCount: 0,
+		TotalCount:   len(g.targets) * len(rawPorts),
+		Status:       "pending",
+	}
 }
 
 func buildRuntime(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy) ([]*chunkRuntime, error) {
@@ -201,21 +208,33 @@ func buildRichChunksWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 		if len(g.targets) == 0 {
 			continue
 		}
-		cidrName := ""
-		cidrName = g.targets[0].meta.cidrName
-		port := g.targets[0].port
-		if port <= 0 {
-			port = 1
-		}
-		out = append(out, task.Chunk{
-			CIDR:         key,
-			CIDRName:     cidrName,
-			Ports:        []string{fmt.Sprintf("%d/tcp", port)},
-			NextIndex:    0,
-			ScannedCount: 0,
-			TotalCount:   len(g.targets),
-			Status:       "pending",
-		})
+		out = append(out, richChunkFromGroup(key, g))
 	}
 	return out, nil
+}
+
+// richChunkFromGroup builds the rich-mode chunk for a single CIDR group. Rich
+// groups carry one dedicated port per target, so TotalCount == len(targets) and
+// Ports holds a single representative "<port>/tcp" entry. This is the single
+// source of truth for rich-mode counting; both fresh scan builds and
+// generate-buckets route through it so the total_count invariant
+// (buildRuntimeWithPredicate) holds by construction.
+func richChunkFromGroup(cidr string, g cidrGroup) task.Chunk {
+	cidrName := ""
+	port := 1
+	if len(g.targets) > 0 {
+		cidrName = g.targets[0].meta.cidrName
+		if g.targets[0].port > 0 {
+			port = g.targets[0].port
+		}
+	}
+	return task.Chunk{
+		CIDR:         cidr,
+		CIDRName:     cidrName,
+		Ports:        []string{fmt.Sprintf("%d/tcp", port)},
+		NextIndex:    0,
+		ScannedCount: 0,
+		TotalCount:   len(g.targets),
+		Status:       "pending",
+	}
 }
