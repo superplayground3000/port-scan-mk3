@@ -1,12 +1,58 @@
 # port-scan Specification
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-05-03
+**Tool**: `cmd/port-scan` | **Revised**: 2026-07-22
 
 ## Overview
 
-`port-scan` is a TCP port scanner for IPv4 that supports two input modes (basic and rich), pressure-aware pacing via a configurable API, resumable scans, and real-time dashboard display.
+`port-scan` is a TCP port scanner for IPv4 that supports two input modes (basic
+and rich), pressure-aware pacing via a configurable API, resumable scans, and
+real-time dashboard display.
+
+As of **2.0.0** it is a **three-step pipeline** — `preping` →
+`generate-buckets` → `scan` — with durable file hand-offs between steps. Each
+subcommand parses only its own flag surface (`config.ParseFor`). `scan` requires
+a bucket snapshot via `-resume`, constructs no reachability checker, and never
+pings. See [2.0.0 release notes](../../release-notes/2.0.0.md) for the flag
+relocation table and migration.
 
 ## Commands
+
+### preping
+
+Pings unique target IPs and writes the `unreachable_results-<ts>.csv` blocklist,
+printing its resolved path to stdout for chaining. Reports percentage progress
+to stderr.
+
+```bash
+port-scan preping -cidr-file <path> [-pre-scan-ping-timeout 100ms] [-workers N] \
+  [-output <path>] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] \
+  [-log-level info] [-format human|json] [-quiet]
+```
+
+No `-port-file` and no ping-toggle flag (skip pinging by skipping this step).
+
+### generate-buckets
+
+Builds the resume bucket snapshot over targets minus an optional blocklist and
+writes it to `-buckets-out`. Performs no network I/O. Parallelized over
+`-workers` with deterministic, CIDR-sorted output; always stamps
+`pre_scan_ping.enabled=true`.
+
+```bash
+port-scan generate-buckets -cidr-file <path> -buckets-out <path> [-port-file <path>] \
+  [-unreachable-file <path>] [-workers N] [-progress-interval N] \
+  [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]
+```
+
+### scan
+
+Runs the pure TCP scan of a bucket snapshot. **`-resume` is required**; it reads
+the snapshot at start and, on cancel/error, writes progress back in place at the
+same path. No ping flags are registered.
+
+```bash
+port-scan scan -cidr-file <path> -resume <bucket-file> [-output <path>] [flags...]
+```
 
 ### validate
 
@@ -16,53 +62,46 @@ Parses and validates input files without performing any network scan.
 port-scan validate -cidr-file <path> [-port-file <path>] [-format human|json]
 ```
 
-**Exit codes:**
-- `0` — all inputs valid
-- `1` — inputs invalid (details in stdout if `-format json`)
-- `2` — config/flag error (details to stderr)
-
-### scan
-
-Runs the full scan pipeline.
-
-```bash
-port-scan scan -cidr-file <path> [-port-file <path>] [flags...]
-```
-
-**Exit codes:**
-- `0` — scan completed, result CSVs written
-- `1` — runtime error (file write failure, config error during run, or validation failure)
-- `2` — CLI or config error (missing required flags, invalid flag values, parse failure)
-- `130` — scan canceled by SIGINT; `resume_state.json` written
+**Exit codes (all commands):**
+- `0` — success (inputs valid / snapshot written / scan completed)
+- `1` — runtime error (file write failure, config error during run, validation failure)
+- `2` — CLI or config error (missing required flags, unknown flag, invalid value)
+- `130` — canceled by SIGINT (`scan` persists progress to the `-resume` path)
 
 ## CLI Flags
 
-All flags apply to both `validate` and `scan` commands unless noted.
+Each subcommand registers only the flags it owns; passing a foreign flag is an
+unknown-flag error. The table below lists every flag and the subcommand(s) that
+own it. Required flags: `-cidr-file` (all), `-buckets-out` (`generate-buckets`),
+`-resume` (`scan`). See [All flags](../../cli/flags.md) for per-command tables.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-cidr-file` | (required) | Path to the CIDR input CSV |
-| `-port-file` | (required in basic mode) | Path to the port input file (one `port/tcp` per line). Not required in rich mode. |
-| `-output` | `scan_results.csv` | Base path for result CSV files. Actual files are `scan_results-<ts>.csv` and `opened_results-<ts>.csv` written in the same directory as the output path. |
-| `-timeout` | `100ms` | Per-scan TCP connection timeout (Go duration string) |
-| `-delay` | `10ms` | Pause between dispatching consecutive tasks |
-| `-bucket-rate` | `100` | Leaky-bucket token refill rate (tokens/second) |
-| `-bucket-capacity` | `100` | Leaky-bucket maximum burst size |
-| `-workers` | `10` | Number of concurrent scan goroutines |
-| `-pressure-api` | `http://localhost:8080/api/pressure` | URL of the pressure API endpoint (plain HTTP) |
-| `-pressure-interval` | `5s` | How often to poll the pressure API (Go duration string or integer seconds) |
-| `-disable-api` | `false` | Disable pressure API polling; use only local rate control |
-| `-pressure-auth-url` | (empty) | OAuth token endpoint URL (required with `-pressure-use-auth`) |
-| `-pressure-data-url` | (empty) | Comma-separated list of pressure data endpoint URLs (required with `-pressure-use-auth`) |
-| `-pressure-client-id` | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
-| `-pressure-client-secret` | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
-| `-pressure-use-auth` | `false` | Use OAuth-authenticated pressure fetcher |
-| `-resume` | (empty) | Path to a resume state JSON file to continue an interrupted scan |
-| `-log-level` | `info` | Log verbosity: `debug`, `info`, or `error` |
-| `-format` | `human` | Output format: `human` or `json`. Applies to `validate` output only. |
-| `-quiet` | `false` | Suppress console logs; keep pressure API logs |
-| `-cidr-ip-col` | `ip` | Column name for the IP selector in the CIDR CSV |
-| `-cidr-ip-cidr-col` | `ip_cidr` | Column name for the boundary CIDR in the CIDR CSV |
+| `-cidr-file` | (required) | All commands. Path to the CIDR/rich input CSV. |
+| `-cidr-ip-col` / `-cidr-ip-cidr-col` | `ip` / `ip_cidr` | All commands. Case-sensitive column mapping. |
+| `-pre-scan-ping-timeout` | `100ms` | `preping` only. Ping reply-wait timeout (must be > 0). Removed from `scan`. |
+| `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `preping` output) whose `ip` column is subtracted. |
+| `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
+| `-resume` | (required) | `scan` only. Bucket snapshot to scan; updated in place on cancel/error. |
+| `-progress-interval` | `100` | `preping`, `generate-buckets`, `scan`. Progress-line cadence (count of processed units); emitted to stderr. |
+| `-port-file` | (basic mode) | `generate-buckets` (primary; required in basic mode, ignored in rich mode) and `scan` (fallback, normally ignored — chunks carry ports). |
+| `-output` | `scan_results.csv` | `preping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
+| `-timeout` | `100ms` | `scan` only. Per-scan TCP connection timeout (Go duration string). |
+| `-delay` | `10ms` | `scan` only. Pause between dispatching consecutive tasks |
+| `-bucket-rate` | `100` | `scan` only. Leaky-bucket token refill rate (tokens/second) |
+| `-bucket-capacity` | `100` | `scan` only. Leaky-bucket maximum burst size |
+| `-workers` | `10` | `preping`, `generate-buckets`, `scan`. Concurrent workers (also parallelizes bucket generation) |
+| `-pressure-api` | `http://localhost:8080/api/pressure` | `scan` only. URL of the pressure API endpoint (plain HTTP) |
+| `-disable-api` | `false` | `scan` only. Disable pressure API polling; use only local rate control |
+| `-pressure-interval` | `5s` | `scan` only. Pressure poll interval (Go duration string or integer seconds) |
+| `-pressure-auth-url` | (empty) | `scan` only. OAuth token endpoint URL (required with `-pressure-use-auth`) |
+| `-pressure-data-url` | (empty) | `scan` only. Comma-separated pressure data endpoint URLs (required with `-pressure-use-auth`) |
+| `-pressure-client-id` | (empty) | `scan` only. OAuth client ID (required with `-pressure-use-auth`) |
+| `-pressure-client-secret` | (empty) | `scan` only. OAuth client secret (required with `-pressure-use-auth`) |
+| `-pressure-use-auth` | `false` | `scan` only. Use OAuth-authenticated pressure fetcher |
+| `-log-level` | `info` | All commands. Log verbosity: `debug`, `info`, or `error` |
+| `-format` | `human` | All commands. `human` or `json`. |
+| `-quiet` | `false` | All commands. Suppress console logs; keep pressure API logs |
 
 ## Input Formats
 
@@ -145,15 +184,20 @@ Basic mode rows carry `ip`, `ip_cidr`, `port`, `status`, `response_time_ms`, `fa
 
 Same schema as `scan_results-*.csv`, filtered to `status=open` only.
 
-### resume_state.json
+### Bucket snapshot (resume state)
 
-Written on SIGINT or scan failure. Contains chunk states for resuming.
+The bucket snapshot produced by `generate-buckets` (`-buckets-out`) **is** the
+resume state JSON. `scan` reads it via `-resume`; on SIGINT or scan failure it
+writes progress back **in place at the same `-resume` path**. It contains the
+per-CIDR chunk states plus the `pre_scan_ping` envelope (which carries the
+unreachable blocklist so `scan` never needs to ping).
 
 ```json
 {
-  "Chunks": [
-    {"CIDR": "10.0.0.0/24", "NextIndex": 50, "ScannedCount": 50, "Status": "in_progress"}
-  ]
+  "chunks": [
+    {"cidr": "10.0.0.0/24", "ports": ["8080/tcp"], "next_index": 50, "scanned_count": 50, "total_count": 254, "status": "in_progress"}
+  ],
+  "pre_scan_ping": {"enabled": true, "timeout_ms": 0, "unreachable_ipv4_u32": [168430081]}
 }
 ```
 

@@ -18,21 +18,52 @@ go run ./cmd/port-scan validate \
   -format human
 ```
 
-Run a real scan:
+Run a real scan — `port-scan` is a **three-step pipeline** (`preping` ->
+`generate-buckets` -> `scan`). `scan` requires a bucket snapshot via `-resume`;
+it never pings and no longer accepts ping flags (this changed in 2.0.0 — see
+[release notes](docs/release-notes/2.0.0.md)):
 
 ```bash
+# 1. Ping unique targets; capture the printed unreachable CSV path (stdout)
+UNREACHABLE=$(go run ./cmd/port-scan preping \
+  -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -output e2e/out/scan_results.csv)
+
+# 2. Build the bucket snapshot (targets minus the unreachable blocklist)
+go run ./cmd/port-scan generate-buckets \
+  -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -port-file e2e/inputs/ports.csv \
+  -unreachable-file "$UNREACHABLE" \
+  -buckets-out e2e/out/buckets.json
+
+# 3. Scan the buckets
 go run ./cmd/port-scan scan \
   -cidr-file e2e/inputs/cidr_normal.csv \
-  -port-file e2e/inputs/ports.csv
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -resume e2e/out/buckets.json \
+  -port-file e2e/inputs/ports.csv \
+  -output e2e/out/scan_results.csv
 ```
 
-Skip the default pre-scan reachability check:
+Skip the pre-scan reachability check (the old `-disable-pre-scan-ping=true`):
+omit the `preping` step and run `generate-buckets` without `-unreachable-file`.
+The snapshot then covers all targets and still stamps
+`pre_scan_ping.enabled=true`, so `scan` never pings:
 
 ```bash
+go run ./cmd/port-scan generate-buckets \
+  -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -port-file e2e/inputs/ports.csv \
+  -buckets-out e2e/out/buckets.json
 go run ./cmd/port-scan scan \
   -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -resume e2e/out/buckets.json \
   -port-file e2e/inputs/ports.csv \
-  -disable-pre-scan-ping=true
+  -output e2e/out/scan_results.csv -disable-api
 ```
 
 ## Pre-processing Workflows
@@ -54,10 +85,11 @@ go run ./cmd/preprocess \
   --fab-name dc-east \
   --output-dir ./scan-input
 
-# Step 2 — scan (replace <timestamp> with the path printed by step 1)
-go run ./cmd/port-scan scan \
-  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
-  -disable-api=true
+# Step 2 — run the pipeline on the filtered rich input (rich mode: no -port-file)
+# Replace <timestamp> with the path printed by step 1.
+IN=scan-input/dc-east/<timestamp>/input.csv
+go run ./cmd/port-scan generate-buckets -cidr-file "$IN" -buckets-out out/buckets.json
+go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output out/ -disable-api=true
 ```
 
 ### Re-scan Flow
@@ -81,10 +113,11 @@ go run ./cmd/preprocess \
   --fab-name dc-east \
   --output-dir ./scan-input
 
-# Step 3 — scan (replace <timestamp> with the path printed by step 2)
-go run ./cmd/port-scan scan \
-  -cidr-file scan-input/dc-east/<timestamp>/input.csv \
-  -disable-api=true
+# Step 3 — run the pipeline (rich mode: no -port-file)
+# Replace <timestamp> with the path printed by step 2.
+IN=scan-input/dc-east/<timestamp>/input.csv
+go run ./cmd/port-scan generate-buckets -cidr-file "$IN" -buckets-out out/buckets.json
+go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output out/ -disable-api=true
 ```
 
 ## Input Contracts
@@ -102,8 +135,10 @@ go run ./cmd/port-scan scan \
 
 ## Commands
 
+- `preping`: ping unique target IPs, write `unreachable_results-<ts>.csv`, print its path
+- `generate-buckets`: build the resume bucket snapshot from targets minus an optional blocklist (`-buckets-out` required)
+- `scan`: pure TCP scan of a bucket snapshot (`-resume` required; dispatch, probe, output, in-place resume persistence)
 - `validate`: parse and validate input files only
-- `scan`: run full orchestration (dispatch, probe, output, resume persistence)
 
 Exit code behavior:
 
@@ -114,34 +149,38 @@ Exit code behavior:
 
 ## Architecture and Data Flow
 
-### port-scan Pipeline
+### port-scan Pipeline (three steps)
+
+Each arrow between steps is a durable file, so the pipeline can stop and restart
+at any boundary. `rich.csv` (`-cidr-file`) feeds all three steps.
 
 ```
-CLI Input                 CSV Files                    Processing                 Output
-=========                 ========                     ==========                 ======
-
- args/flags ─────┐
-                 │
-  [port-scan] ───┼──> Parse flags ──> Validate inputs
-                 │        │                │
-                 │        v                v
-                 │   config.Config    validate.Inputs()
-                 │        │                │
-                 │        v                v
-                 │   CIDR CSV ──> cidrutil.ParseCIDRs() ──> task.Selector
-                 │        │                              │
-                 │        v                              v
-                 │   Port list ──> task.NewPortExpander() ──> PortTask
-                 │        │                              │
-                 │        v                              v
-                 │   Task expansion ──> task.ExpandAll() ──> []Task
-                 │        |                              |
-                 |        v                              v
-                 │   Worker pool <── rate control ──> scanner.ScanTCP()
-                 |        |                              |
-                 |        v                              v
-                 +-------> Batch writer ──> scan_results-*.csv
-                          (timestamped, collision-safe)   opened_results-*.csv
+        rich.csv
+           │
+           ▼
+   ┌───────────────┐
+   │    preping    │  ping unique IPs (progress → stderr)
+   └───────┬───────┘
+           │  unreachable_results-<ts>.csv   (path printed to stdout)
+           ▼
+ rich.csv + unreachable.csv (optional)
+           │
+           ▼
+   ┌───────────────────┐
+   │  generate-buckets │  subtract blocklist, group per CIDR,
+   │   (parallel)      │  build chunks, stamp pre_scan_ping.enabled=true
+   └─────────┬─────────┘
+             │  bucket snapshot JSON  (== resume Snapshot; -buckets-out)
+             ▼
+   rich.csv + bucket snapshot
+             │
+             ▼
+   ┌───────────────┐
+   │     scan      │  pure TCP scan; NO checker; -resume <bucket> (required)
+   │               │  rate control + pressure gate → scanner.ScanTCP()
+   └───────┬───────┘
+           │  scan_results-<ts>.csv / opened_results-<ts>.csv
+           ▼   (on cancel/error: bucket snapshot updated in place at -resume)
 ```
 
 ### Pre-processing Pipeline
@@ -180,37 +219,52 @@ Input CSV ──> spreadsheet.Reader ──> Column index ──> Filter rows �
                                   pass columns)                                     individuals)   format)
 ```
 
-## How the Scan Pipeline Works
+## How the Pipeline Works
 
-1. Parse CLI flags and validate required inputs.
-2. Load CIDR CSV and port list, then apply fail-fast validation.
-3. Run a pre-scan ping stage by default, once per unique IPv4 target, with a fixed `100ms` timeout per IP.
-4. Finalize `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv` before any TCP work starts.
-5. Expand only reachable selectors into concrete IPv4 targets and build scan tasks.
-   The broadcast address of each row's boundary subnet (`ip_cidr` /
-   `dst_network_segment`, prefix /30 or larger) is never scanned — whether it
-   came from CIDR expansion or an explicitly listed IP — while the network
-   address is kept.
-6. Dispatch tasks with rate control and optional pressure-based pause.
-7. Run TCP probes in worker pool and stream progress events.
-8. Write timestamped batch output files:
+The pipeline is three separately-runnable steps with durable file hand-offs.
+`rich.csv` (`-cidr-file`) is threaded into all three as the single source of
+truth for target metadata.
+
+**Step 1 — `preping`** (optional; skip it to skip reachability filtering):
+1. Load the CIDR/rich CSV and collect unique IPv4 targets.
+2. Ping each unique target (`-pre-scan-ping-timeout`, default `100ms`), emitting
+   percentage progress to stderr every `-progress-interval` units.
+3. Finalize `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv` and print its path to
+   stdout for chaining.
+
+**Step 2 — `generate-buckets`** (no network I/O):
+1. Load targets and ports; parse the optional `-unreachable-file` blocklist.
+2. Subtract the blocklist, group by CIDR, and build one chunk per group in
+   parallel over `-workers` (deterministic, CIDR-sorted). The broadcast address
+   of each row's boundary subnet (`ip_cidr` / `dst_network_segment`, prefix /30
+   or larger) is never included — whether it came from CIDR expansion or an
+   explicitly listed IP — while the network address is kept.
+3. Write the resume bucket snapshot to `-buckets-out`, stamping
+   `pre_scan_ping.enabled=true` so `scan` never pings.
+
+**Step 3 — `scan`** (requires `-resume <bucket file>`):
+1. Load the bucket snapshot; derive the reachable set from its embedded blocklist
+   (no reachability checker is constructed — pinging is impossible here).
+2. Dispatch tasks with rate control and optional pressure-based pause.
+3. Run TCP probes in a worker pool and stream progress events.
+4. Write timestamped batch output files:
    - `scan_results-YYYYMMDDTHHMMSSZ[-n].csv`
    - `opened_results-YYYYMMDDTHHMMSSZ[-n].csv`
-   - `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv`
-9. Save resume state when canceled, failed, or partially complete.
+5. On cancel/error, save progress **in place at the `-resume` path** (the bucket
+   file is overwritten with updated progress; re-running the same command
+   continues from there).
+
+The "unreachable results are finalized before any TCP dial" guarantee is
+enforced by this **step sequencing** — `preping` completes before `scan` runs.
 
 ## Output and Resume Behavior
 
 - `-output` controls output directory; result files are always timestamped batches.
 - Default batch naming is collision-safe within the same second (`-1`, `-2`, ... suffix).
-- `scan` writes `unreachable_results-*` even when all targets are reachable; in that case it contains the header only.
-- `-disable-pre-scan-ping=true` restores the legacy behavior that skips the reachability gate and unreachable batch output stage.
-- Resume state save path:
-  - If `-resume` is set: save and load from that exact path.
-  - If `-resume` is not set: save fallback to `<output-dir>/resume_state.json`.
-- Resume state auto-save does not mean auto-load:
-  - Loading previous progress requires passing `-resume <path>`.
-- Resume envelopes can persist pre-scan unreachable targets so a resumed run can reuse the same filtering decision.
+- `preping` writes `unreachable_results-*` even when all targets are reachable; in that case it contains the header only. `scan` no longer writes this file.
+- To skip the reachability gate, skip the `preping` step and run `generate-buckets` without `-unreachable-file`.
+- The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel/error saves progress back to that exact path (in place). Re-running the same `scan` command continues from there.
+- The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist so `scan` reuses the same filtering decision without pinging.
 
 ## Dashboard and Logging
 
@@ -225,36 +279,30 @@ Input CSV ──> spreadsheet.Reader ──> Column index ──> Filter rows �
 
 TCP port scanner with pressure-aware pacing and resume support.
 
-**Commands:**
+**Commands** (each parses only its own flag surface):
+- `port-scan preping [flags]` - Ping unique target IPs; write `unreachable_results-<ts>.csv` and print its path
+- `port-scan generate-buckets [flags]` - Build the resume bucket snapshot (`-buckets-out` required); no network I/O
+- `port-scan scan [flags]` - Pure TCP scan of a bucket snapshot (`-resume` required); no ping flags
 - `port-scan validate [flags]` - Validate input files only (no network scan)
-- `port-scan scan [flags]` - Run full scan orchestration
 
-**Flags:**
+**Flags** (which flag lives on which subcommand). Full per-command tables and
+defaults are in [All flags](docs/cli/flags.md).
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `-cidr-file` | string | required | Path to CIDR CSV input file |
-| `-port-file` | string | optional | Path to port list file (`<port>/tcp` lines); required in default mode |
-| `-output` | string | `scan_results.csv` | Output anchor path for scan batch files |
-| `-timeout` | duration | `100ms` | TCP dial timeout per probe |
-| `-delay` | duration | `10ms` | Dispatch delay between tasks |
-| `-bucket-rate` | int | `100` | Leaky bucket refill rate |
-| `-bucket-capacity` | int | `100` | Leaky bucket capacity |
-| `-workers` | int | `10` | Number of scan workers |
-| `-pressure-api` | string | `http://localhost:8080/api/pressure` | Pressure API endpoint |
-| `-pressure-interval` | duration | `5s` | Poll interval for pressure API (duration or integer seconds) |
-| `-pressure-use-auth` | bool | `false` | Use authenticated pressure fetcher with OAuth flow |
-| `-pressure-auth-url` | string | (empty) | OAuth auth endpoint URL (required with `-pressure-use-auth`) |
-| `-pressure-data-url` | string | (empty) | Comma-separated list of pressure data endpoint URLs (required with `-pressure-use-auth`; single URL is backward-compatible) |
-| `-pressure-client-id` | string | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
-| `-pressure-client-secret` | string | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
-| `-disable-api` | bool | `false` | Disable pressure API polling completely |
-| `-quiet` | bool | `false` | Suppress console logs, keep only pressure API logs |
-| `-resume` | string | (empty) | Resume state file path; if set, load/save uses this exact path |
-| `-log-level` | string | `info` | Runtime log level: `debug`, `info`, `error` |
-| `-format` | string | `human` | Output format: `human` or `json` |
-| `-cidr-ip-col` | string | `ip` | Case-sensitive CIDR CSV column name for IP selector source |
-| `-cidr-ip-cidr-col` | string | `ip_cidr` | Case-sensitive CIDR CSV column name for boundary CIDR source |
+| Flag | Subcommand(s) | Notes |
+|------|---------------|-------|
+| `-cidr-file` (required) | all | Rich/basic CSV; source of truth for target metadata |
+| `-cidr-ip-col` / `-cidr-ip-cidr-col` | all | Case-sensitive column mapping (defaults `ip` / `ip_cidr`) |
+| `-workers` | `preping`, `generate-buckets`, `scan` | Also parallelizes bucket generation (default `10`) |
+| `-progress-interval` | `preping`, `generate-buckets`, `scan` | Progress line cadence, count-based (default `100`) — **NEW** |
+| `-log-level` / `-format` / `-quiet` | all | Shared observability flags |
+| `-pre-scan-ping-timeout` | `preping` | Ping reply-wait (default `100ms`); removed from `scan` |
+| `-output` | `preping`, `scan` | Output anchor: unreachable CSV (`preping`), scan/opened CSVs (`scan`) |
+| `-port-file` | `generate-buckets` (primary), `scan` (fallback) | Required in basic mode; ignored in rich mode |
+| `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `preping` output) — **NEW** |
+| `-buckets-out` (required) | `generate-buckets` | Bucket snapshot output path — **NEW** |
+| `-resume` (required) | `scan` | Bucket snapshot to scan; updated in place on cancel/error |
+| `-timeout` / `-delay` / `-bucket-rate` / `-bucket-capacity` | `scan` | Dial/dispatch tuning |
+| `-disable-api`, `-pressure-*` | `scan` | Pressure-API control (auth flags required with `-pressure-use-auth`) |
 
 ### enrich-targets
 
@@ -358,15 +406,17 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 
 | Flag | Typical Use |
 |------|-------------|
-| `-cidr-file` | CIDR input CSV path (required) |
-| `-port-file` | Port list path (required in default mode; optional in rich mode) |
+| `-cidr-file` | CIDR/rich input CSV path (required on every subcommand) |
+| `-port-file` | Port list path — `generate-buckets` in basic mode; `scan` fallback |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | Map custom CSV column names |
-| `-output` | Choose output directory anchor |
-| `-resume` | Read/write state from explicit path |
-| `-disable-pre-scan-ping` | Skip the default pre-scan ping filter and unreachable batch stage |
-| `-pre-scan-ping-timeout` | Pre-scan ping reachability timeout (duration string, default `100ms`) |
-| `-disable-api` | Disable pressure API polling |
-| `-pressure-api` / `-pressure-interval` | Configure pressure-based pause control |
+| `-unreachable-file` | `generate-buckets`: blocklist to subtract (a `preping` output) |
+| `-buckets-out` | `generate-buckets`: bucket snapshot output (required) |
+| `-resume` | `scan`: bucket snapshot to scan (required; updated in place) |
+| `-output` | `preping` / `scan`: output directory anchor |
+| `-pre-scan-ping-timeout` | `preping`: reachability timeout (default `100ms`) |
+| `-progress-interval` | Pipeline steps: progress line cadence (default `100`) |
+| `-disable-api` | `scan`: disable pressure API polling |
+| `-pressure-api` / `-pressure-interval` | `scan`: pressure-based pause control |
 | `-workers` / `-timeout` / `-delay` | Tune concurrency and probe pacing |
 | `-log-level` / `-format` | Runtime visibility (`human` or `json`) |
 
@@ -449,4 +499,4 @@ Each `cmd/` tool has a dedicated specification and design document:
 | csv-transform | [SPEC](docs/apps/csv-transform/SPEC.md) | [DESIGN](docs/apps/csv-transform/DESIGN.md) |
 
 ---
-**Revised**: 2026-06-23 | **Author**: docs-team
+**Revised**: 2026-07-22 | **Author**: docs-team
