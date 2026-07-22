@@ -46,9 +46,21 @@ func TestCLIHelp_IncludesRequiredFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected zero exit, got %d", code)
 	}
-	for _, want := range []string{"-cidr-file", "-port-file", "-cidr-ip-col", "-cidr-ip-cidr-col", "-resume", "-disable-pre-scan-ping", "-disable-api", "-format"} {
+	// Post-split help lists all three pipeline subcommands and their flags.
+	// -disable-pre-scan-ping is intentionally gone (skip pinging by skipping the
+	// preping step); the relocated flags -pre-scan-ping-timeout, -buckets-out,
+	// and -unreachable-file appear on their owning subcommands.
+	for _, want := range []string{
+		"preping", "generate-buckets", "scan",
+		"-cidr-file", "-port-file", "-cidr-ip-col", "-cidr-ip-cidr-col",
+		"-resume", "-buckets-out", "-unreachable-file", "-pre-scan-ping-timeout",
+		"-disable-api", "-format",
+	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing help flag %s", want)
 		}
+	}
+	if strings.Contains(out.String(), "-disable-pre-scan-ping") {
+		t.Fatalf("help must not advertise removed -disable-pre-scan-ping flag: %s", out.String())
 	}
 }

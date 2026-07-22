@@ -11,19 +11,25 @@
       <header>
         <h1>port-scan-mk3 Architecture (Static Block Flow)</h1>
         <p>CLI orchestration, core package flow, and e2e artifact validation path.</p>
+        <p>As of 2.0.0, <code>port-scan</code> is a three-step pipeline with
+        durable file hand-offs: <code>preping</code> →
+        <code>generate-buckets</code> → <code>scan</code>. <code>scan</code>
+        requires a bucket snapshot via <code>-resume</code> and never pings.</p>
       </header>
 
       <section class="layer">
         <h2>CLI Layer</h2>
         <div class="grid two">
           <article class="node">
-            <h3>CLI</h3>
-            <p><code>port-scan validate</code></p>
-            <p><code>port-scan scan</code></p>
+            <h3>CLI (three-step pipeline)</h3>
+            <p><code>port-scan preping</code> → unreachable CSV</p>
+            <p><code>port-scan generate-buckets</code> → bucket snapshot</p>
+            <p><code>port-scan scan -resume &lt;bucket&gt;</code> → results</p>
+            <p><code>port-scan validate</code> (inputs only)</p>
           </article>
           <article class="node">
             <h3>config</h3>
-            <p>Parse flags and normalize runtime options.</p>
+            <p>Parse per-subcommand flags (<code>ParseFor</code>) and normalize runtime options.</p>
           </article>
         </div>
       </section>

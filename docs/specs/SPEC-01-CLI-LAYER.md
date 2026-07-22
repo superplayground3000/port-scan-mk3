@@ -24,14 +24,22 @@ func runMain(args []string, stdout, stderr io.Writer) int {
 
 ### Command Routing
 
-The CLI uses simple switch-based dispatch:
+The CLI uses simple switch-based dispatch. `port-scan` is a three-step pipeline
+(`preping` -> `generate-buckets` -> `scan`) plus a `validate` helper:
 
 | Input | Command | Handler |
 |-------|---------|---------|
 | `args[0] == "validate"` | Input validation only | `handleValidateCommand()` |
-| `args[0] == "scan"` | Full scan | `handleScanCommand()` |
+| `args[0] == "preping"` | Ping unique IPs, write unreachable CSV | `handlePrepingCommand()` |
+| `args[0] == "generate-buckets"` | Build resume bucket snapshot | `handleGenerateBucketsCommand()` |
+| `args[0] == "scan"` | Pure scan of a bucket snapshot (requires `-resume`) | `handleScanCommand()` |
 | `args[0] == "--help"` or `-h` | Help | `handleHelpCommand()` |
 | otherwise | Error | Exit 2 |
+
+Each pipeline subcommand parses its own flag surface via
+`config.ParseFor(command, args)` — only the flags that subcommand owns are
+registered, so a foreign flag (e.g. a ping flag on `scan`) is an unknown-flag
+error. `validate` still uses `config.Parse(args)`.
 
 ### Exit Code Conventions
 
@@ -65,6 +73,34 @@ func handleValidateCommand(args []string, stdout, stderr io.Writer) int
 3. Output result via `cli.WriteValidation(stdout, cfg.Format, result.Valid, result.Detail)`
 4. Return 0 if valid, 1 if invalid
 
+### handlePrepingCommand()
+
+```go
+func handlePrepingCommand(args []string, stdout, stderr io.Writer) int
+```
+
+**Flow:**
+1. Parse via `config.ParseFor("preping", args)` (rejects scan/bucket flags)
+2. Wrap context with `state.WithSIGINTCancel(ctx)`
+3. Call `scanapp.RunPreping(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`,
+   which writes `unreachable_results-<ts>.csv` and prints its resolved path to
+   stdout for chaining
+4. Map errors to exit codes (parse → 2, `context.Canceled` → 130, else → 1)
+
+### handleGenerateBucketsCommand()
+
+```go
+func handleGenerateBucketsCommand(args []string, stdout, stderr io.Writer) int
+```
+
+**Flow:**
+1. Parse via `config.ParseFor("generate-buckets", args)` (requires `-buckets-out`)
+2. Wrap context with `state.WithSIGINTCancel(ctx)`
+3. Call `scanapp.GenerateBuckets(ctx, cfg, stderr, scanapp.GenerateBucketsOptions{})`;
+   performs no network I/O
+4. Map errors to exit codes (parse / missing `-buckets-out` → 2, cancel → 130,
+   else → 1)
+
 ### handleScanCommand()
 
 ```go
@@ -72,21 +108,21 @@ func handleScanCommand(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse flags via `config.Parse(args)`
-2. Call `runScan(args, stdout, stderr)` 
-3. Map errors to exit codes
+1. Delegate to `runScan(args, stdout, stderr)`
 
 ### runScan() - Internal Implementation
 
 ```go
-func runScan(args []string, stdout, stderr io.Writer) error
+func runScan(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse config via `config.Parse(args)`
+1. Parse config via `config.ParseFor("scan", args)` — **`-resume` is required**
+   and no ping flags are registered
 2. Wrap context with SIGINT handling via `state.WithSIGINTCancel(ctx)`
-3. Call `scanapp.Run(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`
-4. Return error or nil
+3. Build `RunOptions` (pressure fetcher wiring lives only here)
+4. Call `scanapp.Run(ctx, cfg, stdout, stderr, opts)`
+5. Map errors to exit codes
 
 ## 3. Package Dependencies
 

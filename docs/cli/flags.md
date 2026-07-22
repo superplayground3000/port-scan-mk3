@@ -1,130 +1,177 @@
 # CLI Flags Reference
 
-This is the complete CLI flag reference for `port-scan-mk3`, sourced from current parser behavior in:
+This is the complete CLI flag reference for `port-scan-mk3`, sourced from current
+parser behavior in:
 
-- `pkg/config/config.go`
-- `cmd/port-scan/main.go`
+- `pkg/config/parse_for.go` (`ParseFor`, per-subcommand flag registration)
+- `cmd/port-scan/main.go` and `cmd/port-scan/command_handlers.go` (dispatch, usage)
 
 ## Command Scope
 
-- `validate` and `scan` both parse the same flag set.
-- Some flags are only operationally meaningful in `scan` (for example pressure/rate/worker controls).
+`port-scan` is a three-step pipeline plus a `validate` helper. **Each subcommand
+registers only the flags it owns** (`ParseFor(command, args)`); passing a flag
+that a subcommand does not register is an unknown-flag error (exit `2`). This is
+what makes "`scan` never pings" structural rather than cosmetic — `scan` does not
+register `-disable-pre-scan-ping` or `-pre-scan-ping-timeout` at all.
 
-## Complete Flag Table
+| Subcommand | Purpose | Required flags |
+|------------|---------|----------------|
+| `preping` | Ping unique target IPs, write `unreachable_results-<ts>.csv` | `-cidr-file` |
+| `generate-buckets` | Build the resume bucket snapshot from targets − blocklist | `-cidr-file`, `-buckets-out` |
+| `scan` | Pure TCP scan of a bucket snapshot | `-cidr-file`, `-resume` |
+| `validate` | Validate CIDR/port inputs, no scan | `-cidr-file` |
 
-| Flag | Type | Default | Command | Description |
-|------|------|---------|---------|-------------|
-| `-cidr-file` | string | none (required) | `validate`, `scan` | Path to CIDR CSV input file. |
-| `-port-file` | string | optional | `validate`, `scan` | Path to port list file (`<port>/tcp` lines). Required when CIDR input is not rich mode. |
-| `-output` | string | `scan_results.csv` | `validate`, `scan` | Parsed by both `validate` and `scan`. Only `scan` uses it to choose the batch output directory and shared suffix for `scan_results-<suffix>.csv`, `opened_results-<suffix>.csv`, and `unreachable_results-<suffix>.csv`. The output directory also controls the default resume fallback location. |
-| `-timeout` | duration | `100ms` | `validate`, `scan` | TCP dial timeout per probe. This does not control the pre-scan ping; use `-pre-scan-ping-timeout` for that. |
-| `-disable-pre-scan-ping` | bool | `false` | `validate`, `scan` | Disable the default-on pre-scan ping stage. |
-| `-pre-scan-ping-timeout` | duration | `100ms` | `validate`, `scan` | Timeout for each pre-scan ping reachability check. Must be > 0. On Windows an internal fixed startup allowance is added on top of this value for the process wall-clock ceiling so a fast reply is not killed during ping's process launch; the reply-wait itself still uses this value. |
-| `-delay` | duration | `10ms` | `validate`, `scan` | Dispatch delay between tasks. Primarily used by `scan`. |
-| `-bucket-rate` | int | `100` | `validate`, `scan` | Leaky bucket refill rate. Primarily used by `scan`. |
-| `-bucket-capacity` | int | `100` | `validate`, `scan` | Leaky bucket capacity. Primarily used by `scan`. |
-| `-workers` | int | `10` | `validate`, `scan` | Number of scan workers. Primarily used by `scan`. |
-| `-pressure-api` | string | `http://localhost:8080/api/pressure` | `validate`, `scan` | Pressure API endpoint used for pause/resume control. |
-| `-pressure-interval` | duration or integer seconds | `5s` | `validate`, `scan` | Poll interval for pressure API. Accepts duration (for example `200ms`, `5s`) or integer seconds (for example `7`). |
-| `-pressure-use-auth` | bool | `false` | `validate`, `scan` | Use authenticated pressure fetcher with OAuth flow. |
-| `-pressure-auth-url` | string | empty | `validate`, `scan` | OAuth auth endpoint URL. Required when `-pressure-use-auth` is set. |
-| `-pressure-data-url` | string | empty | `validate`, `scan` | Comma-separated list of pressure data endpoint URLs. Required when `-pressure-use-auth` is set. All sources must succeed; the maximum pressure value is used. |
-| `-pressure-client-id` | string | empty | `validate`, `scan` | OAuth client ID. Required when `-pressure-use-auth` is set. |
-| `-pressure-client-secret` | string | empty | `validate`, `scan` | OAuth client secret. Required when `-pressure-use-auth` is set. |
-| `-disable-api` | bool | `false` | `validate`, `scan` | Disable pressure API polling completely. |
-| `-quiet` | bool | `false` | `validate`, `scan` | Suppress console logs, keep only pressure API logs. |
-| `-resume` | string | empty | `validate`, `scan` | Resume state file path. If set, load/save uses this exact path. |
-| `-log-level` | string | `info` | `validate`, `scan` | Runtime log level: `debug`, `info`, `error`. |
-| `-format` | string | `human` | `validate`, `scan` | User-facing output format: `human` or `json`. |
-| `-cidr-ip-col` | string | `ip` | `validate`, `scan` | Case-sensitive CIDR CSV column name used as IP selector source. |
-| `-cidr-ip-cidr-col` | string | `ip_cidr` | `validate`, `scan` | Case-sensitive CIDR CSV column name used as boundary CIDR source. |
+## Per-command flag tables
+
+Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
+(default `ip`), `-cidr-ip-cidr-col` (default `ip_cidr`), `-log-level` (default
+`info`), `-format` (`human`|`json`, default `human`), `-quiet`.
+
+### `port-scan preping`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-cidr-file` | string | required | Path to CIDR/rich CSV input file. |
+| `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
+| `-pre-scan-ping-timeout` | duration | `100ms` | Reply-wait timeout for each ping reachability check. Must be > 0. On Windows an internal fixed startup allowance is added on top of this for the process wall-clock ceiling so a fast reply is not killed during ping launch; the reply-wait itself still uses this value. |
+| `-workers` | int | `10` | Concurrent ping workers. |
+| `-output` | string | `scan_results.csv` | Output anchor path; the directory and shared timestamp suffix for `unreachable_results-<ts>.csv`. |
+| `-progress-interval` | int | `100` | Progress line cadence (count of processed unique IPs); emitted to stderr. |
+| `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
+
+- No `-port-file` (ping is per-IP, ports are irrelevant).
+- No `-disable-pre-scan-ping` — to skip pinging, do not run this step.
+- Prints the resolved `unreachable_results-<ts>.csv` path to **stdout** for chaining;
+  progress lines go to **stderr**.
+
+### `port-scan generate-buckets`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-cidr-file` | string | required | Path to CIDR/rich CSV input file. |
+| `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
+| `-port-file` | string | optional | Port list (`<port>/tcp` lines). Required in basic (non-rich) mode; ignored in rich mode (the per-target port is read from the CSV). |
+| `-unreachable-file` | string | optional | Blocklist CSV (a `preping` output). Its `ip` column is subtracted from the target set. Omit to bucket all targets. |
+| `-buckets-out` | string | **required** | Output path for the bucket snapshot (the resume `Snapshot` JSON). |
+| `-workers` | int | `10` | Parallel per-CIDR-group chunk builders. Output is deterministic (CIDR-sorted) regardless of worker count. |
+| `-progress-interval` | int | `100` | Progress line cadence (count of processed CIDR groups); emitted to stderr. |
+| `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
+
+- Performs **no network I/O**.
+- Always stamps `pre_scan_ping.enabled=true` in the snapshot, so `scan` never pings.
+
+### `port-scan scan`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-cidr-file` | string | required | Rich/basic CSV — the source of truth for target metadata (rebuilt on every run). |
+| `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
+| `-resume` | string | **required** | Bucket snapshot file to scan. Read at start; **updated in place at this path** on interrupt/error. |
+| `-output` | string | `scan_results.csv` | Output anchor; directory and shared suffix for `scan_results-<ts>.csv` and `opened_results-<ts>.csv`. |
+| `-timeout` | duration | `100ms` | TCP dial timeout per probe. |
+| `-delay` | duration | `10ms` | Dispatch delay between tasks. |
+| `-bucket-rate` | int | `100` | Leaky-bucket refill rate. |
+| `-bucket-capacity` | int | `100` | Leaky-bucket capacity. |
+| `-workers` | int | `10` | Number of scan workers. |
+| `-disable-api` | bool | `false` | Disable pressure-API polling completely. |
+| `-pressure-api` | string | `http://localhost:8080/api/pressure` | Pressure API endpoint. |
+| `-pressure-interval` | duration or int seconds | `5s` | Poll interval (duration like `200ms`/`5s`, or integer seconds). |
+| `-pressure-use-auth` | bool | `false` | Use the authenticated (OAuth) pressure fetcher. |
+| `-pressure-auth-url` | string | empty | OAuth auth endpoint; required with `-pressure-use-auth`. |
+| `-pressure-data-url` | string | empty | Comma-separated pressure data endpoints; required with `-pressure-use-auth`. All sources must succeed; the max value is used. |
+| `-pressure-client-id` / `-pressure-client-secret` | string | empty | OAuth credentials; required with `-pressure-use-auth`. |
+| `-port-file` | string | optional | Fallback only; normally ignored because bucket chunks carry ports. |
+| `-progress-interval` | int | `100` | Progress line cadence. |
+| `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
+
+- **No ping flags.** `-disable-pre-scan-ping` / `-pre-scan-ping-timeout` are not
+  registered; passing either is an unknown-flag error.
+
+### `port-scan validate`
+
+`-cidr-file` (required) · `-port-file` (optional) · `-cidr-ip-col` ·
+`-cidr-ip-cidr-col` · `-format` · `-log-level` · `-quiet`. Parses and validates
+inputs only; never scans or pings.
 
 ## Interaction Rules and Behavior Notes
 
-- `-cidr-file` is required.
-- `-port-file` is required only when CIDR input is not rich mode.
+- `-cidr-file` is required for every subcommand.
 - `-format` only accepts `human` or `json`.
-- Pre-scan ping is enabled by default.
-- `-disable-pre-scan-ping=true` skips pre-scan ping and preserves the current direct TCP scan flow.
-- Pre-scan ping timeout defaults to `100ms` and is configurable via `-pre-scan-ping-timeout`.
-- `-timeout` only applies to TCP dial probes.
-- `-pressure-interval` must be positive; invalid format or non-positive values are rejected.
-- When `-pressure-use-auth` is set, all four auth flags are required:
-  - `-pressure-auth-url`
-  - `-pressure-data-url` (one or more comma-separated URLs; whitespace around commas is trimmed)
-  - `-pressure-client-id`
-  - `-pressure-client-secret`
 - `-cidr-ip-col` and `-cidr-ip-cidr-col` must be non-empty after trimming.
-- Resume write path behavior:
-  - If `-resume` is set, state is read from and written back to that same path.
-  - If `-resume` is not set, fallback save path is `<output-dir>/resume_state.json`.
-- Batch output naming uses a shared timestamp suffix across `scan_results`, `opened_results`, and `unreachable_results`; same-second collisions append `-n` to all three filenames.
+- `preping` requires `-pre-scan-ping-timeout > 0`.
+- `generate-buckets` requires `-buckets-out`; `-unreachable-file` is optional.
+- `scan` requires `-resume`; `-pressure-interval` must be positive; when
+  `-pressure-use-auth` is set, all four auth flags are required
+  (`-pressure-auth-url`, `-pressure-data-url`, `-pressure-client-id`,
+  `-pressure-client-secret`).
+- Batch output naming uses a shared timestamp suffix; same-second collisions
+  append `-n`. `preping` writes `unreachable_results-<ts>.csv`; `scan` writes
+  `scan_results-<ts>.csv` and `opened_results-<ts>.csv`.
+- The `-unreachable-file` name is timestamped and non-deterministic — capture
+  `preping`'s printed stdout path when chaining rather than hard-coding it.
 
 ## Common Mistakes
 
-1. Using wrong CIDR column casing
-- Problem: CSV has `source_ip` but command uses `-cidr-ip-col Source_IP`.
-- Fix: Use exact case-sensitive column names.
-
-2. Invalid `-pressure-interval`
-- Problem: passing `0`, `-1s`, or malformed durations.
-- Fix: use positive values such as `200ms`, `5s`, or integer `7`.
-
-3. Assuming fixed output filename
-- Problem: expecting a single `scan_results.csv` file after each run.
-- Fix: batch output is timestamped and shared across `scan_results-YYYYMMDDTHHMMSSZ[-n].csv`, `opened_results-YYYYMMDDTHHMMSSZ[-n].csv`, and `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv`.
-
-4. Forgetting explicit resume pinning
-- Problem: restart run but cannot find expected resume file.
-- Fix: pass `-resume <path>` to keep load/save path explicit.
+1. **Running `scan` without `-resume`** — `scan` no longer builds buckets. Run
+   `generate-buckets` first and pass its `-buckets-out` file as `-resume`.
+2. **Passing a ping flag to `scan`** — `-disable-pre-scan-ping` /
+   `-pre-scan-ping-timeout` are `preping`-only; on `scan` they are unknown flags
+   (exit `2`). Skip pinging by skipping the `preping` step.
+3. **Hard-coding the unreachable filename** — it is timestamped; capture the path
+   `preping` prints to stdout.
+4. **Wrong CIDR column casing** — column names are case-sensitive; match the CSV
+   header exactly.
+5. **Omitting `-port-file` in basic mode `generate-buckets`** — required unless
+   the input is rich CSV.
 
 ## Examples
 
-### Quiet Mode
-
-Suppress console output while keeping pressure API logs visible:
+### Full three-step pipeline
 
 ```bash
-port-scan scan -cidr-file targets.csv -quiet
+# 1. Ping targets; capture the printed unreachable CSV path
+UNREACHABLE=$(go run ./cmd/port-scan preping \
+  -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -output e2e/out/scan_results.csv)
+
+# 2. Build the bucket snapshot (targets minus the blocklist)
+go run ./cmd/port-scan generate-buckets \
+  -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -port-file e2e/inputs/ports.csv \
+  -unreachable-file "$UNREACHABLE" \
+  -buckets-out e2e/out/buckets.json
+
+# 3. Scan the buckets
+go run ./cmd/port-scan scan \
+  -cidr-file e2e/inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
+  -resume e2e/out/buckets.json \
+  -port-file e2e/inputs/ports.csv \
+  -output e2e/out/scan_results.csv
 ```
 
-### Authenticated Pressure API (single source)
+### Skip pinging (bucket all targets)
 
 ```bash
-port-scan scan -cidr-file targets.csv \
-  -pressure-use-auth \
-  -pressure-auth-url "https://auth.example.com/oauth/token" \
-  -pressure-data-url "https://api.example.com/pressure" \
-  -pressure-client-id "your-client-id" \
-  -pressure-client-secret "your-client-secret"
+go run ./cmd/port-scan generate-buckets \
+  -cidr-file rich.csv -buckets-out out/buckets.json     # no -unreachable-file
+go run ./cmd/port-scan scan \
+  -cidr-file rich.csv -resume out/buckets.json -output out/
 ```
 
-### Authenticated Pressure API (multiple sources)
-
-All sources share the same OAuth credentials. The scanner fans out concurrently to each URL and uses the maximum pressure value. Any source error fails the poll cycle.
+### Authenticated Pressure API (scan only)
 
 ```bash
-port-scan scan -cidr-file targets.csv \
+go run ./cmd/port-scan scan \
+  -cidr-file rich.csv -resume out/buckets.json \
   -pressure-use-auth \
   -pressure-auth-url "https://auth.example.com/oauth/token" \
-  -pressure-data-url "https://api1.example.com/pressure,https://api2.example.com/pressure,https://api3.example.com/pressure" \
-  -pressure-client-id "your-client-id" \
-  -pressure-client-secret "your-client-secret"
-```
-
-### Quiet Mode with Authenticated Pressure API
-
-Suppress console logs while using authenticated pressure API:
-
-```bash
-port-scan scan -cidr-file targets.csv \
-  -quiet \
-  -pressure-use-auth \
-  -pressure-auth-url "https://auth.example.com/oauth/token" \
-  -pressure-data-url "https://api.example.com/pressure" \
+  -pressure-data-url "https://api1.example.com/pressure,https://api2.example.com/pressure" \
   -pressure-client-id "your-client-id" \
   -pressure-client-secret "your-client-secret"
 ```
 
 ---
-**Revised**: 2026-04-13 | **Author**: docs-team
+**Revised**: 2026-07-22 | **Author**: docs-team

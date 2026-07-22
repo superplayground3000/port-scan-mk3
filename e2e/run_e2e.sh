@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Isolated Docker e2e for the three-step pipeline (constitution IV/V):
+#   1. preping           — ping unique targets, write unreachable_results-<ts>.csv
+#   2. generate-buckets  — subtract the unreachable blocklist, write a resume snapshot
+#   3. scan -resume      — scan the snapshot's buckets (never pings; no checker)
+# All steps run inside the scanner container against mock-only services on an
+# isolated bridge network. No real external host is ever contacted.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$ROOT/e2e/out"
 INPUT_DIR="$ROOT/e2e/inputs"
@@ -19,6 +26,8 @@ fi
 
 rm -f "$OUT_DIR"/scan_results-*.csv \
   "$OUT_DIR"/opened_results-*.csv \
+  "$OUT_DIR"/unreachable_results-*.csv \
+  "$OUT_DIR"/buckets_*.json \
   "$OUT_DIR/report.html" \
   "$OUT_DIR/report.txt" \
   "$OUT_DIR"/resume_state*.json \
@@ -63,13 +72,59 @@ if [[ "$OPEN_READY" -ne 1 ]]; then
   exit 1
 fi
 
-run_scan() {
-  docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan "$@"
-}
+# Each pipeline step is a fresh scanner container invocation. -w /out makes
+# relative output paths resolve into the bind-mounted results directory.
+run_preping()          { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner preping "$@"; }
+run_generate_buckets() { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner generate-buckets "$@"; }
+run_scan()             { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan "$@"; }
 
+# ---------------------------------------------------------------------------
+# Step 1 — preping: ping the two mock targets, write unreachable_results-<ts>.csv.
+# Both targets are live containers, so both answer ICMP and the blocklist is
+# empty; the step still exercises the real ping path and the durable CSV writer.
+# ---------------------------------------------------------------------------
+run_preping \
+  -cidr-file /inputs/cidr_normal.csv \
+  -cidr-ip-col source_ip \
+  -cidr-ip-cidr-col source_cidr \
+  -output /out/scan_results.csv \
+  -pre-scan-ping-timeout 1s \
+  -workers 2 \
+  -log-level error
+
+UNREACHABLE_HOST="$(ls "$OUT_DIR"/unreachable_results-*.csv 2>/dev/null | sort | tail -n1 || true)"
+if [[ -z "${UNREACHABLE_HOST}" ]]; then
+  echo "e2e assertion failed: preping did not write unreachable_results-*.csv" >&2
+  exit 1
+fi
+UNREACHABLE_CONTAINER="/out/$(basename "$UNREACHABLE_HOST")"
+
+# ---------------------------------------------------------------------------
+# Step 2 — generate-buckets: build the resume snapshot over targets minus the
+# preping blocklist. No network I/O; the snapshot is the durable hand-off to scan.
+# ---------------------------------------------------------------------------
+run_generate_buckets \
+  -cidr-file /inputs/cidr_normal.csv \
+  -port-file /inputs/ports.csv \
+  -cidr-ip-col source_ip \
+  -cidr-ip-cidr-col source_cidr \
+  -unreachable-file "$UNREACHABLE_CONTAINER" \
+  -buckets-out /out/buckets_normal.json \
+  -log-level error
+
+if [[ ! -f "$OUT_DIR/buckets_normal.json" ]]; then
+  echo "e2e assertion failed: generate-buckets did not write buckets_normal.json" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3 — scan: consume the snapshot via -resume. Scan never pings and builds
+# no reachability checker; targets come straight from the buckets.
+# ---------------------------------------------------------------------------
 run_scan \
   -cidr-file /inputs/cidr_normal.csv \
   -port-file /inputs/ports.csv \
+  -resume /out/buckets_normal.json \
   -output /out/scan_results.csv \
   -cidr-ip-col source_ip \
   -cidr-ip-cidr-col source_cidr \
@@ -114,22 +169,40 @@ if [[ $(( ${CLOSED_COUNT:-0} + ${TIMEOUT_COUNT:-0} )) -lt 1 ]]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Pressure-control failure handling. Under the split pipeline, determinism comes
+# structurally: generate-buckets with NO -unreachable-file turns every selector
+# IP into a TCP task (scan never pings), paced at -bucket-rate 1 (~1/s), so the
+# scan reliably outlasts the pressure fail-fast window. scan persists progress
+# back into its -resume snapshot (resumePath == cfg.Resume), so a non-zero exit
+# with the snapshot still present proves the scan is resumable after the abort.
+# ---------------------------------------------------------------------------
 run_expected_failure() {
   local scenario="$1"
   local pressure_api="$2"
   local pressure_interval="$3"
 
-  rm -f "$OUT_DIR/resume_state.json"
+  local bucket="/out/resume_state_${scenario}.json"
+  rm -f "$OUT_DIR/resume_state_${scenario}.json"
+
+  run_generate_buckets \
+    -cidr-file /inputs/cidr_fail.csv \
+    -port-file /inputs/ports.csv \
+    -cidr-ip-col source_ip \
+    -cidr-ip-cidr-col source_cidr \
+    -buckets-out "$bucket" \
+    -log-level error
+
+  if [[ ! -f "$OUT_DIR/resume_state_${scenario}.json" ]]; then
+    echo "e2e assertion failed: scenario ${scenario} could not build its bucket snapshot" >&2
+    exit 1
+  fi
+
   set +e
-  # -disable-pre-scan-ping makes the run duration deterministic: every selector
-  # IP becomes a TCP task paced at -bucket-rate 1 (~1/s), so the scan reliably
-  # outlasts the pressure fail-fast window (3 failures x ~2s client timeout).
-  # Otherwise the duration is dominated by flaky ARP timing of unreachable IPs,
-  # and a small change in target count (e.g. broadcast exclusion) can tip the
-  # scan below the fail-fast threshold and make it exit 0.
   run_scan \
     -cidr-file /inputs/cidr_fail.csv \
     -port-file /inputs/ports.csv \
+    -resume "$bucket" \
     -output "/out/scan_results_${scenario}.csv" \
     -cidr-ip-col source_ip \
     -cidr-ip-cidr-col source_cidr \
@@ -140,7 +213,6 @@ run_expected_failure() {
     -bucket-capacity 1 \
     -delay 0ms \
     -timeout 200ms \
-    -disable-pre-scan-ping \
     -log-level error \
     >"$OUT_DIR/scenario_${scenario}.log" 2>&1
   local code=$?
@@ -150,11 +222,10 @@ run_expected_failure() {
     echo "e2e assertion failed: scenario ${scenario} should fail but exited 0" >&2
     exit 1
   fi
-  if [[ ! -f "$OUT_DIR/resume_state.json" ]]; then
-    echo "e2e assertion failed: scenario ${scenario} missing resume_state.json" >&2
+  if [[ ! -f "$OUT_DIR/resume_state_${scenario}.json" ]]; then
+    echo "e2e assertion failed: scenario ${scenario} missing resumable snapshot after abort" >&2
     exit 1
   fi
-  mv "$OUT_DIR/resume_state.json" "$OUT_DIR/resume_state_${scenario}.json"
 }
 
 run_expected_failure "api_5xx" "http://pressure-api-5xx:8080/api/pressure" "200ms"

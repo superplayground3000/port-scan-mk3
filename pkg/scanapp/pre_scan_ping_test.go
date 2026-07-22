@@ -10,156 +10,16 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
-	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
-func TestPreScanPing_Run_DedupesCheckerCallsAcrossDuplicateIPs(t *testing.T) {
-	checker := &fakePreScanChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.1": {IP: "10.0.0.1", Reachable: false, FailureText: "timeout"},
-		},
-	}
-
-	outcome, err := runPreScanPing(context.Background(), runInputs{
-		cidrRecords: []input.CIDRRecord{
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.1/32"), FabName: "fab-a", CIDRName: "cidr-a"},
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.1/32"), FabName: "fab-b", CIDRName: "cidr-b"},
-		},
-		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
-	}, config.Config{
-		PreScanPingTimeout: 300 * time.Millisecond,
-		Workers:            4,
-	}, checker, state.PreScanPingState{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(checker.calls()) != 1 || checker.calls()[0] != "10.0.0.1" {
-		t.Fatalf("expected single checker call for duplicated ip, got %v", checker.calls())
-	}
-	if !outcome.State.Enabled {
-		t.Fatalf("expected pre-scan state enabled, got %+v", outcome.State)
-	}
-	if outcome.State.TimeoutMS != 300 {
-		t.Fatalf("unexpected timeout ms: %+v", outcome.State)
-	}
-	if got := checker.timeoutFor("10.0.0.1"); got != 300*time.Millisecond {
-		t.Fatalf("expected configured pre-scan timeout, got %v", got)
-	}
-	if len(outcome.UnreachableIPv4U32) != 1 || outcome.UnreachableIPv4U32[0] != ipv4ToUint32("10.0.0.1") {
-		t.Fatalf("unexpected unreachable set: %+v", outcome.UnreachableIPv4U32)
-	}
-	if len(outcome.UnreachableRows) != 2 {
-		t.Fatalf("expected two unreachable rows for two scan contexts, got %+v", outcome.UnreachableRows)
-	}
-}
-
-func TestPreScanPing_Run_AggregatesUnreachableRowsPerContextWithoutPortExpansion(t *testing.T) {
-	checker := &fakePreScanChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.2": {IP: "10.0.0.2", Reachable: false, FailureText: "timeout"},
-		},
-	}
-
-	outcome, err := runPreScanPing(context.Background(), runInputs{
-		cidrRecords: []input.CIDRRecord{
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.2/32"), FabName: "fab-a", CIDRName: "cidr-a"},
-		},
-		portSpecs: []input.PortSpec{
-			{Number: 80, Proto: "tcp", Raw: "80/tcp"},
-			{Number: 443, Proto: "tcp", Raw: "443/tcp"},
-		},
-	}, config.Config{
-		PreScanPingTimeout: 100 * time.Millisecond,
-		Workers:            2,
-	}, checker, state.PreScanPingState{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(outcome.UnreachableRows) != 1 {
-		t.Fatalf("expected one unreachable row for one input context, got %+v", outcome.UnreachableRows)
-	}
-	got := outcome.UnreachableRows[0]
-	if got.IP != "10.0.0.2" || got.IPCidr != "10.0.0.0/24" {
-		t.Fatalf("unexpected unreachable row: %+v", got)
-	}
-	if got.Status != "unreachable" || got.Reason != "ping failed within 100ms" {
-		t.Fatalf("unexpected unreachable row status/reason: %+v", got)
-	}
-}
-
-func TestPreScanPing_Run_ReusesSavedUnreachableStateWithoutCallingChecker(t *testing.T) {
-	checker := &fakePreScanChecker{}
-	saved := state.PreScanPingState{
-		Enabled:            true,
-		TimeoutMS:          500,
-		UnreachableIPv4U32: []uint32{ipv4ToUint32("10.0.0.3")},
-	}
-
-	outcome, err := runPreScanPing(context.Background(), runInputs{
-		cidrRecords: []input.CIDRRecord{
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.3/32"), FabName: "fab-a", CIDRName: "cidr-a"},
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.4/32"), FabName: "fab-b", CIDRName: "cidr-b"},
-		},
-		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
-	}, config.Config{
-		PreScanPingTimeout: 100 * time.Millisecond,
-		Workers:            4,
-	}, checker, saved)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(checker.calls()) != 0 {
-		t.Fatalf("expected saved state reuse to skip checker, got calls %v", checker.calls())
-	}
-	if len(outcome.UnreachableRows) != 1 || outcome.UnreachableRows[0].IP != "10.0.0.3" {
-		t.Fatalf("unexpected unreachable rows from saved state: %+v", outcome.UnreachableRows)
-	}
-	if outcome.State.TimeoutMS != 100 || !outcome.State.Enabled {
-		t.Fatalf("expected saved state to be reused, got %+v", outcome.State)
-	}
-}
-
-func TestPreScanPing_Run_WithSavedStateAndCanceledContext_Aborts(t *testing.T) {
-	checker := &fakePreScanChecker{}
-	saved := state.PreScanPingState{
-		Enabled:            true,
-		TimeoutMS:          100,
-		UnreachableIPv4U32: []uint32{ipv4ToUint32("10.0.0.3")},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	outcome, err := runPreScanPing(ctx, runInputs{
-		cidrRecords: []input.CIDRRecord{
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.3/32"), FabName: "fab-a", CIDRName: "cidr-a"},
-		},
-		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
-	}, config.Config{
-		PreScanPingTimeout: 100 * time.Millisecond,
-		Workers:            1,
-	}, checker, saved)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected canceled context error, got %v", err)
-	}
-	if len(checker.calls()) != 0 {
-		t.Fatalf("expected saved-state cancel to skip checker, got %v", checker.calls())
-	}
-	if outcome.State.Enabled || len(outcome.UnreachableIPv4U32) != 0 || len(outcome.UnreachableRows) != 0 {
-		t.Fatalf("expected empty outcome on canceled saved-state pre-scan, got %+v", outcome)
-	}
-}
-
-func TestPreScanPing_Run_RichRowsAggregateToSingleUnreachableRowWithDistinctMergedMetadata(t *testing.T) {
-	checker := &fakePreScanChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.9": {IP: "10.0.0.9", Reachable: false, FailureText: "timeout"},
-		},
-	}
-
-	outcome, err := runPreScanPing(context.Background(), runInputs{
+// TestCollectUnreachableRows_RichRowsAggregateToSingleRowWithDistinctMergedMetadata
+// exercises the live rich aggregation path of collectUnreachableRows (used by
+// RunPreping): two rich records for the same dst IP but different ports/metadata
+// collapse to one unreachable row whose metadata columns are pipe-merged. This
+// covers richUnreachableRowKey + mergeUnreachableRecord, which only the rich
+// branch reaches.
+func TestCollectUnreachableRows_RichRowsAggregateToSingleRowWithDistinctMergedMetadata(t *testing.T) {
+	inputs := runInputs{
 		cidrRecords: []input.CIDRRecord{
 			{
 				IsRich:            true,
@@ -194,23 +54,28 @@ func TestPreScanPing_Run_RichRowsAggregateToSingleUnreachableRowWithDistinctMerg
 				SrcNetworkSegment: "192.168.2.0/24",
 			},
 		},
-	}, config.Config{
-		PreScanPingTimeout: 100 * time.Millisecond,
-		Workers:            2,
-	}, checker, state.PreScanPingState{})
+	}
+
+	// Marking 10.0.0.9 unreachable makes the predicate return false for it, so
+	// collectUnreachableRows emits the (merged) row for that target.
+	rows, err := collectUnreachableRows(
+		inputs,
+		reachablePredicate([]uint32{ipv4ToUint32("10.0.0.9")}),
+		"ping failed within 100ms",
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(outcome.UnreachableRows) != 1 {
-		t.Fatalf("expected single aggregated rich unreachable row, got %+v", outcome.UnreachableRows)
+	if len(rows) != 1 {
+		t.Fatalf("expected single aggregated rich unreachable row, got %+v", rows)
 	}
-	got := outcome.UnreachableRows[0]
+	got := rows[0]
 	if got.IP != "10.0.0.9" || got.IPCidr != "10.0.0.0/24" {
 		t.Fatalf("unexpected aggregated row identity: %+v", got)
 	}
-	if got.Reason != "ping failed within 100ms" {
-		t.Fatalf("unexpected aggregated row reason: %+v", got)
+	if got.Status != "unreachable" || got.Reason != "ping failed within 100ms" {
+		t.Fatalf("unexpected aggregated row status/reason: %+v", got)
 	}
 	if got.FabName != "fab-a|fab-b" {
 		t.Fatalf("unexpected merged fab_name: %s", got.FabName)
@@ -238,38 +103,17 @@ func TestPreScanPing_Run_RichRowsAggregateToSingleUnreachableRowWithDistinctMerg
 	}
 }
 
-func TestPreScanPing_Run_FailsOnToolLevelCheckerError(t *testing.T) {
+// TestRunReachabilityChecksWithProgress_FailsFastOnFatalCheckerError drives the
+// live worker-pool entry (the one RunPreping uses) and asserts a tool-level
+// CheckDetailed error is fatal and stops the pool after the first IP.
+func TestRunReachabilityChecksWithProgress_FailsFastOnFatalCheckerError(t *testing.T) {
 	checker := &fakePreScanChecker{
 		detailedErrs: map[string]error{
 			"10.0.0.1": errors.New("ping binary missing"),
 		},
 	}
 
-	outcome, err := runPreScanPing(context.Background(), runInputs{
-		cidrRecords: []input.CIDRRecord{
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.1/32"), FabName: "fab-a", CIDRName: "cidr-a"},
-		},
-		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
-	}, config.Config{
-		PreScanPingTimeout: 250 * time.Millisecond,
-		Workers:            1,
-	}, checker, state.PreScanPingState{})
-	if err == nil {
-		t.Fatal("expected tool-level checker failure")
-	}
-	if outcome.State.Enabled || len(outcome.UnreachableIPv4U32) != 0 || len(outcome.UnreachableRows) != 0 {
-		t.Fatalf("expected empty outcome on fatal checker failure, got %+v", outcome)
-	}
-}
-
-func TestRunReachabilityChecks_FailsFastOnFatalCheckerError(t *testing.T) {
-	checker := &fakePreScanChecker{
-		detailedErrs: map[string]error{
-			"10.0.0.1": errors.New("ping binary missing"),
-		},
-	}
-
-	_, err := runReachabilityChecks(context.Background(), checker, []string{"10.0.0.1", "10.0.0.2"}, 1, 100*time.Millisecond)
+	_, err := runReachabilityChecksWithProgress(context.Background(), checker, []string{"10.0.0.1", "10.0.0.2"}, 1, 100*time.Millisecond, nil)
 	if err == nil {
 		t.Fatal("expected fatal checker error")
 	}
@@ -435,37 +279,6 @@ func TestLoadOrBuildChunksWithPredicate_SkipsUnreachableTargetsFromChunkTotals(t
 	}
 }
 
-func TestPreScanPing_Run_UsesConfiguredTimeoutForCheckStateAndReason(t *testing.T) {
-	checker := &fakePreScanChecker{
-		results: map[string]ReachabilityResult{
-			"10.0.0.7": {IP: "10.0.0.7", Reachable: false, FailureText: "timeout"},
-		},
-	}
-
-	outcome, err := runPreScanPing(context.Background(), runInputs{
-		cidrRecords: []input.CIDRRecord{
-			{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.7/32"), FabName: "fab-a", CIDRName: "cidr-a"},
-		},
-		portSpecs: []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}},
-	}, config.Config{
-		PreScanPingTimeout: 300 * time.Millisecond,
-		Workers:            1,
-	}, checker, state.PreScanPingState{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got := checker.timeoutFor("10.0.0.7"); got != 300*time.Millisecond {
-		t.Fatalf("expected configured 300ms timeout passed to checker, got %v", got)
-	}
-	if outcome.State.TimeoutMS != 300 {
-		t.Fatalf("expected state timeout 300ms, got %+v", outcome.State)
-	}
-	if len(outcome.UnreachableRows) != 1 || outcome.UnreachableRows[0].Reason != "ping failed within 300ms" {
-		t.Fatalf("expected reason to reflect configured timeout, got %+v", outcome.UnreachableRows)
-	}
-}
-
 type fakePreScanChecker struct {
 	mu           sync.Mutex
 	called       []string
@@ -500,13 +313,6 @@ func (f *fakePreScanChecker) calls() []string {
 	out := append([]string(nil), f.called...)
 	sort.Strings(out)
 	return out
-}
-
-func (f *fakePreScanChecker) timeoutFor(ip string) time.Duration {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	return f.timeouts[ip]
 }
 
 func (f *fakePreScanChecker) recordLocked(ip string, timeout time.Duration) ReachabilityResult {

@@ -1,8 +1,14 @@
 # port-scan Design Document
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-05-03
+**Tool**: `cmd/port-scan` | **Revised**: 2026-07-22
 
 ## Architecture Overview
+
+As of **2.0.0**, `port-scan` is a three-step pipeline. Each subcommand parses
+its own flag surface (`config.ParseFor`) and calls a dedicated `pkg/scanapp`
+entry point. The two expensive pre-phases (pinging, chunk build) that used to run
+inline inside `scanapp.Run` are now their own commands with durable file
+hand-offs; `scan` is a pure scanner that consumes a bucket snapshot.
 
 ```
 CLI entry point (main.go)
@@ -10,34 +16,37 @@ CLI entry point (main.go)
     ├── handleValidateCommand
     │       config.Parse() → validate.Inputs() → cli.WriteValidation()
     │
-    └── handleScanCommand
-            config.Parse()
+    ├── handlePrepingCommand
+    │       ParseFor("preping") → scanapp.RunPreping()
+    │           ├── collect unique IPs → reachability checker (platform ping)
+    │           ├── progress (stderr) via pkg/progress
+    │           └── writer.UnreachableWriter → unreachable_results-<ts>.csv (path → stdout)
+    │
+    ├── handleGenerateBucketsCommand
+    │       ParseFor("generate-buckets") → scanapp.GenerateBuckets()
+    │           ├── load records + ports; parse -unreachable-file blocklist
+    │           ├── subtract blocklist; group per CIDR; build chunks (parallel over -workers)
+    │           ├── stamp pre_scan_ping.enabled=true
+    │           └── state.SaveSnapshot(-buckets-out)   (== resume Snapshot JSON)
+    │
+    └── handleScanCommand → runScan
+            ParseFor("scan")   (-resume REQUIRED; no ping flags)
                    │
                    ▼
-            scanapp.Run()
+            scanapp.Run()   (loads the bucket snapshot; NO reachability checker)
                    │
-                   ├── Load CIDR records (basic or rich mode) via input.LoadCIDRsWithColumns
-                   ├── Load port specs via input.LoadPorts (basic mode only)
+                   ├── reachable predicate from snapshot blocklist (never pings)
                    ├── build group runtimes with leaky-bucket rate control
                    ├── start pressure API poller (unless -disable-api)
-                   ├── start keyboard-controlled pause loop
                    ├── start scan executor (N workers, net.Dialer)
-                   │       │
                    │       └── net.DialTimeout → scan result
-                   │
-                   ├── task dispatcher (orchestrates flow control via speedctrl.Controller)
-                   │       │
-                   │       └── dispatches (IP, port) scanTask to worker queue
-                   │
+                   ├── task dispatcher (flow control via speedctrl.Controller)
                    ├── result writer goroutine
-                   │       │
                    │       ├── writer.CSVWriter → scan_results-<ts>.csv (all results)
                    │       └── writer.OpenOnlyWriter → opened_results-<ts>.csv (open only)
-                   │
                    ├── dashboard runtime (TTY only)
-                   │
                    └── resume state persister (on SIGINT or error)
-                           └── resume_state.json
+                           └── updates the -resume bucket snapshot in place
 ```
 
 ## Pipeline Stages

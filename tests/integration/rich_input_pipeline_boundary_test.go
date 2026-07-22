@@ -51,10 +51,26 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 		t.Fatal(err)
 	}
 
+	// Scan is now a pure scanner that requires a bucket snapshot via -resume
+	// (T5). Build the snapshot first from the same rich records, then scan it.
+	bucketsOut := filepath.Join(tmp, "buckets.json")
+	genCfg := config.Config{
+		CIDRFile:      cidrFile,
+		PortFile:      portFile,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+		Workers:       1,
+		BucketsOut:    bucketsOut,
+	}
+	if err := scanapp.GenerateBuckets(context.Background(), genCfg, &bytes.Buffer{}, scanapp.GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("generate buckets: %v", err)
+	}
+
 	cfg := config.Config{
 		CIDRFile:           cidrFile,
 		PortFile:           portFile,
 		Output:             outFile,
+		Resume:             bucketsOut,
 		Timeout:            100 * time.Millisecond,
 		PreScanPingTimeout: 100 * time.Millisecond,
 		Delay:              0,
