@@ -70,7 +70,21 @@ type Config struct {
 	CIDRIPCol string
 	// CIDRIPCidrCol is the column name for the boundary CIDR in the CIDR CSV.
 	CIDRIPCidrCol string
+	// BucketsOut is the output path for the generated bucket snapshot
+	// (generate-buckets command; required there).
+	BucketsOut string
+	// UnreachableFile is the optional blocklist CSV consumed by generate-buckets
+	// to subtract unreachable IPs from the target set.
+	UnreachableFile string
+	// ProgressInterval is the count-based cadence for stderr progress lines.
+	// It matches the scanner's progressStep semantics and defaults to 100.
+	ProgressInterval int
 }
+
+// defaultProgressInterval is the count-based progress cadence carried from the
+// scanner's progressStep fallback (pkg/scanapp/scan.go). Kept in one place so
+// preping, generate-buckets, and scan share the same default.
+const defaultProgressInterval = 100
 
 // Parse processes CLI arguments and returns a validated Config. It follows the
 // convention that a non-nil error means the caller should exit without running
