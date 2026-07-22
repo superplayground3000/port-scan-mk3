@@ -140,6 +140,17 @@ func collectUniquePreScanIPs(inputs runInputs) ([]string, error) {
 }
 
 func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips []string, workers int, timeout time.Duration) ([]uint32, error) {
+	return runReachabilityChecksWithProgress(ctx, checker, ips, workers, timeout, nil)
+}
+
+// runReachabilityChecksWithProgress is the worker-pool implementation behind
+// runReachabilityChecks. onChecked, when non-nil, is invoked exactly once per IP
+// after its reachability check returns (reachable, unreachable, or errored), so
+// callers can tick a progress reporter per checked IP. It is called from worker
+// goroutines, so onChecked must be safe for concurrent use (progress.Reporter
+// is). Passing nil reproduces the original runReachabilityChecks behavior byte
+// for byte, keeping existing callers (runPreScanPing) unchanged.
+func runReachabilityChecksWithProgress(ctx context.Context, checker ReachabilityChecker, ips []string, workers int, timeout time.Duration, onChecked func()) ([]uint32, error) {
 	if len(ips) == 0 {
 		return nil, nil
 	}
@@ -180,6 +191,9 @@ func runReachabilityChecks(ctx context.Context, checker ReachabilityChecker, ips
 					}
 
 					result, err := checkReachability(runCtx, checker, ip, timeout)
+					if onChecked != nil {
+						onChecked()
+					}
 					if err != nil {
 						select {
 						case results <- workerResult{err: err}:
