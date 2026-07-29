@@ -62,37 +62,53 @@ benchmark now linear.
 
 ---
 
-## Phase 2 — Expand only pending segments (fixes A, rich-aware)
+## Phase 2 — Expand only the pending work (fixes A, rich-aware)
 
-Removes whole-CSV re-expansion; makes resume O(remaining work). Rich groups span
-multiple rows, so this is segment-scoped, not row-scoped.
+Two fixes inside `buildRuntimeWithPredicate` (`chunk_lifecycle.go:110-177`); see
+`design.md §3.2`. (a) skip target expansion for completed chunks (keep a
+lightweight runtime for snapshot integrity); (b) for incomplete chunks, filter
+records to their group keys before expanding. Fresh (non-resume) scans are
+unaffected — all chunks incomplete, all keys present, both fixes no-op.
 
 - **RED (differential golden):** `chunk_lifecycle_test.go` — for the rich-shape
   matrix in `design.md §3.4` (one big `PRECHECK_ALLOW_ALL`; many small
   `MATCH_POLICY_ACCEPT`; one segment from many rows with key de-dup + metadata
-  merge; mixed reachable/unreachable; mid-`next_index`; legacy `[...]` array; plus
-  a basic fixture), assert the **per-segment** generator yields the exact
-  `[]scanTarget` (ip, port, meta, order) of the current whole-input
+  merge; mixed reachable/unreachable; mid-`next_index`; legacy `[...]` array; basic
+  fixture) with **all chunks incomplete**, assert the new build yields the exact
+  `[]*chunkRuntime` targets (ip, port, meta, order) of the pre-refactor
   `buildRuntimeWithPredicate`. Write first; keep green through the refactor.
-- **RED (guard):** a fixture where two different segments produce the same
-  execution key; assert a loud "resume input is not segment-disjoint; start a fresh
-  scan" error (not silent duplication / `total_count` mismatch).
+- **RED (completed-chunk handling):**
+  - a snapshot mixing completed + incomplete chunks: assert completed chunks are
+    NOT expanded (spy on `ExpandIPSelectors`, or make the completed chunk's CIDR
+    absent from the CSV and assert no error), that they ARE preserved verbatim in
+    the re-saved snapshot (`collectChunkStates`/`persistResumeSnapshot`), and that
+    dispatch enqueues only the incomplete work.
+  - assert the intentional behavior change: a **completed** chunk whose CIDR was
+    removed from the CSV resumes without error (was an error pre-Phase-2).
+- **RED (divergence guard):** a fixture where a filtered-out segment first-claimed
+  an execution key an incomplete segment also produces; assert the retained
+  `total_count` invariant check (`chunk_lifecycle.go:158`) fires the loud "resume
+  state incompatible" error (no silent divergence). Do NOT add an expensive
+  all-keys cross-segment scan — that would re-expand everything.
 - **Fix:**
-  - Build `segmentRows map[segment][]input.CIDRRecord` in one O(rows) pass
-    (`richCIDRKey`), **no expansion**; also detect the disjointness violation here.
-  - Drive the plan from `snapshot.Chunks`: per pending segment, expand + filter +
-    merge **only that segment's rows** (Phase 1's builder), attach ports, honor
-    `NextIndex`. Replace the whole-slice `buildRichGroupsWithPredicate(inputs.cidrRecords,…)`
-    call at `chunk_lifecycle.go:110-131`. Generate lazily (≈ one segment in memory).
-  - Keep the "chunk references a segment absent from input" error
-    (`chunk_lifecycle.go:129-130`), now raised from the segment index.
+  - Partition `snapshot.Chunks` into completed (`NextIndex >= TotalCount` or
+    `Status == "completed"`) and incomplete.
+  - Completed: build `{state: ch, tracker: newChunkStateTracker(ch)}` with
+    `targets: nil`, `bkt: nil`. No group lookup, no expansion.
+  - Incomplete: filter `cidrRecords` to rows whose group key
+    (`basicGroupStrategy.Key` / `richCIDRKey`) ∈ incomplete keys (one O(rows) pass,
+    no expansion), run the existing §3.1 builder on just those, then the current
+    per-chunk runtime build (keep the `total_count` check and the "chunk references
+    a CIDR with no scannable targets" error for incomplete chunks).
+- **Update** `design.md`/release notes to reflect the completed-chunk behavior change.
 
-**Acceptance:** `make verify` exit 0; differential golden green (behavior held);
-`BenchmarkResumeRebuild` large-input case drops to milliseconds;
-`profile-after-phase2.txt` committed.
+**Acceptance:** `make verify` exit 0; differential golden green (incomplete
+behavior held); a new `BenchmarkResumeRebuild` case (e.g. 130 incomplete among
+4000 chunks over a 4000-row CSV) via `buildRuntimeWithPredicate` drops from
+hundreds of ms to single-digit ms; `profile-after-phase2.txt` committed.
 
 **Files:** `pkg/scanapp/chunk_lifecycle.go`, `pkg/scanapp/runtime_builder.go`,
-`pkg/scanapp/group_builder.go` (+ tests).
+`pkg/scanapp/group_builder.go`, `pkg/scanapp/resume_rebuild_bench_test.go` (+ tests).
 
 ---
 

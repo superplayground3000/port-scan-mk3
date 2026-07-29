@@ -119,31 +119,50 @@ so a group of N targets builds in O(N) instead of O(N²).
 - Behavior-preserving: same targets, same de-dup/merge, same order (a group is
   sorted at the end regardless).
 
-### 3.2 Expand only the pending segments (fixes A, rich-aware)
+### 3.2 Expand only the pending work (fixes A, rich-aware)
 
-Today `buildRuntimeWithPredicate` builds groups over the *entire* `cidrRecords`,
-then `chunk_lifecycle.go:126-131` keeps only `chunks[i].CIDR`. Because a rich group
-spans multiple rows, "only the current CIDR" means **only the rows contributing to
-each pending segment**:
+Today `buildRuntimeWithPredicate` (`chunk_lifecycle.go:110-177`) builds groups over
+the *entire* `cidrRecords`, and does so for **every** chunk including ones already
+finished. Two independent wastes, two fixes:
 
-- Build `segmentRows map[segment][]input.CIDRRecord` in one O(rows) pass — grouping
-  rows by `richCIDRKey`, **no IP expansion**. Cheap.
-- Drive the plan from the resume chunks: for each pending chunk (segment), expand +
-  filter + execution-key-merge **only that segment's rows** (via §3.1's builder),
-  attach ports, honor `NextIndex`. Non-pending segments are never expanded.
-- Generate lazily one segment at a time so peak memory ≈ one segment's targets —
-  important because rich segments can be huge.
+**(a) Skip completed chunks entirely.** On resume the bucket carries every chunk,
+and many are already done. Dispatch already skips a completed chunk cheaply
+(`task_dispatcher.go:50`: `NextIndex >= TotalCount → continue`) and never reads its
+`targets`. So a completed chunk needs **no** target expansion — but it MUST stay
+represented in `plan.runtimes`, because `persistResumeSnapshot` rebuilds the saved
+bucket from the runtimes (`scan.go:231`); dropping it would erase the record of
+finished work. Design: for a completed chunk (`NextIndex >= TotalCount` or
+`Status == "completed"`) build a lightweight runtime — `{state: ch, tracker:
+newChunkStateTracker(ch)}`, with `targets: nil`, `bkt: nil` (no leaky-bucket
+goroutine either). It is skipped by dispatch and preserved verbatim in the re-saved
+snapshot. This is the dominant A win for the reported case (≈130 incomplete among
+many completed).
 
-**Cross-segment ownership under per-segment rebuild.** The global first-claim
-resolution already happened at `generate-buckets` time and is baked into the chunk
-boundaries; a faithful per-segment rebuild reproduces it **iff** segments are
-disjoint (the well-formed case, where a key is only ever produced by one segment).
-Design decision: rebuild per-segment for speed, and add a **guard** — during the
-one-pass row indexing, if any execution key is produced by two different segments,
-fail loudly with a "resume input is not segment-disjoint; start a fresh scan"
-error rather than silently duplicating targets or mismatching `total_count`. The
-differential golden test (§4) proves per-segment == whole-input build across
-realistic rich shapes; the guard covers the malformed remainder.
+**(b) For incomplete chunks, expand only their own records.** Filter
+`cidrRecords` to the rows whose group key (`basicGroupStrategy.Key` = CIDR; rich =
+`richCIDRKey` = `dst_network_segment`) is in the incomplete chunks' key set — one
+O(rows) pass, **no IP expansion** — then run the existing §3.1 builder on just those
+rows. Non-pending segments are never expanded.
+
+**Behavior preservation & the ownership edge.** For well-formed input (disjoint
+segments; each execution key produced by exactly one segment) the groups for the
+kept keys are byte-identical whether or not other-key rows are present, because a
+row contributes only to its own group key. The only way filtering changes a result
+is the malformed case where an execution key is first-claimed by a filtered-out
+segment (completed/other) — and that is **already caught** by the retained
+`total_count` invariant check (`chunk_lifecycle.go:158`: rebuilt group size ≠ saved
+`total_count` → loud "resume state incompatible" error). So no separate expensive
+cross-segment key scan is needed (computing all keys would re-expand everything and
+defeat the fix). The differential golden test (§4) proves per-key == whole-input
+build for well-formed input; the `total_count` check covers the rest.
+
+**Intentional, benign behavior change:** a completed chunk whose CIDR was removed
+from the CSV no longer errors (it is not looked up) — a fully-scanned chunk need not
+remain in the input. Note in release notes. Fresh (non-resume) scans are unaffected:
+all their chunks are incomplete and cover all records, so both fixes are no-ops there.
+
+Streaming one segment at a time (bounded peak memory) is a further optional
+optimization, deferred — (a)+(b) already remove the reported cost.
 
 ### 3.3 Parse each IP once (fixes C)
 
