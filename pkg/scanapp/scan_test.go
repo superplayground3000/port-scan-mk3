@@ -789,7 +789,7 @@ func TestPersistResumeSnapshot_WhenPreScanStateProvided_SavesEnvelope(t *testing
 		TimeoutMS:          100,
 		UnreachableIPv4U32: []uint32{ipv4ToUint32("10.0.0.7")},
 	}
-	if err := persistResumeSnapshot(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger, runtimes, preScanPing, nil, nil); err != nil {
+	if err := persistResumeSnapshot(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger, runtimes, preScanPing, nil, nil, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

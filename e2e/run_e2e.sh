@@ -33,6 +33,7 @@ rm -f "$OUT_DIR"/scan_results-*.csv \
   "$OUT_DIR"/resume_state*.json \
   "$OUT_DIR"/scan_results_*.csv \
   "$OUT_DIR"/scenario_*.log
+rm -rf "$OUT_DIR/interrupt"
 
 cat > "$INPUT_DIR/cidr_normal.csv" <<'EOF'
 asset_id,fab_name,source_ip,source_cidr,cidr_name,owner
@@ -47,6 +48,24 @@ EOF
 
 cat > "$INPUT_DIR/ports.csv" <<'EOF'
 8080/tcp
+EOF
+
+# Ten distinct targets for the interrupt-and-resume scenario. Most have no
+# listener (they time out), which is irrelevant — a row is written for every
+# probe regardless of state. Ten paced probes give a wide enough window to
+# interrupt the scan with work still pending.
+cat > "$INPUT_DIR/cidr_interrupt.csv" <<'EOF'
+asset_id,fab_name,source_ip,source_cidr,cidr_name,owner
+i-0,fab-int,172.28.0.10,172.28.0.0/24,mock-target-open,team-a
+i-1,fab-int,172.28.0.11,172.28.0.0/24,mock-target-closed,team-a
+i-2,fab-int,172.28.0.20,172.28.0.0/24,mock-target-none,team-a
+i-3,fab-int,172.28.0.21,172.28.0.0/24,mock-target-none,team-a
+i-4,fab-int,172.28.0.22,172.28.0.0/24,mock-target-none,team-a
+i-5,fab-int,172.28.0.23,172.28.0.0/24,mock-target-none,team-a
+i-6,fab-int,172.28.0.24,172.28.0.0/24,mock-target-none,team-a
+i-7,fab-int,172.28.0.25,172.28.0.0/24,mock-target-none,team-a
+i-8,fab-int,172.28.0.26,172.28.0.0/24,mock-target-none,team-a
+i-9,fab-int,172.28.0.27,172.28.0.0/24,mock-target-none,team-a
 EOF
 
 docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -231,6 +250,130 @@ run_expected_failure() {
 run_expected_failure "api_5xx" "http://pressure-api-5xx:8080/api/pressure" "200ms"
 run_expected_failure "api_timeout" "http://pressure-api-timeout:8080/api/pressure" "200ms"
 run_expected_failure "api_conn_fail" "http://127.0.0.1:9/api/pressure" "200ms"
+
+# ---------------------------------------------------------------------------
+# Interrupt-and-resume (requirements 3 + 4). Scan a paced 10-target bucket,
+# SIGINT it mid-flight, then resume. Because scan writes rows straight to the
+# final file and records the output path in the snapshot, the resumed run must
+# APPEND to the SAME file — one continuous scan_results with a single header and
+# all ten rows, no lost or duplicated work. An isolated /out/interrupt directory
+# keeps this scenario's timestamped files from colliding with the others.
+# ---------------------------------------------------------------------------
+interrupt_and_resume() {
+  local bucket="/out/interrupt/buckets.json"
+  local out_anchor="/out/interrupt/scan_results.csv"
+  local host_dir="$OUT_DIR/interrupt"
+  mkdir -p "$host_dir"
+
+  run_generate_buckets \
+    -cidr-file /inputs/cidr_interrupt.csv \
+    -port-file /inputs/ports.csv \
+    -cidr-ip-col source_ip \
+    -cidr-ip-cidr-col source_cidr \
+    -buckets-out "$bucket" \
+    -log-level error
+
+  if [[ ! -f "$host_dir/buckets.json" ]]; then
+    echo "e2e assertion failed: interrupt scenario could not build its bucket" >&2
+    exit 1
+  fi
+
+  # Interrupt: SIGINT after 5s while the scan is still dialing (10 targets at
+  # ~1/s). timeout forwards SIGINT through `docker compose run`; scan exits 130.
+  set +e
+  timeout -s INT 5 docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan \
+    -cidr-file /inputs/cidr_interrupt.csv \
+    -port-file /inputs/ports.csv \
+    -resume "$bucket" \
+    -output "$out_anchor" \
+    -cidr-ip-col source_ip \
+    -cidr-ip-cidr-col source_cidr \
+    -workers 1 \
+    -bucket-rate 1 \
+    -bucket-capacity 1 \
+    -delay 0ms \
+    -timeout 200ms \
+    -disable-api \
+    -log-level error \
+    >"$OUT_DIR/scenario_interrupt.log" 2>&1
+  local code=$?
+  set -e
+
+  # 130 == graceful SIGINT cancel; 124 == timeout had to hard-kill (still an
+  # interruption, just less graceful). Either proves the scan did not finish.
+  if [[ "$code" -eq 0 ]]; then
+    echo "e2e assertion failed: interrupt scan should not complete cleanly (exit 0)" >&2
+    cat "$OUT_DIR/scenario_interrupt.log" >&2
+    exit 1
+  fi
+
+  local partial_file
+  partial_file="$(ls "$host_dir"/scan_results-*.csv 2>/dev/null | sort | tail -n1 || true)"
+  if [[ -z "$partial_file" ]]; then
+    echo "e2e assertion failed: interrupt run wrote no scan_results file" >&2
+    exit 1
+  fi
+  local n_files
+  n_files="$(ls "$host_dir"/scan_results-*.csv 2>/dev/null | wc -l)"
+  if [[ "$n_files" -ne 1 ]]; then
+    echo "e2e assertion failed: expected exactly one scan_results file after interrupt, got $n_files" >&2
+    exit 1
+  fi
+
+  # Resume to completion — must append to the SAME file (no new timestamp).
+  run_scan \
+    -cidr-file /inputs/cidr_interrupt.csv \
+    -port-file /inputs/ports.csv \
+    -resume "$bucket" \
+    -output "$out_anchor" \
+    -cidr-ip-col source_ip \
+    -cidr-ip-cidr-col source_cidr \
+    -workers 1 \
+    -bucket-rate 100 \
+    -bucket-capacity 100 \
+    -delay 0ms \
+    -timeout 200ms \
+    -disable-api \
+    -log-level error
+
+  n_files="$(ls "$host_dir"/scan_results-*.csv 2>/dev/null | wc -l)"
+  if [[ "$n_files" -ne 1 ]]; then
+    echo "e2e assertion failed: resume must append to the same file, but found $n_files scan_results files" >&2
+    ls -l "$host_dir" >&2
+    exit 1
+  fi
+  local final_file
+  final_file="$(ls "$host_dir"/scan_results-*.csv 2>/dev/null | sort | tail -n1)"
+  if [[ "$final_file" != "$partial_file" ]]; then
+    echo "e2e assertion failed: resume wrote a new file ($final_file) instead of appending to $partial_file" >&2
+    exit 1
+  fi
+
+  # Exactly one header line.
+  local headers
+  headers="$(grep -c '^ip,ip_cidr,port,status' "$final_file" || true)"
+  if [[ "$headers" -ne 1 ]]; then
+    echo "e2e assertion failed: expected exactly one header line, got $headers" >&2
+    exit 1
+  fi
+
+  # All ten targets present exactly once, no duplicate data rows.
+  local data_rows unique_ips
+  data_rows="$(awk 'NR>1' "$final_file" | wc -l)"
+  unique_ips="$(awk -F, 'NR>1 {print $1}' "$final_file" | sort -u | wc -l)"
+  if [[ "$data_rows" -ne 10 ]]; then
+    echo "e2e assertion failed: expected 10 continuous data rows, got $data_rows" >&2
+    cat "$final_file" >&2
+    exit 1
+  fi
+  if [[ "$unique_ips" -ne 10 ]]; then
+    echo "e2e assertion failed: expected 10 distinct target IPs (no dupes), got $unique_ips" >&2
+    cat "$final_file" >&2
+    exit 1
+  fi
+}
+
+interrupt_and_resume
 
 go test ./tests/integration -v
 

@@ -159,7 +159,7 @@ func benchmarkResumeRuntime_IncompleteOfMany(b *testing.B, totalChunks, incomple
 	for i := 0; i < b.N; i++ {
 		chunks := make([]task.Chunk, len(template))
 		copy(chunks, template)
-		runtimes, err := buildRuntimeWithPredicate(chunks, records, ports, policy, reachable)
+		runtimes, err := buildRuntimeWithPredicate(chunks, records, ports, policy, reachable, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -39,15 +39,26 @@ type PreScanPingState struct {
 	UnreachableIPv4U32 []uint32 `json:"unreachable_ipv4_u32,omitempty"`
 }
 
+// OutputState records the scan/open result files a run wrote so that a
+// subsequent -resume appends to the same files instead of minting new
+// timestamped paths (design §3.7). Snapshots written before this field existed
+// decode with a nil Output; callers treat that as "no recorded path".
+type OutputState struct {
+	ScanPath string `json:"scan_path"`
+	OpenPath string `json:"open_path"`
+}
+
 // Snapshot is the current resume envelope persisted by the state package.
 type Snapshot struct {
 	Chunks      []task.Chunk     `json:"chunks"`
 	PreScanPing PreScanPingState `json:"pre_scan_ping,omitempty"`
+	Output      *OutputState     `json:"output,omitempty"`
 }
 
 type snapshotEnvelope struct {
 	Chunks      *[]task.Chunk        `json:"chunks"`
 	PreScanPing *preScanPingEnvelope `json:"pre_scan_ping,omitempty"`
+	Output      *OutputState         `json:"output,omitempty"`
 }
 
 type preScanPingEnvelope struct {
@@ -69,6 +80,10 @@ func SaveSnapshot(path string, snap Snapshot) error {
 			TimeoutMS:          &timeoutMS,
 			UnreachableIPv4U32: snap.PreScanPing.UnreachableIPv4U32,
 		}
+	}
+	if snap.Output != nil {
+		out := *snap.Output
+		env.Output = &out
 	}
 
 	data, err := json.MarshalIndent(env, "", "  ")
@@ -118,6 +133,10 @@ func LoadSnapshot(path string) (Snapshot, error) {
 				TimeoutMS:          *env.PreScanPing.TimeoutMS,
 				UnreachableIPv4U32: env.PreScanPing.UnreachableIPv4U32,
 			}
+		}
+		if env.Output != nil {
+			out := *env.Output
+			snap.Output = &out
 		}
 		return snap, nil
 	default:

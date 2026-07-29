@@ -223,7 +223,7 @@ func TestBuildRuntime_DifferentialGolden_AllIncomplete(t *testing.T) {
 			}
 
 			want := referenceBuildRuntime(t, cloneChunks(baseChunks), tc.records, tc.ports, tc.reachable)
-			got, err := buildRuntimeWithPredicate(cloneChunks(baseChunks), tc.records, tc.ports, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, tc.reachable)
+			got, err := buildRuntimeWithPredicate(cloneChunks(baseChunks), tc.records, tc.ports, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, tc.reachable, nil)
 			if err != nil {
 				t.Fatalf("buildRuntimeWithPredicate: %v", err)
 			}
@@ -253,7 +253,7 @@ func TestBuildRuntime_CompletedChunk_NotExpanded(t *testing.T) {
 		{CIDR: "10.1.0.0/30", CIDRName: "seg", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 3, Status: "pending"},
 	}
 
-	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil)
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err != nil {
 		t.Fatalf("resume with a completed chunk absent from the CSV must not error: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestBuildRuntime_CompletedChunk_AbsentCIDR_ResumesWithoutError(t *testing.T
 		{CIDR: "10.42.0.0/24", CIDRName: "gone", Ports: []string{"80/tcp"}, NextIndex: 254, ScannedCount: 254, TotalCount: 254, Status: "completed"},
 		{CIDR: "10.1.0.0/30", CIDRName: "seg", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 3, Status: "pending"},
 	}
-	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil)
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err != nil {
 		t.Fatalf("completed chunk absent from CSV must resume without error, got: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestBuildRuntime_StatusCompletedButUnfinished_IsDispatchSafe(t *testing.T) 
 	chunks := []task.Chunk{
 		{CIDR: "10.1.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 3, Status: "completed"},
 	}
-	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil)
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestBuildRuntime_LegacyZeroTotalCount_PreservesOwnership(t *testing.T) {
 		// Legacy: incomplete B has NO saved total_count (decodes to 0).
 		{CIDR: "10.1.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 0, Status: "pending"},
 	}
-	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil)
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestBuildRuntime_MixedTotalCountPresence_FallsBackWholeInput(t *testing.T) 
 		{CIDR: "10.1.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 3, Status: "pending"},
 		{CIDR: "10.2.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 0, Status: "pending"},
 	}
-	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil)
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err != nil {
 		t.Fatalf("mixed total_count presence must not error: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestBuildRuntime_DivergenceGuard_TotalCountMismatch(t *testing.T) {
 		{CIDR: "10.1.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 0, ScannedCount: 0, TotalCount: 3, Status: "pending"},
 	}
 
-	_, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil)
+	_, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err == nil {
 		t.Fatalf("expected the total_count invariant to fire on the diverged incomplete segment")
 	}

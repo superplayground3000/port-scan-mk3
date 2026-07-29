@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/progress"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 const (
@@ -73,12 +75,6 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		return err
 	}
 
-	now := time.Now()
-	outputPaths, err := resolveRunOutputPaths(cfg, deps, now)
-	if err != nil {
-		return err
-	}
-
 	snapshot, err := loadResumeSnapshot(cfg)
 	if err != nil {
 		return err
@@ -87,26 +83,83 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		return err
 	}
 
+	// Resolve output paths AFTER the snapshot: a snapshot that already recorded an
+	// output path (a prior interrupted run) makes this run APPEND to the same
+	// files (design §3.7); otherwise this is the first scan of the bucket and we
+	// mint fresh timestamped paths and record them so the next -resume appends.
+	var (
+		scanPath   string
+		openPath   string
+		appendMode bool
+	)
+	if snapshot.Output != nil {
+		scanPath = snapshot.Output.ScanPath
+		openPath = snapshot.Output.OpenPath
+		appendMode = true
+	} else {
+		outputPaths, resolveErr := resolveRunOutputPaths(cfg, deps, time.Now())
+		if resolveErr != nil {
+			return resolveErr
+		}
+		scanPath = outputPaths.scanPath
+		openPath = outputPaths.openPath
+	}
+	outputState := &state.OutputState{ScanPath: scanPath, OpenPath: openPath}
+
 	// The reachable predicate is derived directly from the snapshot blocklist the
 	// generate-buckets step recorded; scan does not re-derive reachability by
 	// pinging. An empty blocklist yields an all-reachable predicate.
 	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
 
-	plan, err := prepareRuntimePlan(cfg, inputs, deps, reachable, snapshot.Chunks, true)
-	if err != nil {
-		return err
+	progressStep := opts.ProgressInterval
+	if progressStep <= 0 {
+		progressStep = 100
 	}
-	plan.outputPaths = outputPaths
-	plan.scanOutputPath = outputPaths.scanPath
-	plan.openOnlyPath = outputPaths.openPath
 
-	outputs, err := openBatchOutputs(plan.scanOutputPath, plan.openOnlyPath)
+	// Phase 5 (design §3.8): log the pre-scan runtime rebuild. bucket_parse_start
+	// announces how many incomplete chunks will be expanded; a pkg/progress
+	// reporter emits throttled bucket_parse_progress ticks (one per incomplete
+	// chunk built, throttled by ProgressInterval); bucket_parse_complete reports
+	// the totals and elapsed time. The per-result scan progress
+	// (emitScanResultEvents) is untouched.
+	incompleteChunks := countIncompleteChunks(snapshot.Chunks)
+	logger.eventf("bucket_parse_start", "", 0, "bucket_parse_start", LogEventNone, map[string]any{
+		"incomplete_chunks": incompleteChunks,
+	})
+	parseStart := time.Now()
+	var parseReporter chunkExpandReporter
+	var bucketProgress progress.Reporter
+	if !cfg.Quiet {
+		bucketProgress = progress.New("bucket_parse_progress", incompleteChunks, progressStep, stderr)
+		parseReporter = bucketProgress.Inc
+	}
+
+	plan, err := prepareRuntimePlan(cfg, inputs, deps, reachable, snapshot.Chunks, true, parseReporter)
 	if err != nil {
 		return err
 	}
-	var scanSuccess bool
+	plan.scanOutputPath = scanPath
+	plan.openOnlyPath = openPath
+
+	if bucketProgress != nil {
+		bucketProgress.Done()
+	}
+	targetsGenerated := 0
+	for _, rt := range plan.runtimes {
+		targetsGenerated += len(rt.targets)
+	}
+	logger.eventf("bucket_parse_complete", "", 0, "bucket_parse_complete", LogEventNone, map[string]any{
+		"chunks_parsed":     incompleteChunks,
+		"targets_generated": targetsGenerated,
+		"elapsed_ms":        time.Since(parseStart).Milliseconds(),
+	})
+
+	outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
+	if err != nil {
+		return err
+	}
 	defer func() {
-		_ = outputs.Finalize(scanSuccess)
+		_ = outputs.Finalize()
 	}()
 
 	workers := cfg.Workers
@@ -114,10 +167,6 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		workers = 1
 	}
 	queueSize := workers * 2
-	progressStep := opts.ProgressInterval
-	if progressStep <= 0 {
-		progressStep = 100
-	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -170,6 +219,14 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	if dashboardState != nil {
 		dispatchPolicy.observer = newDashboardDispatchObserver(dashboardState)
 	}
+
+	// Phase 5: a single line marking the transition from the (now-complete)
+	// pre-scan rebuild to dialing. Everything above was preparation; from here
+	// the dispatcher enqueues tasks and workers dial.
+	logger.eventf("scan_start", "", 0, "scan_start", LogEventNone, map[string]any{
+		"workers": workers,
+		"chunks":  len(plan.runtimes),
+	})
 
 	dispatchErrCh := make(chan error, 1)
 	go func() {
@@ -228,7 +285,7 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		}
 	}
 
-	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, snapshot.PreScanPing, dispatchErr, runErr); err != nil {
+	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
 		return err
 	}
 
@@ -241,6 +298,5 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		return dispatchErr
 	}
 	emitCompletionSummary(logger, summary, startedAt, nil)
-	scanSuccess = true
 	return nil
 }

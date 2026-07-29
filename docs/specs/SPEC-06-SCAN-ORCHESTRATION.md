@@ -116,8 +116,10 @@ type RunOptions struct {
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 3. OUTPUT SETUP (batch_output.go + output_files.go)                    │
-│    openBatchOutputs() ──────────────────────────────────────────────►  │
-│    - Create .tmp files with headers                                     │
+│    Resolve paths from snapshot.Output (append) or mint fresh (create)   │
+│    openBatchOutputs(scanPath, openPath, appendMode) ─────────────────►  │
+│    - Fresh: create final files with headers (no .tmp)                   │
+│    - Append (resume): O_APPEND|O_CREATE; header only if file is empty   │
 │    - Returns: outputFiles{scanWriter, openWriter}                       │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -162,15 +164,17 @@ type RunOptions struct {
 │      - Scan canceled (SIGINT)                                           │
 │      - Runtime error                                                     │
 │      - Dispatch error (if canceled/deadline)                            │
-│    Saves: chunk states (NextIndex, ScannedCount, Status)                │
+│    Saves: chunk states (NextIndex, ScannedCount, Status) + Output paths │
+│           (scan_path/open_path) so -resume appends to the same files    │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 8. FINALIZE (output_files.go)                                           │
-│    outputs.Finalize(success) ────────────────────────────────────────►   │
-│    - If success: rename .tmp → final names                               │
-│    - If failure: keep .tmp files                                        │
+│    outputs.Finalize() ────────────────────────────────────────────────►  │
+│    - Close the file handles. Rows are already durable at the final       │
+│      path (written directly, no .tmp), so a Ctrl+C keeps every           │
+│      already-scanned row and -resume appends the rest.                    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -506,21 +510,28 @@ func resolveBatchOutputPaths(outputDir string) (scanPath, openedPath string, err
 ### openBatchOutputs
 
 ```go
-func openBatchOutputs(scanPath, openedPath string) (*outputFiles, error)
+func openBatchOutputs(scanPath, openedPath string, appendMode bool) (*outputFiles, error)
 ```
 
-Creates `.tmp` files:
-- `scan_results-...tmp`
-- `opened_results-...tmp`
+Opens the FINAL result files directly (no `.tmp` intermediate):
+- `appendMode == false` (fresh run): `os.Create` (truncate) + write header.
+- `appendMode == true` (`-resume`): `O_APPEND|O_CREATE`; write the header only
+  when the file is missing/empty (e.g. the prior output was deleted), otherwise
+  append without re-emitting a header.
+
+The path is chosen in `scan.go`: a resume snapshot that recorded an output path
+(`snapshot.Output`) reuses it in append mode; otherwise fresh timestamped paths
+are minted and recorded in the snapshot for the next resume.
 
 ### Finalize
 
 ```go
-func (o *outputFiles) Finalize(success bool) error
+func (o *outputFiles) Finalize() error
 ```
 
-- Success: rename `.tmp` → final names
-- Failure: keep `.tmp` files (for debugging)
+- Closes the file handles only. Because rows are written straight to the final
+  path, every already-scanned row is durable on a graceful Ctrl+C — there is no
+  promotion step and no `.tmp` file to strand.
 
 ## 11. Runtime Types (runtime_types.go)
 

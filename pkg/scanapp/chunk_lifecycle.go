@@ -103,8 +103,28 @@ func basicChunkFromGroup(cidr string, g cidrGroup, rawPorts []string) task.Chunk
 	}
 }
 
+// chunkExpandReporter is invoked once per incomplete chunk expanded during the
+// resume runtime rebuild. It lets Run emit throttled bucket_parse_progress
+// output (Phase 5) without coupling the builder to logging or pkg/progress. A
+// nil reporter disables reporting — the fresh-scan path, generate-buckets, and
+// tests that do not assert progress all pass nil.
+type chunkExpandReporter func()
+
+// countIncompleteChunks reports how many chunks still have scanning work, i.e.
+// the ones buildRuntimeWithPredicate will expand. Run logs this as the
+// bucket_parse_start count and uses it as the progress total (Phase 5).
+func countIncompleteChunks(chunks []task.Chunk) int {
+	n := 0
+	for i := range chunks {
+		if !chunkIsCompleted(&chunks[i]) {
+			n++
+		}
+	}
+	return n
+}
+
 func buildRuntime(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy) ([]*chunkRuntime, error) {
-	return buildRuntimeWithPredicate(chunks, cidrRecords, defaultPorts, policy, nil)
+	return buildRuntimeWithPredicate(chunks, cidrRecords, defaultPorts, policy, nil, nil)
 }
 
 // buildRuntimeWithPredicate re-derives the in-memory runtime plan for a set of
@@ -131,7 +151,7 @@ func buildRuntime(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPo
 //
 // Intentional, benign behavior change: a completed chunk whose CIDR was removed
 // from the CSV no longer errors, because completed chunks are never looked up.
-func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy, reachable func(string) bool) ([]*chunkRuntime, error) {
+func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy, reachable func(string) bool, report chunkExpandReporter) ([]*chunkRuntime, error) {
 	incompleteKeys := make(map[string]struct{}, len(chunks))
 	allIncompleteHaveTotal := true
 	for i := range chunks {
@@ -237,6 +257,11 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 			bkt:     ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity),
 		}
 		runtimes = append(runtimes, rt)
+		// One progress tick per incomplete chunk actually expanded (Phase 5). The
+		// reporter throttles; completed chunks are skipped above and never tick.
+		if report != nil {
+			report()
+		}
 	}
 	return runtimes, nil
 }

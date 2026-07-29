@@ -604,7 +604,7 @@ func TestReadCIDRFileAndReadPortFile_WhenFileMissing_ReturnsError(t *testing.T) 
 
 func TestOpenBatchOutputs_WhenCreated_WritesHeadersAndSupportsCIDRFallback(t *testing.T) {
 	dir := t.TempDir()
-	outputs, err := openBatchOutputs(filepath.Join(dir, "scan.csv"), filepath.Join(dir, "opened.csv"))
+	outputs, err := openBatchOutputs(filepath.Join(dir, "scan.csv"), filepath.Join(dir, "opened.csv"), false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -617,7 +617,7 @@ func TestOpenBatchOutputs_WhenCreated_WritesHeadersAndSupportsCIDRFallback(t *te
 	}); err != nil {
 		t.Fatalf("write scan record failed: %v", err)
 	}
-	if err := outputs.Finalize(true); err != nil {
+	if err := outputs.Finalize(); err != nil {
 		t.Fatalf("finalize outputs failed: %v", err)
 	}
 
