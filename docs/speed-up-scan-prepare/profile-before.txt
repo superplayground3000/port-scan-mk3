@@ -1,0 +1,88 @@
+Phase 0 — before-optimization profile (confirms the bottleneck)
+================================================================
+Companion to design.md / implementation.md. Reproduced by the benchmark
+pkg/scanapp/resume_rebuild_bench_test.go on the resume runtime-rebuild path.
+
+Machine: AMD Ryzen AI MAX+ 395 (32 logical CPU), linux/amd64, Go test build.
+Command:
+  go test ./pkg/scanapp -run=XXX -bench=BenchmarkResumeRebuild -benchmem \
+      -benchtime=8x -cpuprofile=prep.prof
+  go tool pprof -top prep.prof
+
+Note: the benchmark profiles the GROUP BUILD (buildCIDRGroupsWithPredicate /
+buildRichGroupsWithPredicate) — the actual parse/prepare work — and deliberately
+excludes the per-chunk ratelimit.NewLeakyBucket construction, whose background
+timer goroutines otherwise dominate and hide the real signal.
+
+Benchmark results (ns/op, B/op, allocs/op)
+-------------------------------------------
+basic_matched_130            12,848,219 ns   22,955,223 B     71,126 allocs
+basic_amplified_4000        314,200,366 ns  706,398,782 B  2,188,052 allocs
+rich_precheck /24 (256)         297,739 ns      282,378 B      1,593 allocs
+rich_precheck /23 (512)         733,816 ns      566,921 B      3,135 allocs
+rich_precheck /22 (1024)      2,141,462 ns    1,332,043 B      6,219 allocs
+rich_precheck /21 (2048)      6,723,134 ns    2,862,848 B     12,386 allocs
+rich_precheck /20 (4096)     24,979,041 ns    5,748,928 B     24,709 allocs
+
+Interpretation
+--------------
+A) Whole-input re-expansion (chunk_lifecycle.go:110-131 -> buildCIDRGroups...).
+   basic build cost is ~linear in the TOTAL number of input rows, not the pending
+   chunks: 130 rows = 12.8 ms, 4000 rows = 314 ms (24.5x). On resume the code
+   processes EVERY row of the -cidr-file and keeps only the pending chunk CIDRs,
+   so a large CSV behind a small pending set pays full price every resume.
+   It also allocates 706 MB / 2.19M objects for the 4000-row case -> heavy GC
+   (runtime.scanObject ~30% of CPU below).
+
+B) O(N^2) rich execution-key merge (richTargetIndexByExecutionKey, group_builder.go
+   :425-432, via mergeRichTargetIntoGroup). Time per host-count doubling:
+     /24->/23  x2.46
+     /23->/22  x2.92
+     /22->/21  x3.14
+     /21->/20  x3.72   -> ratio climbs toward 4.0 == quadratic.
+   Extrapolating quadratically from /20 (25 ms): a /16 segment ~= 6.4 s, a /14
+   ~= 28 min, for ONE PRECHECK_ALLOW_ALL segment. A few large segments = hours.
+
+C) Double net.ParseIP per IP (the constant multiplier on A and B). Each IP is
+   parsed by reachablePredicate.func1 AND again inside ipv4ToUint32(parsed.String()),
+   plus the group sort re-parses per comparison. IP parsing is the single largest
+   CPU sink below.
+
+pprof -top (flat), aggregate over all sub-benchmarks
+----------------------------------------------------
+  9.86%  runtime.scanObject            (GC from A's 706MB/2.19M allocs)
+  5.99%  net/netip.parseIPv4Fields
+  3.87%  strings.TrimSpace
+ 15.32%  net.ParseIP (cum)             <- IP parsing, hit multiple times per IP
+ 13.56%  net.parseIP (cum)
+ 23.77%  basicGroupStrategy.targets (cum)
+
+pprof -top -cum (call tree)
+---------------------------
+ 53.35%  buildCIDRGroupsWithPredicate      (problem A: whole-input build)
+ 20.07%  |- task.ExpandIPSelectors         (materializes IP strings per CIDR)
+ 18.13%  |- sort.Slice                     (problem C: ParseIP-per-compare sort)
+ 17.78%  |- filterScanTargets
+ 14.61%  |    |- reachablePredicate.func1  (problem C: ParseIP #1)
+ 14.08%  |    |- ipv4ToUint32              (problem C: ParseIP #2 on same IP)
+  5.81%  buildRichGroupsWithPredicate
+  5.46%  |- mergeRichTargetIntoGroup
+  5.46%       |- richTargetIndexByExecutionKey  (problem B: O(N^2) linear scan)
+
+Conclusion
+----------
+All three bottlenecks from design.md §1 are confirmed empirically:
+  - B (rich merge) is measurably quadratic and is the only mechanism that reaches
+    hours from a plausible single input; it is the prime suspect IF the real input
+    is rich CSV.
+  - A (whole-input re-expansion) scales the cost by the full CSV size on every
+    resume; dominant when the -cidr-file is far larger than the pending chunks.
+  - C (double parse + parse-per-sort) is the single largest CPU sink and multiplies
+    both A and B; cheapest to fix.
+The 42,587-entry unreachable filter is NOT implicated: it is a sorted []uint32 with
+sort.Search binary search, and does not appear as a hot frame.
+
+Which of A vs B dominates the reported 6-hour case depends on whether the real
+bucket's -cidr-file is basic or rich, and how large its segments/row-count are.
+Re-run this benchmark shape against the real files to pin the exact split; the
+fixes in implementation.md Phases 1-2 address all three regardless.
