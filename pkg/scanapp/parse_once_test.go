@@ -36,18 +36,18 @@ func TestReachablePredicate_MatchesReferenceBehavior(t *testing.T) {
 	predicate := reachablePredicate(blocked)
 
 	cases := []string{
-		"10.0.0.5",      // blocked -> unreachable
-		"10.0.0.6",      // not blocked -> reachable
-		"192.168.1.1",   // blocked -> unreachable
-		"192.168.1.2",   // not blocked -> reachable
-		"0.0.0.0",       // blocked boundary -> unreachable
+		"10.0.0.5",        // blocked -> unreachable
+		"10.0.0.6",        // not blocked -> reachable
+		"192.168.1.1",     // blocked -> unreachable
+		"192.168.1.2",     // not blocked -> reachable
+		"0.0.0.0",         // blocked boundary -> unreachable
 		"255.255.255.255", // boundary max -> reachable
-		"  10.0.0.6  ",  // whitespace padded, not blocked -> reachable
-		"  10.0.0.5  ",  // whitespace padded, resolves to a blocked IP -> unreachable (exercises TrimSpace)
+		"  10.0.0.6  ",    // whitespace padded, not blocked -> reachable
+		"  10.0.0.5  ",    // whitespace padded, resolves to a blocked IP -> unreachable (exercises TrimSpace)
 		"::ffff:10.0.0.5", // IPv4-mapped IPv6, To4()!=nil, resolves to blocked -> unreachable
-		"not-an-ip",     // non-IPv4 -> reachable
-		"::1",           // IPv6 (To4()==nil) -> reachable
-		"",              // empty -> reachable
+		"not-an-ip",       // non-IPv4 -> reachable
+		"::1",             // IPv6 (To4()==nil) -> reachable
+		"",                // empty -> reachable
 	}
 	for _, ip := range cases {
 		got := predicate(ip)

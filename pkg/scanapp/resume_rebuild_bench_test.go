@@ -5,7 +5,9 @@ import (
 	"net"
 	"testing"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 // resume_rebuild_bench_test.go — Phase 0 of docs/speed-up-scan-prepare.
@@ -121,6 +123,54 @@ func benchmarkRichPrecheck(b *testing.B, segment string) {
 	}
 }
 
+// benchmarkResumeRuntime_IncompleteOfMany profiles the FULL resume runtime
+// rebuild (buildRuntimeWithPredicate) for the reported shape: a bucket of
+// totalChunks basic chunks over a totalChunks-row CSV, where only the first
+// `incomplete` chunks still have work. Phase 2 skips expansion for the completed
+// chunks, so cost should track `incomplete`, not `totalChunks`.
+//
+// buildRuntimeWithPredicate allocates a leaky-bucket goroutine per INCOMPLETE
+// chunk; the buckets are Closed each iteration so goroutines do not accumulate
+// across b.N and the incomplete count (130) bounds the background noise.
+func benchmarkResumeRuntime_IncompleteOfMany(b *testing.B, totalChunks, incomplete int) {
+	records := benchBasicRecords(totalChunks)
+	ports := []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}}
+	reachable := reachablePredicate(benchUnreachable(benchUnreachableCount))
+	policy := runtimePolicy{bucketRate: 1000000, bucketCapacity: 1}
+
+	// Build the resume chunk set: every /24 is a chunk; only the first
+	// `incomplete` are still pending, the rest are fully scanned.
+	base, err := loadOrBuildChunksWithPredicate(config.Config{}, records, ports, reachable)
+	if err != nil {
+		b.Fatal(err)
+	}
+	template := make([]task.Chunk, len(base))
+	for i := range base {
+		template[i] = base[i]
+		if i >= incomplete {
+			template[i].NextIndex = template[i].TotalCount
+			template[i].ScannedCount = template[i].TotalCount
+			template[i].Status = "completed"
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		chunks := make([]task.Chunk, len(template))
+		copy(chunks, template)
+		runtimes, err := buildRuntimeWithPredicate(chunks, records, ports, policy, reachable)
+		if err != nil {
+			b.Fatal(err)
+		}
+		for _, rt := range runtimes {
+			if rt.bkt != nil {
+				rt.bkt.Close()
+			}
+		}
+	}
+}
+
 func BenchmarkResumeRebuild(b *testing.B) {
 	// A: input CSV is exactly the 130 pending rows.
 	b.Run("basic_matched_130", func(b *testing.B) { benchmarkBasicBuild(b, 130) })
@@ -135,4 +185,11 @@ func BenchmarkResumeRebuild(b *testing.B) {
 	b.Run("rich_precheck_scaling_slash22_1024", func(b *testing.B) { benchmarkRichPrecheck(b, "10.20.0.0/22") })
 	b.Run("rich_precheck_scaling_slash21_2048", func(b *testing.B) { benchmarkRichPrecheck(b, "10.20.0.0/21") })
 	b.Run("rich_precheck_scaling_slash20_4096", func(b *testing.B) { benchmarkRichPrecheck(b, "10.20.0.0/20") })
+
+	// Phase 2 (design.md §3.2): the reported resume shape — 130 incomplete chunks
+	// among 4000, over a 4000-row CSV. Pre-Phase-2 this expanded all 4000 chunks
+	// every resume; now only the 130 incomplete ones are expanded. The
+	// all-incomplete control isolates the completed-chunk skip win.
+	b.Run("resume_runtime_130_of_4000", func(b *testing.B) { benchmarkResumeRuntime_IncompleteOfMany(b, 4000, 130) })
+	b.Run("resume_runtime_4000_of_4000", func(b *testing.B) { benchmarkResumeRuntime_IncompleteOfMany(b, 4000, 4000) })
 }
