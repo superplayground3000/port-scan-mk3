@@ -9,6 +9,9 @@ their trigger applies.
   then `.claude/rules/10-model-dispatch.md` before delegating,
   `.claude/rules/20-judgment-rubric.md` before declaring work done, and
   `.claude/rules/40-maintenance-protocol.md` before editing any rule file.
+- **Development guidelines:** `.claude/rules/60-development-guidelines.md`
+  before any implementation work — mandatory TDD, cross-provider review, and
+  the unit/e2e/performance validation pyramid.
 - **Project law:** `.claude/rules/constitution.md`. Its MUST-level rules
   (Test-First, Quality Gates, SOLID boundaries, Go 1.24.x + stdlib `net`)
   override convenience. When in doubt, the constitution wins.

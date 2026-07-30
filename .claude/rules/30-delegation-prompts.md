@@ -75,7 +75,11 @@ Context: Diff / files: <list>. This is cross-model review; be adversarial and
   try to find what is wrong.
 Scope: Read + run gates only; do not fix. Out-of-scope: rewriting the change.
 Acceptance: A verdict (approve / block) with each issue as file:line + why + a
-  suggested fix, and confirmation that `make verify` was run.
+  suggested fix, confirmation that `make verify` was run, and confirmation
+  that the validation triggers in `60-development-guidelines.md` G3 were
+  checked: `make verify-e2e` evidence when scan pipeline/writers/pressure
+  control changed; before/after benchmark evidence when a hot path changed.
+  Missing trigger evidence (and not explicitly declared unverified) → block.
 Return format: Verdict + numbered issues (file:line, severity, fix) + gate
   result. Default to "block" if a MUST-level constitution rule is unmet.
 Escalation: If the change touches the scan pipeline, require `make verify-e2e`
