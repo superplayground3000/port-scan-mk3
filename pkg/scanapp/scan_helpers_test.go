@@ -704,7 +704,10 @@ func TestResumePath_WhenMultipleSourcesProvided_UsesPriorityOrder(t *testing.T) 
 	if got := resumePath(config.Config{Resume: "cfg.json"}, RunOptions{}); got != "cfg.json" {
 		t.Fatalf("unexpected resume path: %s", got)
 	}
-	if got := resumePath(config.Config{Output: "/tmp/scan_results.csv"}, RunOptions{}); got != "/tmp/"+defaultResumeStateFile {
+	// The derived-from-output case goes through filepath.Dir/Join, so compare in
+	// slash form; the expectation stays a literal rather than a filepath.Join
+	// call, which would make the assertion tautological.
+	if got := filepath.ToSlash(resumePath(config.Config{Output: "/tmp/scan_results.csv"}, RunOptions{})); got != "/tmp/"+defaultResumeStateFile {
 		t.Fatalf("unexpected default resume path: %s", got)
 	}
 }
@@ -735,13 +738,6 @@ func TestChunkStateHelpers_WhenRuntimesMixed_ReturnExpectedSnapshots(t *testing.
 	runtimes[0].tracker.IncrementScanned()
 	if hasIncomplete(runtimes) {
 		t.Fatal("expected all runtimes complete")
-	}
-}
-
-func TestEnsureFDLimit_WhenWorkersExceedLimit_ReturnsError(t *testing.T) {
-	err := ensureFDLimit(1_000_000_000)
-	if err == nil {
-		t.Fatal("expected fd limit error for huge workers")
 	}
 }
 

@@ -10,12 +10,7 @@ import (
 
 func TestEndToEnd(t *testing.T) {
 	// Build the binary first
-	cmd := exec.Command("go", "build", "-o", "cidr-compare-test", ".")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("failed to build: %s", string(output))
-	}
-	defer os.Remove("cidr-compare-test")
+	bin := buildTestBinary(t)
 
 	// Create temp deny file
 	denyContent := "dst_network_segment,decision\n10.0.0.0/8,deny\n192.168.0.0/16,deny\n"
@@ -31,8 +26,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("failed to write open file: %v", err)
 	}
 
-	cmd = exec.Command("./cidr-compare-test", "-deny-file="+denyFile, "-open-file="+openFile)
-	output, err = cmd.CombinedOutput()
+	cmd := exec.Command(bin, "-deny-file="+denyFile, "-open-file="+openFile)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("command failed: %v, output: %s", err, string(output))
 	}
