@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
@@ -337,17 +338,21 @@ func TestPollPressureAPI_FractionalPressureRoundsUp_TriggersPause(t *testing.T) 
 	errCh := make(chan error, 1)
 	logger := newTestLogger()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	// The poller lives for the duration of the test rather than a fixed 50ms:
+	// its lifetime is a bound on failure, not the thing under test.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
 
-	time.Sleep(30 * time.Millisecond)
-
-	// 89.95 rounds to 90.0 via normalizePressure, which is >= 90, so it should pause.
-	if !ctrl.IsPaused() {
-		t.Error("expected controller to be paused when pressure=89.95 (rounds to 90.0) >= threshold=90")
-	}
+	// Wait for the pause to be observed instead of sleeping a fixed 30ms: with
+	// Windows' ~15.6ms timer granularity a 10ms poll interval plus an HTTP
+	// round trip can easily exceed 30ms on a loaded runner, which would fail a
+	// correct implementation. 89.95 rounds to 90.0 via normalizePressure, which
+	// is >= 90, so the controller must pause.
+	testkit.WaitFor(t, 5*time.Second,
+		"controller to pause when pressure=89.95 (rounds to 90.0) >= threshold=90",
+		ctrl.IsPaused)
 }
 
 func TestPollPressureAPI_FractionalPressureJustBelow_StaysActive(t *testing.T) {
