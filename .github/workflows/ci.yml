@@ -63,13 +63,11 @@ jobs:
   windows-build-test:
     name: Cross-platform build + test (Windows)
     runs-on: windows-latest
-    # Non-blocking for now: the Windows build passes, but several tests carry
-    # pre-existing cross-platform assumptions (forward-slash path assertions,
-    # `./binary` exec without `.exe`, a hardcoded `/tmp` resume default, and a
-    # Unix-only fd-limit test). Tracked for a follow-up fix; see
-    # docs/MAINTENANCE.md "Known cross-platform follow-ups". Flip to blocking
-    # once those are fixed.
-    continue-on-error: true
+    # Blocking. The cross-platform test assumptions this job was waiting on are
+    # fixed (PRs #48/#49/#50) and master is green on Windows with zero skips, so
+    # a Windows regression must now fail the run. Do not re-add
+    # continue-on-error to get a red run green — fix the cause, and see
+    # docs/MAINTENANCE.md section 6.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

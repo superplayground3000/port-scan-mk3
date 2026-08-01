@@ -107,31 +107,60 @@ Never lower the threshold, delete tests, or extend `EXCLUDE_PATTERN` in
 
 ## 6. Known cross-platform & e2e follow-ups (tracked debt)
 
-The first CI run surfaced pre-existing issues that predate the CI itself. The
-Linux quality gate is green and **blocking**; the Windows and e2e jobs run as
-**non-blocking** (`continue-on-error: true` in `ci.yml`) until these are fixed.
-Do not delete the jobs — fix the causes and flip them back to blocking.
+The Linux quality gate and the **Windows** job are both green and **blocking**.
+The e2e job still runs **non-blocking** (`continue-on-error: true` in `ci.yml`).
+Do not delete a job, and never re-add `continue-on-error` to turn a red run
+green — fix the cause.
 
-**Windows test portability** (`go build` on Windows passes; these tests fail):
-- `cmd/cidr-compare` tests exec a helper via `./cidr-compare-test` — needs a
-  `.exe` suffix / proper path on Windows.
-- `pkg/preprocess` `TestOutputPath*` assert forward-slash paths but production
-  uses `filepath` (backslashes on Windows) — fix the test expectations to build
-  paths with `filepath.Join`.
-- `pkg/scanapp` default resume path is hardcoded `/tmp/resume_state.json` — make
-  it `os.TempDir()`-based (a real production portability fix), and update the
-  test.
-- `TestEnsureFDLimit_WhenWorkersExceedLimit_ReturnsError` relies on the Unix
-  `RLIMIT_NOFILE` check — skip it on Windows (`runtime.GOOS == "windows"`).
+**Windows test portability — DONE** (PRs #48/#49/#50, issue #47). Master is green
+on Windows with zero skips. Recorded here because the fixes corrected two pieces
+of guidance this section previously gave, and a future agent should not repeat
+them:
 
-**e2e determinism:**
+- `cmd/cidr-compare` tests exec'd `./cidr-compare-test`. Root cause was the
+  missing `.exe` suffix (Windows decides executability by `PATHEXT`), not the
+  relative path. Fixed with a shared `buildTestBinary(t)` helper that builds
+  into `t.TempDir()` and returns an absolute path. Until then these tests never
+  launched the binary on Windows at all — they had zero coverage there.
+- `pkg/preprocess` `TestOutputPath*` asserted forward-slash paths. **Do not fix
+  this by building the expectation with `filepath.Join`** (the earlier advice
+  here): that calls the same function production calls, making the assertion
+  tautological — it would pass by construction and could never disagree with the
+  code. Fixed by comparing `filepath.ToSlash(got)` against the literal
+  expectation, keeping an independent source of truth.
+- The `/tmp/resume_state.json` expectation was **only in the test**. Production
+  was already portable — `defaultResumeStateFile` is a bare filename
+  (`pkg/scanapp/scan.go:19`) joined via `filepath.Join`
+  (`pkg/scanapp/resume_path.go:20`). The earlier advice to make production
+  `os.TempDir()`-based would have changed working code for no reason.
+- `TestEnsureFDLimit_WhenWorkersExceedLimit_ReturnsError` relies on Unix
+  `RLIMIT_NOFILE`. **Do not fix this with `t.Skip` on Windows** (the earlier
+  advice here): skipping deletes the contract instead of verifying it. Fixed by
+  splitting the test by build tag so each platform asserts its own documented
+  contract — unix keeps the error assertion, windows asserts the no-op contract
+  in `fdlimit_windows.go`.
+- Three timing tests (dashboard refresh, pressure poll, cancel-drain) were
+  load-dependent flakes: Windows' default timer granularity is ~15.6ms, far
+  coarser than Linux. Fixed by waiting for events with a generous timeout
+  (`internal/testkit.WaitFor`) rather than sleeping a fixed budget. **Lengthening
+  a sleep is not a fix** — it raises the stake on the same gamble.
+
+**e2e determinism — still open:**
 - The `api_timeout` failure-injection scenario in `e2e/run_e2e.sh` is
   timing-sensitive: the scan can complete before the pressure-timeout turns
   fatal on fast runners. Make the scenario deterministic (e.g. more work, or a
-  hard fail signal) so the assertion is stable.
+  hard fail signal) so the assertion is stable, then drop that job's
+  `continue-on-error`.
 
-Each fix must follow test-first (constitution III). When a job is green on
-Windows/CI, remove its `continue-on-error` in `.github/workflows/ci.yml`.
+**Still uncovered on Windows** (Part 1 paid down test-quality debt; it did not
+add Windows-specific coverage). See `docs/windows-ci-fix/design.md` Part 2:
+file-handle release after a run, the full prep→scan→resume flow (e2e is
+Docker/Linux-only, so it has never run on Windows), append-reopen under Windows
+sharing semantics, and Windows path shapes. Interrupt-signal delivery is a
+documented gap — Windows has no real SIGINT and `os.Process.Signal(os.Interrupt)`
+is unsupported there, so it is left honestly unverified rather than faked.
+
+Each fix must follow test-first (constitution III).
 
 ## 7. Release evidence
 
