@@ -1306,11 +1306,39 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	outFile := filepath.Join(tmp, "scan_results.csv")
 	resumeFile := filepath.Join(tmp, "resume.json")
 
-	// 4 IPs x 4 ports = 16 tasks, slow enough to cancel mid-scan
-	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/30,127.0.0.0/30,loopback\n"), 0o644); err != nil {
+	// A real local listener makes the first probe's outcome deterministic on
+	// every platform. The previous target, 127.0.0.0/30, relied on Linux
+	// treating all of 127.0.0.0/8 as loopback (127.0.0.2 refuses instantly);
+	// Windows typically binds only 127.0.0.1, so the other addresses may behave
+	// differently. 127.0.0.1/32 keeps every address well-defined, and /32 is not
+	// filtered as a broadcast address (pkg/task/broadcast.go:30-32).
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start local listener: %v", err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	openPort := listener.Addr().(*net.TCPAddr).Port
+
+	// 1 IP x 16 ports = 16 tasks, rate-limited to 2/s so the scan is guaranteed
+	// to still have work queued when the cancel arrives. The listening port is
+	// probed first so at least one probe completes immediately.
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1,127.0.0.1/32,loopback\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(portFile, []byte("1/tcp\n2/tcp\n3/tcp\n4/tcp\n"), 0o644); err != nil {
+	ports := []string{strconv.Itoa(openPort) + "/tcp"}
+	for p := 1; p <= 15; p++ {
+		ports = append(ports, strconv.Itoa(p)+"/tcp")
+	}
+	if err := os.WriteFile(portFile, []byte(strings.Join(ports, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1329,9 +1357,21 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 		LogLevel:           "error",
 	}
 
+	// Cancel on an observed event rather than after a fixed sleep: the first
+	// completed dial makes "at least one scan finished" a precondition instead
+	// of a bet on how fast the machine is. Once a dial has returned, its result
+	// is queued and the run loop drains every queued result before exiting.
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	firstDialDone := make(chan struct{})
+	var dialOnce sync.Once
+	dialer := &net.Dialer{}
 	go func() {
-		time.Sleep(80 * time.Millisecond)
+		select {
+		case <-firstDialDone:
+		case <-time.After(30 * time.Second):
+		}
 		cancel()
 	}()
 
@@ -1339,6 +1379,11 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	_ = Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeFile,
+		Dial: func(dialCtx context.Context, network, address string) (net.Conn, error) {
+			conn, dialErr := dialer.DialContext(dialCtx, network, address)
+			dialOnce.Do(func() { close(firstDialDone) })
+			return conn, dialErr
+		},
 	})
 
 	chunks, err := state.Load(resumeFile)
@@ -1348,9 +1393,28 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	if len(chunks) == 0 {
 		t.Fatal("expected at least 1 chunk in resume state")
 	}
-	// ScannedCount should be > 0 (workers completed some scans before drain)
-	if chunks[0].ScannedCount == 0 {
+
+	scanned := 0
+	for _, chunk := range chunks {
+		scanned += chunk.ScannedCount
+	}
+	if scanned == 0 {
 		t.Fatal("expected ScannedCount > 0 after draining in-flight results")
+	}
+
+	// The 2.1.0 durability contract is that the persisted ScannedCount accounts
+	// for exactly the results that reached the output file — not merely that
+	// "something was scanned". A mismatch means resume would re-scan or skip
+	// work after an interruption.
+	scanPath := mustFindOne(t, filepath.Join(tmp, "scan_results-*.csv"))
+	data, readErr := os.ReadFile(scanPath)
+	if readErr != nil {
+		t.Fatalf("failed to read scan output %s: %v", scanPath, readErr)
+	}
+	dataRows := lineCount(string(data)) - 1 // minus the header row
+	if scanned != dataRows {
+		t.Fatalf("resume ScannedCount=%d does not match %d data rows written to %s:\n%s",
+			scanned, dataRows, scanPath, string(data))
 	}
 }
 

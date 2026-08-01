@@ -73,10 +73,18 @@ func TestDashboardRuntime_StartRefreshLoopUntilStopped(t *testing.T) {
 	logger := newLogger("error", false, io.Discard)
 	var renders atomic.Int32
 
+	// The refresh loop is asynchronous, so the test waits for the event (the
+	// second render) instead of sleeping a fixed budget and hoping it was long
+	// enough. Windows' default timer granularity (~15.6ms) is coarser than the
+	// 10ms interval and CI runners are loaded, so a fixed budget measures how
+	// busy the machine is, not whether the loop refreshes.
+	renderedTwice := make(chan struct{})
 	runtime := newDashboardRuntime(state, stderr, dashboardRuntimeOptions{
 		refreshInterval: 10 * time.Millisecond,
 		renderer: dashboardRendererStub{render: func(w io.Writer, _ dashboardSnapshot) error {
-			renders.Add(1)
+			if renders.Add(1) == 2 {
+				close(renderedTwice)
+			}
 			_, err := io.WriteString(w, "render\n")
 			return err
 		}},
@@ -86,15 +94,10 @@ func TestDashboardRuntime_StartRefreshLoopUntilStopped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	runtime.Start(ctx)
 
-	deadline := time.Now().Add(80 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if renders.Load() >= 2 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if renders.Load() < 2 {
-		t.Fatalf("expected refresh loop to render at least twice, got %d", renders.Load())
+	select {
+	case <-renderedTwice:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("expected refresh loop to render at least twice within 5s, got %d", renders.Load())
 	}
 
 	cancel()
