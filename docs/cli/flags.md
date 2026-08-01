@@ -107,6 +107,13 @@ inputs only; never scans or pings.
 - Batch output naming uses a shared timestamp suffix; same-second collisions
   append `-n`. `preping` writes `unreachable_results-<ts>.csv`; `scan` writes
   `scan_results-<ts>.csv` and `opened_results-<ts>.csv`.
+- **Ctrl+C keeps results; `-resume` appends to the same files.** `scan` writes
+  rows straight to the final `scan_results-<ts>.csv` / `opened_results-<ts>.csv`
+  (no `.tmp`), so an interrupt leaves every already-scanned row in place. The
+  chosen output paths are recorded in the resume snapshot, so resuming that
+  snapshot appends the remaining rows to the *same* files (one continuous file,
+  a single header) instead of minting a new timestamped pair. If the prior
+  output file was deleted before resuming, it is recreated with a header.
 - The `-unreachable-file` name is timestamped and non-deterministic — capture
   `preping`'s printed stdout path when chaining rather than hard-coding it.
 

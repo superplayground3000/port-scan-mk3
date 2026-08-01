@@ -2,6 +2,7 @@ package scanapp
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sort"
@@ -17,10 +18,14 @@ func reachablePredicate(sortedUnreachable []uint32) func(string) bool {
 	blocked := sortedUniqueIPv4U32(sortedUnreachable)
 	return func(ip string) bool {
 		parsed := net.ParseIP(strings.TrimSpace(ip))
-		if parsed == nil || parsed.To4() == nil {
+		v4 := parsed.To4()
+		if parsed == nil || v4 == nil {
 			return true
 		}
-		ipv4 := ipv4ToUint32(parsed.String())
+		// Derive the uint32 directly from the already-parsed IPv4 bytes instead
+		// of stringifying and re-parsing (the redundant second net.ParseIP that
+		// Phase 0 profiling flagged as the top CPU frame — design.md §3.3).
+		ipv4 := binary.BigEndian.Uint32(v4)
 		idx := sort.Search(len(blocked), func(i int) bool {
 			return blocked[i] >= ipv4
 		})

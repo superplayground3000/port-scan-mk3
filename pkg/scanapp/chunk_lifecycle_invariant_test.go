@@ -66,7 +66,7 @@ func assertBuildRuntimeParity(
 		}
 	}
 
-	runtimes, err := buildRuntimeWithPredicate(chunks, records, ports, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, reachable)
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, ports, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, reachable, nil)
 	if err != nil {
 		t.Fatalf("runtime re-derivation rejected freshly built chunks (invariant broken): %v", err)
 	}

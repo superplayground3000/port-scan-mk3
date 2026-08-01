@@ -1,0 +1,44 @@
+Phase 1 — after-optimization profile
+====================================
+Companion to profile-before.txt. Same benchmark
+(pkg/scanapp/resume_rebuild_bench_test.go), same machine, after:
+  1a: rich execution-key merge O(N^2) -> O(N) via per-group map index
+  1b: parse each IP once (no 2nd net.ParseIP in the predicate; sorts use a
+      precomputed scanTarget.ipU32 instead of net.ParseIP per comparison)
+
+Benchmark before -> after (ns/op, -benchtime=8x)
+------------------------------------------------
+basic_matched_130         12,848,219 ->   9,374,697   (-27%; allocs 71,126 -> 37,974)
+basic_amplified_4000     314,200,366 -> 252,377,451   (-20%; allocs 2,188,052 -> 1,168,052)
+rich /24 (256)               297,739 ->     248,658
+rich /23 (512)               733,816 ->     393,022
+rich /22 (1024)            2,141,462 ->     766,624   (2.8x)
+rich /21 (2048)            6,723,134 ->   1,653,357   (4.1x)
+rich /20 (4096)           24,979,041 ->   3,792,192   (6.6x, and the gap widens with N)
+
+Rich merge is now LINEAR. Per host-count doubling:
+  before (quadratic): /22->/21 x3.14, /21->/20 x3.72
+  after  (linear):    /22->/21 x2.16, /21->/20 x2.29
+
+pprof -top -cum after Phase 1 (key frames)
+------------------------------------------
+ 51.46%  buildCIDRGroupsWithPredicate      <- problem A (whole-input basic build) now on top
+ 26.57%  |- task.ExpandIPSelectors
+ 11.51%  |- filterScanTargets
+  3.97%  |    |- reachablePredicate.func1   (was 14.61% -- 2nd parse removed)
+  3.35%  |    |- ipv4ToUint32               (was 14.08% -- now the single legit parse)
+  -- GONE: richTargetIndexByExecutionKey (O(N^2) merge) and mergeRichTargetIntoGroup
+  -- GONE: net.ParseIP under the sort less-funcs (sorts now read scanTarget.ipU32)
+
+Flat top is now dominated by GC (runtime.scanObject 35.77%) from ExpandIPSelectors
+materializing IP strings, plus the basic build itself. That is problem A: the
+whole input CSV is still expanded on every resume. Phase 2 (expand only pending
+segments) targets exactly this remaining cost.
+
+Note: the profile is dominated by basic_amplified because the rich cases are now
+sub-4ms. One legitimate net.ParseIP per IP remains (at target creation, to fill
+ipU32, and one in the reachable filter); threading uint32 all the way through the
+predicate/filter is a documented optional follow-up, deferred because it risks
+changing non-IPv4 handling for marginal gain.
+
+Verification: make verify exit 0 (coverage 85.5%).

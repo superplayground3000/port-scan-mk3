@@ -16,9 +16,11 @@
 package writer
 
 import (
+	"bytes"
 	"encoding/csv"
 	"io"
 	"strconv"
+	"strings"
 )
 
 // Record is one scan result row written to the output CSV. All fields are
@@ -77,6 +79,28 @@ var Columns = []ColumnDef{
 	{"src_network_segment", func(r Record) string { return r.SrcNetworkSegment }},
 }
 
+// CanonicalHeader returns the exact header line the CSV writers emit for the
+// Columns schema: the column names encoded exactly as csv.Writer would encode
+// them (comma-separated, quoted only where necessary), with no trailing
+// newline. Callers reopening a result file in append mode compare the file's
+// existing first line against this value to prove the file was written with the
+// current schema before appending to it (design §3.7). Because the value is
+// produced by the same csv encoder WriteHeader uses, it matches byte-for-byte
+// (minus the line terminator).
+func CanonicalHeader() string {
+	names := make([]string, len(Columns))
+	for i, col := range Columns {
+		names[i] = col.Name
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	// Writing a fixed, comma-safe header cannot fail; ignore the error and rely
+	// on Flush's error, which is likewise nil for an in-memory buffer.
+	_ = w.Write(names)
+	w.Flush()
+	return strings.TrimRight(buf.String(), "\r\n")
+}
+
 // CSVWriter writes scan result rows to a CSV output with the fixed Columns
 // header. It is safe for concurrent use only if each Write call is externally
 // serialized (the scan pipeline serializes writes at the dispatcher level).
@@ -90,6 +114,14 @@ type CSVWriter struct {
 // the underlying writer if needed.
 func NewCSVWriter(out io.Writer) *CSVWriter {
 	return &CSVWriter{w: csv.NewWriter(out)}
+}
+
+// NewCSVWriterAppending creates a CSVWriter for appending to a destination that
+// already contains the canonical header. It starts with wroteHeader=true so the
+// first Write does NOT re-emit a header and WriteHeader is a no-op. Use this when
+// reopening an existing result file in append mode (design §3.7).
+func NewCSVWriterAppending(out io.Writer) *CSVWriter {
+	return &CSVWriter{w: csv.NewWriter(out), wroteHeader: true}
 }
 
 // Write appends a single record to the CSV, writing the header on the first

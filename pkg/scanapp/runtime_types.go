@@ -29,8 +29,12 @@ type chunkRuntime struct {
 type scanTarget struct {
 	ip     string
 	ipCidr string
-	port   int
-	meta   targetMeta
+	// ipU32 is the target IP parsed once at creation time (big-endian uint32 of
+	// the IPv4 bytes, 0 for non-IPv4) so group sorts never re-parse per
+	// comparison. See design.md §3.3.
+	ipU32 uint32
+	port  int
+	meta  targetMeta
 }
 
 type scanTask struct {

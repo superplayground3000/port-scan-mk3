@@ -55,7 +55,7 @@ func buildGroups(records []input.CIDRRecord, strategy groupBuildStrategy) (map[s
 
 	for key, group := range out {
 		sort.Slice(group.targets, func(i, j int) bool {
-			return ipv4ToUint32(group.targets[i].ip) < ipv4ToUint32(group.targets[j].ip)
+			return group.targets[i].ipU32 < group.targets[j].ipU32
 		})
 		out[key] = group
 	}
@@ -129,6 +129,7 @@ func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
 		targets = append(targets, scanTarget{
 			ip:     ip,
 			ipCidr: cidr,
+			ipU32:  ipv4ToUint32(ip),
 			meta: targetMeta{
 				fabName:  rec.FabName,
 				cidrName: rec.CIDRName,
@@ -229,7 +230,7 @@ func buildCIDRGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 
 	for key, group := range out {
 		sort.Slice(group.targets, func(i, j int) bool {
-			return ipv4ToUint32(group.targets[i].ip) < ipv4ToUint32(group.targets[j].ip)
+			return group.targets[i].ipU32 < group.targets[j].ipU32
 		})
 		out[key] = group
 	}
@@ -242,7 +243,7 @@ func buildRichGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, erro
 
 func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
 	predicate := normalizeReachablePredicate(reachable)
-	groups := make(map[string]cidrGroup)
+	builders := make(map[string]*richGroupBuilder)
 	ownerByExecutionKey := make(map[string]string)
 	hasValidRichInput := false
 
@@ -264,50 +265,72 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 			continue
 		}
 
-		group := groups[cidr]
 		for _, target := range targets {
+			// Normalize the execution key once, here at ingest, instead of on
+			// every intra-group comparison (design.md §3.1).
 			key := strings.TrimSpace(target.meta.executionKey)
 			if key == "" {
 				return nil, fmt.Errorf("rich record missing execution_key at row %d", rec.RowNumber)
 			}
+			// Cross-segment first-claim ownership: the first segment to produce a
+			// key owns it; a later, different segment's copy is redirected into
+			// the owner's group (preserved from the original linear-scan build).
 			ownerCIDR, ok := ownerByExecutionKey[key]
 			if !ok {
+				ownerCIDR = cidr
 				ownerByExecutionKey[key] = cidr
-				group, err = mergeRichTargetIntoGroup(group, target)
-				if err != nil {
-					return nil, err
-				}
-				continue
 			}
-			if ownerCIDR == cidr {
-				group, err = mergeRichTargetIntoGroup(group, target)
-				if err != nil {
-					return nil, err
-				}
-				continue
+			b := builders[ownerCIDR]
+			if b == nil {
+				b = newRichGroupBuilder()
+				builders[ownerCIDR] = b
 			}
-
-			ownerGroup := groups[ownerCIDR]
-			ownerGroup, err = mergeRichTargetIntoGroup(ownerGroup, target)
-			if err != nil {
+			if err := b.mergeTarget(key, target); err != nil {
 				return nil, err
 			}
-			groups[ownerCIDR] = ownerGroup
-		}
-		if len(group.targets) > 0 {
-			groups[cidr] = group
 		}
 	}
 
-	if len(groups) == 0 {
+	if len(builders) == 0 {
 		if hasValidRichInput {
-			return groups, nil
+			return make(map[string]cidrGroup), nil
 		}
 		return nil, fmt.Errorf("no usable input rows")
 	}
 
+	groups := make(map[string]cidrGroup, len(builders))
+	for cidr, b := range builders {
+		groups[cidr] = cidrGroup{targets: b.targets}
+	}
 	sortRichGroups(groups)
 	return groups, nil
+}
+
+// richGroupBuilder accumulates the targets of a single rich group during
+// buildRichGroupsWithPredicate, indexing them by normalized execution key so
+// that de-duplication/metadata merges are O(1) amortized instead of a linear
+// scan per inserted target (the O(N^2) fix in design.md §3.1). It is a
+// build-time helper only; the finished target slice is copied into the public
+// cidrGroup once the build completes, so cidrGroup's shape is unchanged.
+type richGroupBuilder struct {
+	targets []scanTarget
+	index   map[string]int // normalized execution key -> index into targets
+}
+
+func newRichGroupBuilder() *richGroupBuilder {
+	return &richGroupBuilder{index: make(map[string]int)}
+}
+
+// mergeTarget appends target as a new entry, or merges its metadata into the
+// existing entry that already owns key. key must be the normalized (TrimSpace)
+// execution key of target.
+func (b *richGroupBuilder) mergeTarget(key string, target scanTarget) error {
+	if idx, ok := b.index[key]; ok {
+		return mergeRichTargetValues(&b.targets[idx], target)
+	}
+	b.index[key] = len(b.targets)
+	b.targets = append(b.targets, target)
+	return nil
 }
 
 func richCIDRKey(rec input.CIDRRecord) (string, error) {
@@ -353,6 +376,7 @@ func richTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
 		targets = append(targets, scanTarget{
 			ip:     ip,
 			ipCidr: cidr,
+			ipU32:  ipv4ToUint32(ip),
 			port:   rec.Port,
 			meta: targetMeta{
 				fabName:           rec.FabName,
@@ -422,6 +446,12 @@ func mergeRichMetadataFromRecord(target *scanTarget, rec input.CIDRRecord) {
 	target.meta.srcNetworkSegment = mergeFieldValue(target.meta.srcNetworkSegment, rec.SrcNetworkSegment)
 }
 
+// richTargetIndexByExecutionKey is an O(N) linear scan retained ONLY for the
+// groupBuildStrategy path (richGroupStrategy.MergeGroup), which is exercised by
+// tests, not production. The production rich build (buildRichGroupsWithPredicate)
+// de-duplicates via a per-group execution-key map (richGroupBuilder) and does not
+// call this. Do not route large rich input through buildGroups(richGroupStrategy{}):
+// it would fall back to the O(N^2) merge this function makes.
 func richTargetIndexByExecutionKey(targets []scanTarget, executionKey string) int {
 	for i := range targets {
 		if strings.TrimSpace(targets[i].meta.executionKey) == executionKey {
@@ -472,28 +502,13 @@ func filterScanTargets(targets []scanTarget, reachable func(string) bool) []scan
 	return filtered
 }
 
-func mergeRichTargetIntoGroup(group cidrGroup, target scanTarget) (cidrGroup, error) {
-	key := strings.TrimSpace(target.meta.executionKey)
-	idx := richTargetIndexByExecutionKey(group.targets, key)
-	if idx < 0 {
-		group.targets = append(group.targets, target)
-		return group, nil
-	}
-	if err := mergeRichTargetValues(&group.targets[idx], target); err != nil {
-		return cidrGroup{}, err
-	}
-	return group, nil
-}
-
 func sortRichGroups(groups map[string]cidrGroup) {
 	for cidr, group := range groups {
 		sort.Slice(group.targets, func(i, j int) bool {
 			left := group.targets[i]
 			right := group.targets[j]
-			leftIP := ipv4ToUint32(left.ip)
-			rightIP := ipv4ToUint32(right.ip)
-			if leftIP != rightIP {
-				return leftIP < rightIP
+			if left.ipU32 != right.ipU32 {
+				return left.ipU32 < right.ipU32
 			}
 			if left.port != right.port {
 				return left.port < right.port

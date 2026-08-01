@@ -159,14 +159,30 @@ scan_results-20240318T123456Z-1.csv
 scan_results-20240318T123456Z-2.csv
 ```
 
-### Temp File Pattern
+### Direct-Write Pattern (no `.tmp`)
 
-During scan: `.tmp` suffix
-- `scan_results-20240318T123456Z.csv.tmp`
-- `opened_results-20240318T123456Z.csv.tmp`
+Scan and open-only results are written DIRECTLY to their final paths — there is
+no `.tmp` intermediate and no rename-on-success step. This makes results durable
+on a graceful Ctrl+C (every already-scanned row survives) and lets `-resume`
+reopen the same file in append mode:
 
-On success: rename to final
-On failure: keep `.tmp` for debugging
+- Fresh run: `os.Create` + `NewCSVWriter` (header written on first `Write`).
+- Resume (append): `O_APPEND|O_CREATE` + `NewCSVWriterAppending` (header assumed
+  present); if the file is missing/empty, fall back to `NewCSVWriter` so the
+  header is recreated.
+
+(The `unreachable_results` writer used by `preping` still uses the `.tmp` +
+rename pattern; only the scan/open result files changed.)
+
+### NewCSVWriterAppending
+
+```go
+func NewCSVWriterAppending(out io.Writer) *CSVWriter
+```
+
+Returns a `CSVWriter` pre-marked as having written its header, so the first
+`Write` (and any `WriteHeader`) emits no header row. Use it when appending to a
+file that already contains the canonical header.
 
 ## 6. Writer Contract
 
