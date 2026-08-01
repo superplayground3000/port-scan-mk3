@@ -220,13 +220,17 @@ func TestRun_WhenCompleted_ReleasesOutputFileHandles(t *testing.T) {
 
 	assertReleasedHandle(t, "scan results file", scanPath)
 	assertReleasedHandle(t, "open-only results file", openPath)
-	assertReleasedHandle(t, "input bucket snapshot", fx.bucketFile)
 }
 
 // TestRun_WhenCanceled_ReleasesOutputFileHandles is the interrupt half, and the
-// more valuable one: the cancel path unwinds through defers and an extra
-// snapshot write, so it is where a handle is most likely to be leaked. Every
-// file the run touched must still be renameable afterwards.
+// more valuable one: the cancel path unwinds through defers, so it is where a
+// handle is most likely to be leaked.
+//
+// Only the result files are probed. The bucket snapshot and the resume state
+// file are read and written with os.ReadFile/os.WriteFile (pkg/state/state.go),
+// which never leave a *os.File open, so a rename probe on them could not fail
+// however the code regressed — a test that cannot fail is worse than no test,
+// because it reads as coverage.
 func TestRun_WhenCanceled_ReleasesOutputFileHandles(t *testing.T) {
 	fx := newOutputLifecycleFixture(t, 63)
 	resumeStateFile := filepath.Join(fx.dir, "resume_state.json")
@@ -251,8 +255,6 @@ func TestRun_WhenCanceled_ReleasesOutputFileHandles(t *testing.T) {
 
 	assertReleasedHandle(t, "scan results file", scanPath)
 	assertReleasedHandle(t, "open-only results file", openPath)
-	assertReleasedHandle(t, "input bucket snapshot", fx.bucketFile)
-	assertReleasedHandle(t, "persisted resume state file", resumeStateFile)
 }
 
 // TestRun_WhenResumedIntoSameOutputFile_ReopensAndAppendsWithoutDuplicatingHeader
