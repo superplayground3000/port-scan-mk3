@@ -14,7 +14,10 @@ import (
 
 func TestOutputPath(t *testing.T) {
 	ts := time.Date(2026, 4, 16, 15, 30, 0, 0, time.UTC)
-	got := OutputPath("/data/out", "dc-east", ts)
+	// Compare in slash form so the expectation stays a human-readable literal
+	// on both platforms. Building the expectation with filepath.Join would call
+	// the same function as production and make the assertion tautological.
+	got := filepath.ToSlash(OutputPath("/data/out", "dc-east", ts))
 	expected := "/data/out/dc-east/20260416T153000Z/input.csv"
 	if got != expected {
 		t.Errorf("expected %s, got %s", expected, got)
@@ -23,7 +26,7 @@ func TestOutputPath(t *testing.T) {
 
 func TestOutputPath_SpecialCharsInFab(t *testing.T) {
 	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	got := OutputPath("/out", "fab-1", ts)
+	got := filepath.ToSlash(OutputPath("/out", "fab-1", ts))
 	expected := "/out/fab-1/20260102T030405Z/input.csv"
 	if got != expected {
 		t.Errorf("expected %s, got %s", expected, got)
