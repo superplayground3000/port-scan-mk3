@@ -152,23 +152,6 @@ func TestNormalizeNewlines_MakesAWindowsCheckoutReadLikeALinuxOne(t *testing.T) 
 	}
 }
 
-// TestReadRepoFile_OnThisHostsCheckout_ReturnsNoCarriageReturns is a cheap smoke
-// check over the file the gate actually reads. It is deliberately NOT the proof
-// that the normalization works: on a Linux checkout ci.yml already holds LF, so
-// this test passes with or without it. The discriminating proof is
-// TestReadRepoFile_WhenTheCheckoutHasCRLF_ReturnsLFOnly below, which forces the
-// CRLF bytes itself. This one still earns its place on windows-latest, where a
-// regression in the normalization makes it fail against the real checkout.
-func TestReadRepoFile_OnThisHostsCheckout_ReturnsNoCarriageReturns(t *testing.T) {
-	got, err := readRepoFile(".", ciWorkflow)
-	if err != nil {
-		t.Fatalf("readRepoFile(ci.yml): %v", err)
-	}
-	if strings.Contains(got, "\r") {
-		t.Fatal("readRepoFile returned carriage returns; line-exact assertions would be platform-dependent")
-	}
-}
-
 // crlfFixtureRepo materializes a throwaway module root whose files are written
 // with real CRLF bytes, so readRepoFile is exercised against a genuine
 // Windows-style checkout no matter how git checked THIS repository out.

@@ -69,19 +69,31 @@ jobs:
     # continue-on-error to get a red run green — fix the cause, and see
     # docs/MAINTENANCE.md section 6.
     #
-    # All the logic lives in scripts/windows_gate.ps1 so it is reproducible on a
-    # developer's machine (.claude/rules/90-letter-to-future-sessions.md: keep the
-    # workflow thin, put gates in the scripts). The script builds and launches
-    # every cmd/ .exe, runs `go test -race -shuffle=on ./...` with the race
-    # detector proven armed, and drives a loopback-only
-    # generate-buckets -> scan -> resume pipeline under a path containing spaces.
-    # Docker e2e (the job below) is LINUX coverage only — it never runs a .exe.
+    # All the logic lives in the scripts so it is reproducible on a developer's
+    # machine (.claude/rules/90-letter-to-future-sessions.md: keep the workflow
+    # thin, put gates in the scripts). scripts/windows_setup_mingw.ps1
+    # PROVISIONS the race prerequisites explicitly — a 64-bit MinGW-w64 gcc and
+    # ASCII TEMP/TMP/GOTMPDIR — instead of trusting whatever the windows-latest
+    # image happens to preinstall (issue #63; that image-dependence breaks
+    # silently when GitHub changes the image). It fails loudly if a 64-bit gcc
+    # cannot be provided, so the gate never degrades to a non-race run. The gate
+    # script then builds and launches every cmd/ .exe, runs
+    # `go test -race -shuffle=on ./...` with the race detector proven armed, and
+    # drives a loopback-only generate-buckets -> scan -> resume pipeline under a
+    # path containing spaces. Both scripts, their ordering, and the provisioning
+    # they perform are pinned by internal/ciguard so a future edit that drops the
+    # setup fails `make verify` on every platform instead of quietly reverting to
+    # image-dependence. Docker e2e (the job below) is LINUX coverage only — it
+    # never runs a .exe.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: provision race prerequisites (64-bit MinGW-w64 + ASCII temp)
+        shell: pwsh
+        run: ./scripts/windows_setup_mingw.ps1
       - name: native Windows gate
         shell: pwsh
         run: ./scripts/windows_gate.ps1
