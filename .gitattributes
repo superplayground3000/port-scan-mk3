@@ -1,0 +1,68 @@
+# Repository-owned line endings (issue #64).
+#
+# Without this file, git falls back to each developer's `core.autocrlf`. The
+# Git for Windows installer offers `core.autocrlf=true` as its default, which
+# rewrites every LF to CRLF at checkout time — so a pristine Windows clone
+# fails `gofmt -l` (scripts/verify.sh) before anyone has edited a line, and
+# bash refuses the CRLF shell scripts. Declaring the rules here makes the
+# checkout a property of the repository instead of a property of the machine.
+#
+# Guarded by tests/repohygiene/line_endings_test.go, which re-materialises the
+# tracked files through git with core.autocrlf=true forced on and asserts the
+# result is LF and gofmt-clean. That test runs on both the Linux and the
+# Windows CI jobs (`go test ./...`), and `scripts/verify.sh` additionally
+# checks the developer's own working tree.
+
+# Default: let git detect text vs binary, normalise text to LF in the index,
+# and check text out as LF on every platform. The index is already all-LF, so
+# this normalises nothing that exists today — it only pins the future.
+* text=auto eol=lf
+
+# --- Explicit rules for the file types the quality gates depend on ----------
+# Redundant with the catch-all above, on purpose: these are the ones whose
+# breakage is a build failure, so they should survive a careless edit of the
+# catch-all line.
+*.go        text eol=lf
+*.sh        text eol=lf
+*.mod       text eol=lf
+*.sum       text eol=lf
+Makefile    text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# PowerShell: LF. Deliberate. Windows PowerShell 5.1 and PowerShell 7 both
+# execute LF-only scripts, the repository's only .ps1
+# (labs/repeat-scan-wrappers/windows/scan-loop.ps1) is LF today and is linted
+# in a Linux container, and a single LF rule keeps the regression check simple.
+# Alternative, if this project ever ships Authenticode-signed scripts: switch
+# to `*.ps1 text eol=crlf`, because a signature block appended by
+# Set-AuthenticodeSignature assumes CRLF.
+*.ps1       text eol=lf
+
+# Batch files: CRLF. Deliberate, and the one exception to LF-everywhere.
+# cmd.exe parses a .bat/.cmd file line by line as it executes it, and its
+# handling of labels (goto targets) and multi-line constructs depends on the
+# CR; LF-only batch files fail in ways that are hard to diagnose. These must
+# reach a Windows disk as CRLF regardless of which platform committed them.
+# The repository has no batch file today; the rule is here so the first one
+# added is correct by default.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# --- Generated / binary artifacts ------------------------------------------
+# `binary` is git's built-in macro for `-text -diff`: never EOL-converted (a
+# CRLF rewrite would corrupt them) and never diffed as text. `text=auto` above
+# would already auto-detect these, but detection is a heuristic and a corrupted
+# committed binary is silent — so the committed build outputs are explicit.
+dist/**     binary
+*.exe       binary
+*.pptx      binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary

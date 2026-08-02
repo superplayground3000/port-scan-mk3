@@ -21,9 +21,10 @@ their trigger applies.
 - Build one command: `go build ./cmd/port-scan` (commands live in `cmd/*/`;
   there is **no** `cmd/app`)
 - Run tests: `make test` (`go test -race -shuffle=on ./...`)
-- **Full quality gate (run before claiming done): `make verify`** — runs gofmt,
-  `go vet`, build, race tests, and the >=85% coverage gate. It mirrors CI
-  exactly. Add the isolated Docker e2e with `make verify-e2e`.
+- **Full quality gate (run before claiming done): `make verify`** — runs the
+  line-ending check, gofmt, `go vet`, build, race tests, and the >=85% coverage
+  gate. It mirrors CI exactly. Add the isolated Docker e2e with
+  `make verify-e2e`.
 - Format: `make fmt` · Lint: `make lint` (uses golangci-lint if installed) ·
   Tidy: `go mod tidy` · List targets: `make help`
 
