@@ -56,11 +56,24 @@ make build-windows  # Windows x64 only
 `make verify` needs a POSIX shell and `make verify-e2e` builds and runs **Linux**
 binaries inside Docker containers — see section 4. Neither of them ever executes
 a Windows `.exe`. `scripts/windows_gate.ps1` is that missing half, and it is the
-only place the logic lives; `.github/workflows/ci.yml` just calls it, so the CI
-job and a developer's machine run exactly the same checks.
+only place the gate logic lives; `.github/workflows/ci.yml` just calls it, so the
+CI job and a developer's machine run exactly the same checks.
+
+The workflow runs one script **before** the gate:
+`scripts/windows_setup_mingw.ps1` provisions the race-build prerequisites — a
+64-bit MinGW-w64 gcc (installed with Chocolatey when the machine has none) and
+ASCII `TEMP`/`TMP`/`GOTMPDIR` — and exports them to the gate step via
+`$GITHUB_ENV`/`$GITHUB_PATH`. This is deliberate: **the job must not depend on
+whatever the `windows-latest` image happens to preinstall** (issue #63), because
+that dependence breaks silently the day GitHub changes the image. The setup
+script **throws** if a genuine 64-bit gcc cannot be provisioned, so the gate
+never degrades to a non-race run. It is idempotent — a developer with MinGW-w64
+already installed can run it (or skip it) and then run the gate in the same
+shell.
 
 ```powershell
 # from the repo root, in PowerShell (pwsh 7 or Windows PowerShell 5.1)
+.\scripts\windows_setup_mingw.ps1   # provision 64-bit MinGW-w64 + ASCII temp
 .\scripts\windows_gate.ps1
 # add -KeepWorkspace to inspect the scratch files after a failure
 ```
@@ -108,13 +121,16 @@ cancellation stays honestly unverified (section 6).
 If the compiler is missing the gate **fails**. It never falls back to a non-race
 run: a green "tests passed" line that silently dropped `-race` is worse than a
 red job, because it looks like coverage that does not exist. The contract tests
-in `internal/ciguard/windows_gate_test.go` run inside `make verify` on every
-platform and keep the script and the workflow honest. `internal/ciguard` is a
+in `internal/ciguard/windows_gate_test.go` and
+`internal/ciguard/windows_setup_test.go` run inside `make verify` on every
+platform and keep the scripts and the workflow honest. `internal/ciguard` is a
 **test-only** package — it holds no production code and ships in no binary; its
 sole job is to make CI-config drift fail a normal `go test`. Those tests fail if `cmd/` grows
 a command the gate does not launch, if `-race`/`-shuffle=on` or the compiler
-`throw` disappears, if a non-loopback address appears in the script, or if the
-Windows job stops calling the script or becomes non-blocking.
+`throw` disappears, if a non-loopback address appears in the script, if the
+Windows job stops calling the script or becomes non-blocking, or if the job stops
+provisioning the 64-bit MinGW-w64 compiler and ASCII temp before the gate (i.e.
+reverts to depending on the runner image).
 
 ## 3. Complete runnable example (self-contained, loopback only)
 
