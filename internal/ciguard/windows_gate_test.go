@@ -20,7 +20,7 @@ const ciWorkflow = ".github/workflows/ci.yml"
 
 func readGateScript(t *testing.T) string {
 	t.Helper()
-	body, err := ReadRepoFile(".", windowsGateScript)
+	body, err := readRepoFile(".", windowsGateScript)
 	if err != nil {
 		t.Fatalf("the native Windows gate script is missing: %v", err)
 	}
@@ -32,9 +32,9 @@ func readGateScript(t *testing.T) string {
 // expectation is derived from the filesystem, not from a hardcoded five, so
 // adding a sixth command under cmd/ fails this test until the gate covers it.
 func TestWindowsGateScript_LaunchesEveryCommandUnderCmd(t *testing.T) {
-	root, err := RepoRoot(".")
+	root, err := repoRoot(".")
 	if err != nil {
-		t.Fatalf("RepoRoot: %v", err)
+		t.Fatalf("repoRoot: %v", err)
 	}
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
@@ -153,7 +153,7 @@ func TestWindowsGateScript_UsesAnOutputPathContainingSpaces(t *testing.T) {
 // properties the workflow owns: it delegates to the script (repo rule — logic
 // lives in scripts, the workflow stays thin) and it is blocking.
 func TestCIWorkflow_WindowsJobRunsTheGateScriptAndIsBlocking(t *testing.T) {
-	body, err := ReadRepoFile(".", ciWorkflow)
+	body, err := readRepoFile(".", ciWorkflow)
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
@@ -179,28 +179,46 @@ func TestCIWorkflow_WindowsJobRunsTheGateScriptAndIsBlocking(t *testing.T) {
 	}
 }
 
-// TestWindowsJobBlock_SurvivesACRLFCheckout is the regression test for the very
-// first red run of the native Windows gate: on windows-latest git checks ci.yml
-// out with CRLF, the job key then reads "  windows-build-test:\r", the exact
-// match failed, and the gate reported that the job had been deleted. It pins
-// both halves of the fix — the raw CRLF text must NOT parse (so the assertion is
-// not vacuous) and the text ReadRepoFile returns must.
-func TestWindowsJobBlock_SurvivesACRLFCheckout(t *testing.T) {
-	body, err := ReadRepoFile(".", ciWorkflow)
+// TestWindowsJobBlock_OnACRLFCheckout_StillFindsTheJob is the regression test
+// for the very first red run of the native Windows gate: on windows-latest git
+// checks ci.yml out with CRLF, the job key then reads "  windows-build-test:\r",
+// the exact match failed, and the gate reported that the job had been deleted.
+//
+// It drives the real ci.yml through a forced-CRLF fixture on disk, so it fails
+// if readRepoFile stops normalizing — reading the host's own checkout could not
+// prove that on Linux. Both halves are pinned: the raw CRLF bytes must NOT parse
+// (otherwise the assertion would be vacuous) and the same file read through
+// readRepoFile must.
+func TestWindowsJobBlock_OnACRLFCheckout_StillFindsTheJob(t *testing.T) {
+	real, err := readRepoFile(".", ciWorkflow)
 	if err != nil {
-		t.Fatalf("read workflow: %v", err)
+		t.Fatalf("read the real workflow: %v", err)
 	}
-	crlf := strings.ReplaceAll(body, "\n", "\r\n")
+	real = normalizeNewlines(real) // independent of whether readRepoFile normalizes
+	if _, ok := windowsJobBlock(real); !ok {
+		t.Fatalf("%s does not define a `windows-build-test:` job; the CRLF fixture would be vacuous", ciWorkflow)
+	}
 
-	if _, ok := windowsJobBlock(crlf); ok {
-		t.Fatal("windowsJobBlock matched raw CRLF text; this test can no longer detect the normalization being removed")
+	root := crlfFixtureRepo(t, ciWorkflow, real)
+
+	rawBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ciWorkflow)))
+	if err != nil {
+		t.Fatalf("read fixture bytes: %v", err)
 	}
-	job, ok := windowsJobBlock(normalizeNewlines(crlf))
+	if _, ok := windowsJobBlock(string(rawBytes)); ok {
+		t.Fatal("windowsJobBlock matched raw CRLF bytes; this test can no longer detect the normalization being removed")
+	}
+
+	body, err := readRepoFile(root, ciWorkflow)
+	if err != nil {
+		t.Fatalf("readRepoFile on the CRLF fixture: %v", err)
+	}
+	job, ok := windowsJobBlock(body)
 	if !ok {
-		t.Fatal("windowsJobBlock could not find the job after newline normalization — a Windows checkout would report the job as deleted")
+		t.Fatal("windowsJobBlock could not find windows-build-test after readRepoFile — a Windows checkout would report the job as deleted")
 	}
 	if !strings.Contains(job, "windows-latest") {
-		t.Fatalf("normalized job block looks wrong:\n%s", job)
+		t.Fatalf("job block read from the CRLF fixture looks wrong:\n%s", job)
 	}
 }
 

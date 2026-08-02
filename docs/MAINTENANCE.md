@@ -109,7 +109,9 @@ If the compiler is missing the gate **fails**. It never falls back to a non-race
 run: a green "tests passed" line that silently dropped `-race` is worse than a
 red job, because it looks like coverage that does not exist. The contract tests
 in `internal/ciguard/windows_gate_test.go` run inside `make verify` on every
-platform and keep the script and the workflow honest — they fail if `cmd/` grows
+platform and keep the script and the workflow honest. `internal/ciguard` is a
+**test-only** package — it holds no production code and ships in no binary; its
+sole job is to make CI-config drift fail a normal `go test`. Those tests fail if `cmd/` grows
 a command the gate does not launch, if `-race`/`-shuffle=on` or the compiler
 `throw` disappears, if a non-loopback address appears in the script, or if the
 Windows job stops calling the script or becomes non-blocking.
