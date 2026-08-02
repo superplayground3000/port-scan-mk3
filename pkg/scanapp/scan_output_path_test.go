@@ -138,6 +138,27 @@ func TestRun_WhenResumedFromDifferentWorkingDirectory_AppendsToOriginalOutputs(t
 	if n := bytes.Count(raw, []byte("ip,ip_cidr,port,status")); n != 1 {
 		t.Fatalf("expected exactly one header line in %s, got %d", scanPath, n)
 	}
+
+	// Issue #61's last acceptance bullet: "the snapshot continues to reference the
+	// intended files". A run that finishes cleanly does not re-save the snapshot
+	// (persistResumeSnapshot returns early when nothing is resumable), so what is
+	// on disk here is exactly what run 1 recorded from directory A. Before the fix
+	// that was a bare cwd-relative name - the very string that made this dir-B
+	// resume open a second output set - so this assertion discriminates on the
+	// recorded value itself, not merely on which files happen to exist.
+	after, err := state.LoadSnapshot(bucketsFile)
+	if err != nil {
+		t.Fatalf("load snapshot after the cross-directory resume: %v", err)
+	}
+	if after.Output == nil {
+		t.Fatal("expected the snapshot to still record its output paths")
+	}
+	if after.Output.ScanPath != scanPath {
+		t.Fatalf("snapshot scan_path must still reference %s, got %q", scanPath, after.Output.ScanPath)
+	}
+	if after.Output.OpenPath != openPath {
+		t.Fatalf("snapshot open_path must still reference %s, got %q", openPath, after.Output.OpenPath)
+	}
 }
 
 // TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute is
