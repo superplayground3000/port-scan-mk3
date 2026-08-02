@@ -162,9 +162,10 @@ them:
   (so an unrelated error cannot masquerade as the pressure path), and validates
   the snapshot with `assert-resume-snapshot -require-progress -require-remaining`
   (the snapshot path IS the scan's `-resume` input, so it must show both an
-  advanced cursor and work still pending). After the threshold is served a short
-  `POST_FATAL_GRACE` window catches a scan that hangs instead of aborting, in
-  seconds rather than at the `SCAN_HARD_LIMIT` ceiling.
+  advanced cursor and work still pending). A scan that hangs after the pressure
+  path goes fatal is still caught: the outer `timeout` hard-kills it at the
+  `SCAN_HARD_LIMIT` ceiling with exit 124, which the scenario rejects as a hang
+  rather than accepting as a pressure abort.
 - The `/24` fail workload is a **liveness margin, not the correctness
   mechanism**: its ~50s scan floor guarantees the scan is still running when the
   threshold is served. Shrinking it degrades to a *loud red* (the PID-watch

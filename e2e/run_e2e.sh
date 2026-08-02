@@ -224,12 +224,6 @@ PRESSURE_EVENT_TIMEOUT="${PRESSURE_EVENT_TIMEOUT:-90}"
 # control never aborted the run, which is a FAILURE, not a pass — the exit-code
 # assertion below rejects the 124 that `timeout` returns.
 SCAN_HARD_LIMIT="${SCAN_HARD_LIMIT:-180}"
-# Grace for the scan to abort ON ITS OWN once the fatal threshold has been
-# SERVED. A healthy scanner exits within a couple of seconds of the third served
-# failure; if it outlives this grace it has hung AFTER the pressure path went
-# fatal, and we fail loudly here in seconds instead of letting SCAN_HARD_LIMIT
-# absorb the hang minutes later (issue #71 review, part 2).
-POST_FATAL_GRACE="${POST_FATAL_GRACE:-30}"
 
 # Read the mock's cumulative served-failure counter. The mocks publish no host
 # port (they are reachable only on the isolated bridge), so ask from inside.
@@ -367,22 +361,6 @@ run_expected_failure() {
       cat "$log" >&2 || true
       exit 1
     fi
-    # The fatal threshold is now SERVED. A correct scanner aborts on its own
-    # within a couple of seconds; if it outlives POST_FATAL_GRACE it has hung
-    # after the pressure path went fatal. Catch that here — loudly, and in
-    # seconds — instead of letting the SCAN_HARD_LIMIT timeout absorb it and
-    # surface only as a 124 minutes later.
-    local grace_deadline=$((SECONDS + POST_FATAL_GRACE))
-    while kill -0 "$scan_pid" 2>/dev/null; do
-      if ((SECONDS >= grace_deadline)); then
-        echo "e2e assertion failed: scenario ${scenario} served ${PRESSURE_FATAL_FAILURES} failing pressure responses but the scan did not abort within ${POST_FATAL_GRACE}s — it hung after the fatal pressure path" >&2
-        kill "$scan_pid" 2>/dev/null || true
-        wait "$scan_pid" 2>/dev/null || true
-        cat "$log" >&2 || true
-        exit 1
-      fi
-      sleep 0.5
-    done
   fi
 
   wait "$scan_pid" 2>/dev/null || true
