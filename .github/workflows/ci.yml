@@ -61,23 +61,30 @@ jobs:
           if-no-files-found: ignore
 
   windows-build-test:
-    name: Cross-platform build + test (Windows)
+    name: Native Windows gate
     runs-on: windows-latest
     # Blocking. The cross-platform test assumptions this job was waiting on are
     # fixed (PRs #48/#49/#50) and master is green on Windows with zero skips, so
     # a Windows regression must now fail the run. Do not re-add
     # continue-on-error to get a red run green — fix the cause, and see
     # docs/MAINTENANCE.md section 6.
+    #
+    # All the logic lives in scripts/windows_gate.ps1 so it is reproducible on a
+    # developer's machine (.claude/rules/90-letter-to-future-sessions.md: keep the
+    # workflow thin, put gates in the scripts). The script builds and launches
+    # every cmd/ .exe, runs `go test -race -shuffle=on ./...` with the race
+    # detector proven armed, and drives a loopback-only
+    # generate-buckets -> scan -> resume pipeline under a path containing spaces.
+    # Docker e2e (the job below) is LINUX coverage only — it never runs a .exe.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: go build
-        run: go build ./...
-      - name: go test
-        run: go test ./...
+      - name: native Windows gate
+        shell: pwsh
+        run: ./scripts/windows_gate.ps1
 
   e2e:
     name: Isolated e2e (Docker Compose)

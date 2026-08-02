@@ -48,8 +48,71 @@ make build-windows  # Windows x64 only
 - **Dev scripts** (`scripts/verify.sh`, `e2e/run_e2e.sh`) are bash. On Windows,
   run them from **Git Bash** or **WSL**. `go build` / `go test` / `make` work
   natively on Windows with a POSIX-shell make.
-- CI runs the full gate on Linux and additionally builds + tests on
-  `windows-latest`.
+- CI runs the full gate on Linux and additionally runs the **native Windows
+  gate** (below) on `windows-latest`.
+
+### 2.1 Native Windows gate (`scripts/windows_gate.ps1`)
+
+`make verify` needs a POSIX shell and `make verify-e2e` builds and runs **Linux**
+binaries inside Docker containers — see section 4. Neither of them ever executes
+a Windows `.exe`. `scripts/windows_gate.ps1` is that missing half, and it is the
+only place the logic lives; `.github/workflows/ci.yml` just calls it, so the CI
+job and a developer's machine run exactly the same checks.
+
+```powershell
+# from the repo root, in PowerShell (pwsh 7 or Windows PowerShell 5.1)
+.\scripts\windows_gate.ps1
+# add -KeepWorkspace to inspect the scratch files after a failure
+```
+
+What it asserts (issue #63, automating the high-value parts of the manual plan
+in issue #60 without Docker):
+
+| # | Check | Why it can only be done natively |
+|---|---|---|
+| 1 | environment report (`go version`, `go env`) and `go env GOOS` is `windows` | cross-compiling is not proof of native execution |
+| 2 | `TEMP`/`TMP`/`GOTMPDIR` are ASCII, redirected if not | MSYS2 GCC fails on non-ASCII temp paths |
+| 3 | 64-bit MinGW-w64 gcc present, `CGO_ENABLED=1`, plus a probe module with a known data race that the detector **must** report | proves `-race` is armed instead of silently degraded |
+| 4 | `go vet ./...`, `go build ./...` | — |
+| 5 | `go test -race -shuffle=on -count=1 ./...` | same test line as `scripts/verify.sh` |
+| 6 | build **every** command under `cmd/` as an `.exe` and launch each one | catches missing-DLL / bad-image failures |
+| 7 | loopback `generate-buckets -> scan`: the listening port is `open`, every unused port is not | — |
+| 8 | loopback `generate-buckets -> scan (aborted) -> scan -resume`: one header, every target exactly once | Windows file-sharing semantics on append-reopen |
+| 9 | every output directory name contains a **space**; every produced file is renamed and finally deleted right after the process exits | an unreleased handle makes a rename/delete fail on Windows, but never on Linux |
+
+Everything it scans is `127.0.0.0/8` created by the script itself (constitution
+V). The interruption in check 8 is produced by pointing `-pressure-api` at a
+refused loopback port rather than by a signal: Windows has no real SIGINT and
+`os.Process.Signal(os.Interrupt)` is unsupported there, so signal-driven
+cancellation stays honestly unverified (section 6).
+
+**Prerequisites — runtime vs race-test. These are not the same list.**
+
+- *RUNTIME prerequisites* (needed to build and run the product on Windows):
+  Go 1.24.x and nothing else. No cgo, no C compiler. `make build-windows`
+  cross-compiles the same binaries from Linux.
+- *RACE-TEST prerequisites* (needed for `go test -race`, i.e. for this gate):
+  additionally a **64-bit** MinGW-w64 C compiler (`x86_64-w64-mingw32`) on
+  `PATH` and `CGO_ENABLED=1`. Install with `choco install mingw`, or MSYS2
+  `pacman -S mingw-w64-x86_64-gcc`, or use the gcc shipped with Strawberry Perl.
+  A 32-bit (`i686`) compiler cannot build the race runtime.
+  On a machine whose user profile or `TEMP` contains non-ASCII characters, also
+  point `TEMP`, `TMP` and `GOTMPDIR` at an ASCII path — MSYS2 GCC cannot create
+  its own temp files otherwise. The gate does this automatically; do it by hand
+  if you run `go test -race` directly:
+
+  ```powershell
+  $env:TEMP = 'C:\gotmp'; $env:TMP = 'C:\gotmp'; $env:GOTMPDIR = 'C:\gotmp'
+  ```
+
+If the compiler is missing the gate **fails**. It never falls back to a non-race
+run: a green "tests passed" line that silently dropped `-race` is worse than a
+red job, because it looks like coverage that does not exist. The contract tests
+in `internal/ciguard/windows_gate_test.go` run inside `make verify` on every
+platform and keep the script and the workflow honest — they fail if `cmd/` grows
+a command the gate does not launch, if `-race`/`-shuffle=on` or the compiler
+`throw` disappears, if a non-loopback address appears in the script, or if the
+Windows job stops calling the script or becomes non-blocking.
 
 ## 3. Complete runnable example (self-contained, loopback only)
 
@@ -89,6 +152,13 @@ and mock pressure APIs in Docker Compose on an isolated network, runs the
 scanner as a container, asserts open/closed/timeout detection and
 pressure-control failure handling, and writes report artifacts to `e2e/out/`.
 It requires Docker + `docker compose`. It touches no real hosts.
+
+**The Docker e2e suite is LINUX coverage only.** `e2e/scanner/Dockerfile` builds
+the scanner inside a Linux image and every scenario runs Linux binaries in Linux
+containers, even when you launch `make verify-e2e` from a Windows host. It
+proves nothing about Windows file handles, path shapes, or `.exe` startup. The
+Windows-native equivalent is `scripts/windows_gate.ps1` (section 2.1); the two
+are complements, not substitutes, and neither one covers the other's platform.
 
 ## 5. Coverage floor (mind the margin)
 
@@ -152,13 +222,22 @@ them:
   hard fail signal) so the assertion is stable, then drop that job's
   `continue-on-error`.
 
-**Still uncovered on Windows** (Part 1 paid down test-quality debt; it did not
-add Windows-specific coverage). See `docs/windows-ci-fix/design.md` Part 2:
-file-handle release after a run, the full prep→scan→resume flow (e2e is
-Docker/Linux-only, so it has never run on Windows), append-reopen under Windows
-sharing semantics, and Windows path shapes. Interrupt-signal delivery is a
-documented gap — Windows has no real SIGINT and `os.Process.Signal(os.Interrupt)`
-is unsupported there, so it is left honestly unverified rather than faked.
+**Windows native validation — now automated** (issue #63). The Part 2 gaps from
+`docs/windows-ci-fix/design.md` — file-handle release after a run, the full
+generate-buckets→scan→resume flow, append-reopen under Windows sharing
+semantics, `.exe` startup, and path shapes containing spaces — are covered by
+`scripts/windows_gate.ps1` (section 2.1), which the blocking `windows-latest`
+job runs on every push and PR. The race detector is proven armed there rather
+than assumed.
+
+**Still uncovered on Windows:**
+- **Interrupt-signal delivery.** Windows has no real SIGINT and
+  `os.Process.Signal(os.Interrupt)` is unsupported there, so Ctrl+C-driven
+  cancellation is left honestly unverified rather than faked. The gate reaches
+  the same *resume* state through a pressure-API failure instead, which
+  exercises the append-reopen path but not the signal path.
+- **Windows ARM64.** The gate runs on `windows-latest` x64 only (explicitly out
+  of scope for issue #63).
 
 Each fix must follow test-first (constitution III).
 
