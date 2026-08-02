@@ -398,35 +398,46 @@ elif compare_dists "5a (time/timezone)" "$repro_a" "$repro_b"; then
 fi
 
 # ---- 5b — reproducible from a different absolute build path -----------------
-# The -trimpath axis. Build A runs in $ROOT; build B runs from a COPY of the
-# working tree at a different absolute path. BOTH pin an identical buildTime and
-# VERSION, so the build DIRECTORY is the only variable: with `-trimpath` the
-# source path is stripped and the two match; without it, $ROOT vs the copy's
-# path leak into the binaries and they diverge. The copy is of the WORKING TREE
-# (via `git ls-files` through tar), not of HEAD, so it exercises the recipe as
-# currently edited and excludes .git and untracked build output.
+# The -trimpath axis. Both builds run from a COPY of the working tree (via
+# `git ls-files` through tar) placed at a DIFFERENT absolute path, with an
+# identical pinned buildTime and VERSION, so the build directory is the only
+# variable. With `-trimpath` the source path is stripped and the two match;
+# without it, the two copies' paths leak into the binaries and they diverge.
+#
+# NEITHER build runs in $ROOT, and both copies are placed OUTSIDE the repo (under
+# $WORK) so they are not git checkouts: `go build` then stamps no VCS revision
+# into either. That symmetry is load-bearing — building one artifact in $ROOT (a
+# real checkout, so VCS-stamped by some Go toolchains) against a .git-less copy
+# would diverge on the VCS stamp ALONE, independent of -trimpath, which is a
+# false failure that CI's Go toolchain actually produced. Copying the WORKING
+# TREE (not HEAD) keeps the recipe under test as currently edited and excludes
+# untracked build output.
 repro_pin_v="repro-test-pinned-version"
 repro_pin_t="2026-01-01T00:00:00Z"
-repro_altroot="$WORK/altpath-checkout"
-mkdir -p "$repro_altroot"
-if ! git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$repro_altroot"; then
-  fail "5b: could not copy the working tree to an alternate path for the" \
+repro_root_a="$WORK/repro-path-a/checkout"
+repro_root_b="$WORK/repro-path-b-longer-name/checkout"
+mkdir -p "$repro_root_a" "$repro_root_b"
+repro_copy_ok=1
+for dst in "$repro_root_a" "$repro_root_b"; do
+  git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$dst" || repro_copy_ok=0
+done
+if [ "$repro_copy_ok" -ne 1 ]; then
+  fail "5b: could not copy the working tree to alternate paths for the" \
        "-trimpath check"
 else
-  repro_path_a="$WORK/dist-repro-path-a"
   rc=0
-  make build DIST_DIR="$repro_path_a" \
-    VERSION="$repro_pin_v" BUILD_TIME="$repro_pin_t" \
+  ( cd "$repro_root_a" && make build DIST_DIR="$repro_root_a/dist" \
+      VERSION="$repro_pin_v" BUILD_TIME="$repro_pin_t" ) \
     > "$WORK/out-repro-path-a" 2>&1 || rc=$?
-  ( cd "$repro_altroot" && make build DIST_DIR="$repro_altroot/dist" \
+  ( cd "$repro_root_b" && make build DIST_DIR="$repro_root_b/dist" \
       VERSION="$repro_pin_v" BUILD_TIME="$repro_pin_t" ) \
     > "$WORK/out-repro-path-b" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
     fail "a 5b reproducibility build failed (exit $rc); see" \
          "$WORK/out-repro-path-*"
     cat "$WORK/out-repro-path-a" "$WORK/out-repro-path-b" >&2 || true
-  elif compare_dists "5b (build path / -trimpath)" "$repro_path_a" \
-       "$repro_altroot/dist"; then
+  elif compare_dists "5b (build path / -trimpath)" "$repro_root_a/dist" \
+       "$repro_root_b/dist"; then
     pass "5b: all $(( ${#CMDS[@]} * 2 )) artifacts are byte-identical when the" \
          "same commit is built from two different absolute paths"
   fi
