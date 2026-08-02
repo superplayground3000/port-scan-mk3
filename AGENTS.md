@@ -23,11 +23,11 @@ their trigger applies.
 - Run tests: `make test` (`go test -race -shuffle=on ./...`)
 - **Full quality gate (run before claiming done): `make verify`** — runs the
   line-ending check, gofmt, `go vet`, build, race tests, and the >=85% coverage
-  gate. CI enforces the same things, but it does **not** call this script: its
-  Linux job inlines gofmt/vet/build/test/coverage, and the line-ending rules
-  are enforced there by `tests/repohygiene` (Linux *and* Windows jobs) rather
-  than by the `verify.sh` step. Add the isolated Docker e2e with
-  `make verify-e2e`.
+  gate. CI enforces the same things but does **not** call this script: its
+  Linux job inlines gofmt/vet/build/test (it does call `coverage_gate.sh`), and
+  the line-ending rules are enforced in CI by `tests/repohygiene` on the Linux
+  *and* Windows jobs, not by the `verify.sh` step. Add the isolated Docker e2e
+  with `make verify-e2e`.
 - Format: `make fmt` · Lint: `make lint` (uses golangci-lint if installed) ·
   Tidy: `go mod tidy` · List targets: `make help`
 
