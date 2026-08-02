@@ -107,10 +107,10 @@ Never lower the threshold, delete tests, or extend `EXCLUDE_PATTERN` in
 
 ## 6. Known cross-platform & e2e follow-ups (tracked debt)
 
-The Linux quality gate and the **Windows** job are both green and **blocking**.
-The e2e job still runs **non-blocking** (`continue-on-error: true` in `ci.yml`).
-Do not delete a job, and never re-add `continue-on-error` to turn a red run
-green — fix the cause.
+The Linux quality gate, the **Windows** job, and the Docker **e2e** job are all
+green and **blocking** (issue #71 removed the e2e job's `continue-on-error`; see
+the determinism note below). Do not delete a job, and never re-add
+`continue-on-error` to turn a red run green — fix the cause.
 
 **Windows test portability — DONE** (PRs #48/#49/#50, issue #47). Master is green
 on Windows with zero skips. Recorded here because the fixes corrected two pieces
@@ -146,17 +146,38 @@ them:
   a sleep is not a fix** — it raises the stake on the same gamble.
 
 **e2e determinism — resolved (issue #71):**
-- The `api_timeout` failure-injection scenario in `e2e/run_e2e.sh` used to be
-  timing-sensitive (the scan could finish before the pressure-timeout turned
-  fatal). It is now **event-driven** and no longer races a clock: the mock
-  pressure API counts every failure it serves (`GET /admin/stats`), and the
-  scenario launches the scan in the background and **waits** for the mock to
-  have served the scanner's fatal threshold of pressure failures before judging
-  the run. It then asserts BOTH a non-zero scan exit AND a resumable mid-flight
-  snapshot via `e2e/tools/assert-resume-snapshot -require-remaining` (a fully
-  dispatched snapshot would mean the scan finished, not aborted). Because the
-  correctness signal is the served-failure event rather than the scan being slow
-  enough, the Docker e2e job is now **blocking** (`continue-on-error` removed).
+- The pressure-failure scenarios in `e2e/run_e2e.sh` (`api_5xx`, `api_timeout`,
+  `api_conn_fail`) used to be timing-sensitive: `api_timeout` could finish its
+  tiny scan before the pressure-timeout path turned fatal, so it passed without
+  ever exercising the fatal abort. They are now **event-driven** and no longer
+  race a clock. The mock pressure API counts every failure it serves
+  (`GET /admin/stats`); each mock-backed scenario baselines that counter, runs
+  the scan in the background, and **waits** for the mock to serve the scanner's
+  fatal threshold (3 consecutive failures) before judging the run — watching the
+  scan PID so an early exit fails loudly instead of hanging.
+- The correctness of the assertion, not just its timing, was hardened. A
+  non-zero exit alone is not accepted: the scenario **rejects exit 0** (should
+  have failed), **rejects exit 124** (the outer `timeout` hard-kill — a hang, not
+  a pressure abort), requires the fatal log line `pressure api failed 3 times`
+  (so an unrelated error cannot masquerade as the pressure path), and validates
+  the snapshot with `assert-resume-snapshot -require-progress -require-remaining`
+  (the snapshot path IS the scan's `-resume` input, so it must show both an
+  advanced cursor and work still pending). After the threshold is served a short
+  `POST_FATAL_GRACE` window catches a scan that hangs instead of aborting, in
+  seconds rather than at the `SCAN_HARD_LIMIT` ceiling.
+- The `/24` fail workload is a **liveness margin, not the correctness
+  mechanism**: its ~50s scan floor guarantees the scan is still running when the
+  threshold is served. Shrinking it degrades to a *loud red* (the PID-watch
+  detects an early exit and fails with a diagnosis), never a silent vacuous
+  pass. Do not "optimize" it down and then read a red as flakiness.
+- Known trade-off: `pressure_failures_served` swallows `docker compose exec`
+  and parse errors (returns empty), so a broken mock surfaces via the wait
+  deadline rather than immediately. This is deliberate — the deadline path fails
+  loudly with a diagnosis — but noted so it is a documented choice, not an
+  accident.
+- Because the correctness signal is the served-failure event plus the
+  reason-specific assertions above (not the scan being slow enough), the Docker
+  e2e job is now **blocking** (`continue-on-error` removed).
 
 **Still uncovered on Windows** (Part 1 paid down test-quality debt; it did not
 add Windows-specific coverage). See `docs/windows-ci-fix/design.md` Part 2:

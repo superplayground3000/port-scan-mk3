@@ -3,14 +3,20 @@
 //
 // The isolated e2e suite uses it to turn "the scan exited non-zero and some
 // file exists" into a contract-level assertion: the snapshot must decode
-// through pkg/state, every chunk must be internally consistent, and — with
-// -require-remaining — at least one chunk must still have undispatched work.
-// A fully dispatched snapshot means the scan actually finished, which is the
-// exact failure mode issue #71 exists to rule out.
+// through pkg/state, every chunk must be internally consistent, and the two
+// halves of "the abort left resumable work behind" must both hold:
+//
+//	-require-progress   at least one chunk advanced past next_index=0, which is
+//	                    what proves the aborted run wrote its cursor back. The
+//	                    snapshot path doubles as the scan's -resume INPUT, so
+//	                    "the file exists" alone proves nothing.
+//	-require-remaining  at least one chunk still has undispatched work. A fully
+//	                    dispatched snapshot means the scan finished instead of
+//	                    being aborted — the exact failure mode issue #71 rules out.
 //
 // Usage:
 //
-//	assert-resume-snapshot -file <path> [-require-remaining]
+//	assert-resume-snapshot -file <path> [-require-progress] [-require-remaining]
 //
 // It exits 0 when the snapshot is resumable and 1 with a diagnostic on stderr
 // otherwise.
@@ -33,19 +39,27 @@ var validChunkStatuses = map[string]bool{
 	"completed": true,
 }
 
+// checks selects the optional assertions on top of the structural ones.
+type checks struct {
+	requireProgress  bool
+	requireRemaining bool
+}
+
 func main() {
 	file := flag.String("file", "", "path to the resume snapshot JSON to check")
+	requireProgress := flag.Bool("require-progress", false,
+		"also require that the aborted run advanced at least one chunk past next_index=0")
 	requireRemaining := flag.Bool("require-remaining", false,
 		"also require that at least one chunk still has undispatched work")
 	flag.Parse()
 
-	if err := run(*file, *requireRemaining); err != nil {
+	if err := run(*file, checks{requireProgress: *requireProgress, requireRemaining: *requireRemaining}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path string, requireRemaining bool) error {
+func run(path string, want checks) error {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
 		return errors.New("-file is required")
@@ -55,18 +69,19 @@ func run(path string, requireRemaining bool) error {
 	if err != nil {
 		return fmt.Errorf("load resume snapshot %s: %w", trimmed, err)
 	}
-	if err := assertSnapshot(snap, requireRemaining); err != nil {
+	if err := assertSnapshot(snap, want); err != nil {
 		return fmt.Errorf("resume snapshot %s is not resumable: %w", trimmed, err)
 	}
 	return nil
 }
 
-func assertSnapshot(snap state.Snapshot, requireRemaining bool) error {
+func assertSnapshot(snap state.Snapshot, want checks) error {
 	if len(snap.Chunks) == 0 {
 		return errors.New("snapshot holds no chunk at all")
 	}
 
 	remaining := 0
+	progressed := 0
 	for i, chunk := range snap.Chunks {
 		where := fmt.Sprintf("chunk %d (cidr=%s)", i, chunk.CIDR)
 
@@ -84,9 +99,13 @@ func assertSnapshot(snap state.Snapshot, requireRemaining bool) error {
 		}
 
 		remaining += chunk.Remaining()
+		progressed += chunk.NextIndex
 	}
 
-	if requireRemaining && remaining == 0 {
+	if want.requireProgress && progressed == 0 {
+		return fmt.Errorf("no chunk advanced past next_index=0 across %d chunk(s), so the aborted run persisted no progress into the snapshot", len(snap.Chunks))
+	}
+	if want.requireRemaining && remaining == 0 {
 		return fmt.Errorf("every chunk is fully dispatched across %d chunk(s), so the scan finished instead of being aborted with work remaining", len(snap.Chunks))
 	}
 	return nil

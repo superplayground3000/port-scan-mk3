@@ -32,7 +32,8 @@ rm -f "$OUT_DIR"/scan_results-*.csv \
   "$OUT_DIR/report.txt" \
   "$OUT_DIR"/resume_state*.json \
   "$OUT_DIR"/scan_results_*.csv \
-  "$OUT_DIR"/scenario_*.log
+  "$OUT_DIR"/scenario_*.log \
+  "$OUT_DIR"/scenario_*.exit
 rm -rf "$OUT_DIR/interrupt"
 
 cat > "$INPUT_DIR/cidr_normal.csv" <<'EOF'
@@ -41,9 +42,14 @@ asset-1,fab-open,172.28.0.10,172.28.0.0/24,mock-target-open,team-a
 asset-2,fab-closed,172.28.0.11,172.28.0.0/24,mock-target-closed,team-b
 EOF
 
+# Failure-scenario workload. A /24 (254 targets) is deliberate: scanned by a
+# single worker with a 200ms dial timeout, its floor is ~50s of wall clock even
+# with rate limiting removed, while pressure control needs ~0.6-6s to declare
+# the API fatal. No runner is fast enough to finish it first, so the scenarios
+# can never win the race that made api_timeout flaky (issue #71).
 cat > "$INPUT_DIR/cidr_fail.csv" <<'EOF'
 asset_id,fab_name,source_ip,source_cidr,cidr_name,owner
-asset-3,fab-fail,172.28.0.0/28,172.28.0.0/24,mock-target-fail,team-c
+asset-3,fab-fail,172.28.0.0/24,172.28.0.0/24,mock-target-fail,team-c
 EOF
 
 cat > "$INPUT_DIR/ports.csv" <<'EOF'
@@ -189,26 +195,124 @@ if [[ $(( ${CLOSED_COUNT:-0} + ${TIMEOUT_COUNT:-0} )) -lt 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Pressure-control failure handling. generate-buckets with NO -unreachable-file
-# turns every selector IP into a TCP task (scan never pings), paced at
-# -bucket-rate 1 (~1/s), so the scan cannot finish before the pressure poller
-# aborts it. scan persists progress back into its -resume snapshot
-# (resumePath == cfg.Resume), so a non-zero exit with the snapshot still present
-# proves the scan is resumable after the abort.
+# Pressure-control failure handling (issue #71).
 #
-# run_expected_failure covers the two FAST failure modes — api_5xx and
-# api_conn_fail — which the scanner sees as an error on every poll, so it aborts
-# after three consecutive failures in well under a second, long before the ~15s
-# scan could finish. api_timeout is different (its fatal trigger is slow) and has
-# its own event-driven scenario below; see run_api_timeout_failure.
+# These scenarios must never depend on a race between the scan and the pressure
+# poller. Determinism rests on two independent mechanisms:
+#
+#   1. Structural — the fail workload is a /24 whose scan floor (~50s) is an
+#      order of magnitude past the window pressure control needs to turn fatal.
+#      The scan physically cannot finish first, whatever the runner's speed.
+#   2. Event-driven — for scenarios backed by a mock we WAIT for that mock to
+#      report it has actually SERVED enough failing pressure responses to cross
+#      the scanner's threshold (GET /admin/stats), rather than inferring it from
+#      elapsed time. Sleeps are used only to pace polling, never as the
+#      correctness mechanism.
+#
+# Every assertion then names the path it proves: a non-zero exit that is NOT the
+# hard-limit kill, the fatal pressure message in the log, and a resume snapshot
+# that the aborted run actually advanced and still has work left in.
 # ---------------------------------------------------------------------------
+
+# pkg/scanapp/pressure_monitor.go aborts the run on the 3rd consecutive failure.
+PRESSURE_FATAL_FAILURES=3
+# Budget for waiting on mock-served events. Generous on purpose: it bounds a
+# hang so the suite fails with a diagnosis instead of blocking forever, and it
+# is never reached on a healthy run.
+PRESSURE_EVENT_TIMEOUT="${PRESSURE_EVENT_TIMEOUT:-90}"
+# Last-resort ceiling on a failure scenario's scan. Reaching it means pressure
+# control never aborted the run, which is a FAILURE, not a pass — the exit-code
+# assertion below rejects the 124 that `timeout` returns.
+SCAN_HARD_LIMIT="${SCAN_HARD_LIMIT:-180}"
+# Grace for the scan to abort ON ITS OWN once the fatal threshold has been
+# SERVED. A healthy scanner exits within a couple of seconds of the third served
+# failure; if it outlives this grace it has hung AFTER the pressure path went
+# fatal, and we fail loudly here in seconds instead of letting SCAN_HARD_LIMIT
+# absorb the hang minutes later (issue #71 review, part 2).
+POST_FATAL_GRACE="${POST_FATAL_GRACE:-30}"
+
+# Read the mock's cumulative served-failure counter. The mocks publish no host
+# port (they are reachable only on the isolated bridge), so ask from inside.
+# Prints nothing when the value cannot be read, which callers treat as "not yet".
+pressure_failures_served() {
+  local service="$1"
+  local raw
+  raw="$(docker compose -f "$COMPOSE_FILE" exec -T "$service" \
+    wget -q -O - "http://127.0.0.1:8080/admin/stats" 2>/dev/null |
+    tr -d '\r' |
+    sed -n 's/.*"pressure_failures":[[:space:]]*\([0-9][0-9]*\).*/\1/p')" || true
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    echo "$raw"
+  fi
+}
+
+# Wait until the counter is readable and echo it. Used to take a baseline before
+# the scan starts, because the counters are cumulative per mock process and the
+# mocks are shared across scenarios.
+wait_for_pressure_stats() {
+  local scenario="$1" service="$2"
+  local deadline=$((SECONDS + PRESSURE_EVENT_TIMEOUT))
+  local served=""
+
+  while true; do
+    served="$(pressure_failures_served "$service")"
+    if [[ -n "$served" ]]; then
+      echo "$served"
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      echo "e2e assertion failed: scenario ${scenario} could not read /admin/stats from ${service} within ${PRESSURE_EVENT_TIMEOUT}s" >&2
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+# Block until the mock has served `want` failing responses, or fail loudly.
+# Watching the scan's PID matters: if it exits early the counter will never
+# reach the target, and waiting the full timeout would hide the real reason.
+wait_for_pressure_failures() {
+  local scenario="$1" service="$2" want="$3" scan_pid="$4"
+  local deadline=$((SECONDS + PRESSURE_EVENT_TIMEOUT))
+  local served=""
+
+  while true; do
+    served="$(pressure_failures_served "$service")"
+    if [[ -n "$served" ]] && ((served >= want)); then
+      return 0
+    fi
+    if ! kill -0 "$scan_pid" 2>/dev/null; then
+      # Re-read once: the scan exiting and the counter reaching the target are
+      # the same event, and we may simply have sampled between them.
+      served="$(pressure_failures_served "$service")"
+      if [[ -n "$served" ]] && ((served >= want)); then
+        return 0
+      fi
+      echo "e2e assertion failed: scenario ${scenario} scan exited before ${service} served ${want} failing pressure responses (served=${served:-unreadable})" >&2
+      return 1
+    fi
+    if ((SECONDS >= deadline)); then
+      echo "e2e assertion failed: scenario ${scenario} waited ${PRESSURE_EVENT_TIMEOUT}s for ${service} to serve ${want} failing pressure responses (served=${served:-unreadable})" >&2
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+# run_expected_failure <scenario> <pressure-api-url> <pressure-interval> <watch-service>
+# watch-service is the compose service backing the URL, or "" when there is no
+# mock to watch (the connection-refused scenario dials a dead local port).
 run_expected_failure() {
   local scenario="$1"
   local pressure_api="$2"
   local pressure_interval="$3"
+  local watch_service="${4:-}"
 
   local bucket="/out/resume_state_${scenario}.json"
-  rm -f "$OUT_DIR/resume_state_${scenario}.json"
+  local host_bucket="$OUT_DIR/resume_state_${scenario}.json"
+  local log="$OUT_DIR/scenario_${scenario}.log"
+  local exit_file="$OUT_DIR/scenario_${scenario}.exit"
+  rm -f "$host_bucket" "$exit_file"
 
   run_generate_buckets \
     -cidr-file /inputs/cidr_fail.csv \
@@ -218,176 +322,108 @@ run_expected_failure() {
     -buckets-out "$bucket" \
     -log-level error
 
-  if [[ ! -f "$OUT_DIR/resume_state_${scenario}.json" ]]; then
+  if [[ ! -f "$host_bucket" ]]; then
     echo "e2e assertion failed: scenario ${scenario} could not build its bucket snapshot" >&2
     exit 1
   fi
 
-  set +e
-  run_scan \
-    -cidr-file /inputs/cidr_fail.csv \
-    -port-file /inputs/ports.csv \
-    -resume "$bucket" \
-    -output "/out/scan_results_${scenario}.csv" \
-    -cidr-ip-col source_ip \
-    -cidr-ip-cidr-col source_cidr \
-    -pressure-api "$pressure_api" \
-    -pressure-interval "$pressure_interval" \
-    -workers 1 \
-    -bucket-rate 1 \
-    -bucket-capacity 1 \
-    -delay 0ms \
-    -timeout 200ms \
-    -log-level error \
-    >"$OUT_DIR/scenario_${scenario}.log" 2>&1
-  local code=$?
-  set -e
+  # Baseline BEFORE the scan starts: the mocks are shared between scenarios and
+  # their counters never reset, so only the delta belongs to this scan.
+  local baseline=0
+  if [[ -n "$watch_service" ]]; then
+    if ! baseline="$(wait_for_pressure_stats "$scenario" "$watch_service")"; then
+      exit 1
+    fi
+  fi
 
+  # Run the scan in the background so the harness can watch mock-served events
+  # while it is still running.
+  (
+    set +e
+    timeout "$SCAN_HARD_LIMIT" docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan \
+      -cidr-file /inputs/cidr_fail.csv \
+      -port-file /inputs/ports.csv \
+      -resume "$bucket" \
+      -output "/out/scan_results_${scenario}.csv" \
+      -cidr-ip-col source_ip \
+      -cidr-ip-cidr-col source_cidr \
+      -pressure-api "$pressure_api" \
+      -pressure-interval "$pressure_interval" \
+      -workers 1 \
+      -bucket-rate 1 \
+      -bucket-capacity 1 \
+      -delay 0ms \
+      -timeout 200ms \
+      -log-level error \
+      >"$log" 2>&1
+    echo $? >"$exit_file"
+  ) &
+  local scan_pid=$!
+
+  if [[ -n "$watch_service" ]]; then
+    if ! wait_for_pressure_failures "$scenario" "$watch_service" \
+      "$((baseline + PRESSURE_FATAL_FAILURES))" "$scan_pid"; then
+      wait "$scan_pid" 2>/dev/null || true
+      cat "$log" >&2 || true
+      exit 1
+    fi
+    # The fatal threshold is now SERVED. A correct scanner aborts on its own
+    # within a couple of seconds; if it outlives POST_FATAL_GRACE it has hung
+    # after the pressure path went fatal. Catch that here — loudly, and in
+    # seconds — instead of letting the SCAN_HARD_LIMIT timeout absorb it and
+    # surface only as a 124 minutes later.
+    local grace_deadline=$((SECONDS + POST_FATAL_GRACE))
+    while kill -0 "$scan_pid" 2>/dev/null; do
+      if ((SECONDS >= grace_deadline)); then
+        echo "e2e assertion failed: scenario ${scenario} served ${PRESSURE_FATAL_FAILURES} failing pressure responses but the scan did not abort within ${POST_FATAL_GRACE}s — it hung after the fatal pressure path" >&2
+        kill "$scan_pid" 2>/dev/null || true
+        wait "$scan_pid" 2>/dev/null || true
+        cat "$log" >&2 || true
+        exit 1
+      fi
+      sleep 0.5
+    done
+  fi
+
+  wait "$scan_pid" 2>/dev/null || true
+  local code
+  code="$(cat "$exit_file" 2>/dev/null || echo "missing")"
+
+  if [[ "$code" == "missing" ]]; then
+    echo "e2e assertion failed: scenario ${scenario} recorded no exit code" >&2
+    exit 1
+  fi
   if [[ "$code" -eq 0 ]]; then
     echo "e2e assertion failed: scenario ${scenario} should fail but exited 0" >&2
+    cat "$log" >&2
     exit 1
   fi
-  if [[ ! -f "$OUT_DIR/resume_state_${scenario}.json" ]]; then
-    echo "e2e assertion failed: scenario ${scenario} missing resumable snapshot after abort" >&2
+  if [[ "$code" -eq 124 ]]; then
+    echo "e2e assertion failed: scenario ${scenario} hit the ${SCAN_HARD_LIMIT}s hard limit instead of aborting on pressure failure" >&2
+    cat "$log" >&2
     exit 1
   fi
-}
-
-# Number of consecutive pressure-poll failures after which the scanner aborts
-# the whole scan (pkg/scanapp/pressure_monitor.go: consecutiveFailures > 2).
-PRESSURE_FATAL_THRESHOLD=3
-
-# pressure_timeout_failures echoes the cumulative pressure_failures counter the
-# timeout mock has served (GET /admin/stats), queried from inside the mock
-# container so nothing needs a published port. Empty output if the mock cannot
-# be reached yet; callers default it to 0.
-pressure_timeout_failures() {
-  docker compose -f "$COMPOSE_FILE" exec -T pressure-api-timeout \
-    wget -qO- http://localhost:8080/admin/stats 2>/dev/null |
-    grep -o '"pressure_failures":[0-9]*' | grep -o '[0-9]*' || true
-}
-
-# ---------------------------------------------------------------------------
-# api_timeout — the one pressure failure mode with a SLOW fatal trigger: the
-# scanner's pressure HTTP client only gives up after a 2s per-poll timeout and
-# aborts after three of them (~6s), whereas api_5xx/api_conn_fail abort in well
-# under a second. A scan that happened to outrun that window would exit 0 and
-# the assertion would be a coin flip (issue #71).
-#
-# Determinism here does NOT come from hoping the paced scan is slow enough: it
-# comes from WAITING on an observable event. The mock counts every pressure
-# failure it serves; we launch the scan in the background and block until the
-# mock has served the scanner's fatal threshold before judging the outcome. Only
-# then do we assert BOTH a non-zero scan exit AND a resume snapshot that is a
-# genuine mid-flight abort — assert-resume-snapshot -require-remaining proves the
-# scan was aborted with work still undispatched, not quietly finished.
-# ---------------------------------------------------------------------------
-run_api_timeout_failure() {
-  local scenario="api_timeout"
-  local bucket="/out/resume_state_${scenario}.json"
-  local host_snapshot="$OUT_DIR/resume_state_${scenario}.json"
-  rm -f "$host_snapshot"
-
-  run_generate_buckets \
-    -cidr-file /inputs/cidr_fail.csv \
-    -port-file /inputs/ports.csv \
-    -cidr-ip-col source_ip \
-    -cidr-ip-cidr-col source_cidr \
-    -buckets-out "$bucket" \
-    -log-level error
-
-  if [[ ! -f "$host_snapshot" ]]; then
-    echo "e2e assertion failed: scenario ${scenario} could not build its bucket snapshot" >&2
+  # A non-zero exit is not enough — it must be THIS failure. Without this the
+  # scenario would pass on any unrelated error (bad flag, missing input).
+  if ! grep -q "pressure api failed ${PRESSURE_FATAL_FAILURES} times" "$log"; then
+    echo "e2e assertion failed: scenario ${scenario} exited ${code} but not via the fatal pressure path" >&2
+    cat "$log" >&2
     exit 1
   fi
-
-  # Baseline the cumulative counter first, so the wait is correct even if the
-  # mock was already polled (the counters live for the container's lifetime).
-  local baseline
-  baseline="$(pressure_timeout_failures)"
-  baseline="${baseline:-0}"
-
-  # Launch the scan in the background, paced at -bucket-rate 1 so it cannot
-  # finish before the poller aborts it. The outer timeout guards against a hung
-  # scanner (a different bug) instead of letting CI block forever.
-  set +e
-  timeout 90 docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan \
-    -cidr-file /inputs/cidr_fail.csv \
-    -port-file /inputs/ports.csv \
-    -resume "$bucket" \
-    -output "/out/scan_results_${scenario}.csv" \
-    -cidr-ip-col source_ip \
-    -cidr-ip-cidr-col source_cidr \
-    -pressure-api http://pressure-api-timeout:8080/api/pressure \
-    -pressure-interval 200ms \
-    -workers 1 \
-    -bucket-rate 1 \
-    -bucket-capacity 1 \
-    -delay 0ms \
-    -timeout 200ms \
-    -log-level error \
-    >"$OUT_DIR/scenario_${scenario}.log" 2>&1 &
-  local scan_pid=$!
-  set -e
-
-  # EVENT WAIT: block until the mock has served the fatal threshold of pressure
-  # failures. This — not the scan's pacing — is what makes the scenario
-  # deterministic. Bounded (~10x the ~6s the real path needs) so a mock that
-  # never serves the failures fails loudly instead of hanging.
-  local want=$(( baseline + PRESSURE_FATAL_THRESHOLD ))
-  local served=0 waited=0
-  local deadline=60
-  while (( waited < deadline )); do
-    served="$(pressure_timeout_failures)"
-    served="${served:-0}"
-    if (( served >= want )); then
-      break
-    fi
-    # Stop early if the scan already exited without serving the failures.
-    kill -0 "$scan_pid" 2>/dev/null || break
-    sleep 1
-    waited=$(( waited + 1 ))
-  done
-
-  if (( served < want )); then
-    echo "e2e assertion failed: scenario ${scenario} — mock served only $(( served - baseline )) pressure failures, expected >= ${PRESSURE_FATAL_THRESHOLD}; the fatal pressure-timeout path was never exercised" >&2
-    kill "$scan_pid" 2>/dev/null || true
-    wait "$scan_pid" 2>/dev/null || true
-    cat "$OUT_DIR/scenario_${scenario}.log" >&2 || true
-    exit 1
-  fi
-
-  # The fatal path has been exercised; the scan must now abort on its own.
-  # Guard the wait: a non-zero exit is the EXPECTED outcome here, so it must not
-  # trip set -e before we capture it.
-  set +e
-  wait "$scan_pid"
-  local code=$?
-  set -e
-
-  if [[ "$code" -eq 0 ]]; then
-    echo "e2e assertion failed: scenario ${scenario} served ${PRESSURE_FATAL_THRESHOLD}+ pressure failures but the scan still exited 0 instead of aborting" >&2
-    cat "$OUT_DIR/scenario_${scenario}.log" >&2 || true
-    exit 1
-  fi
-
-  if [[ ! -f "$host_snapshot" ]]; then
-    echo "e2e assertion failed: scenario ${scenario} missing resumable snapshot after abort" >&2
-    exit 1
-  fi
-
-  # A non-zero exit plus a file is not enough — the OLD assertion. Prove the
-  # snapshot is a resumable mid-flight abort: it decodes through pkg/state and
-  # still has undispatched work (so the scan was aborted, not finished).
-  if ! go run ./e2e/tools/assert-resume-snapshot -file "$host_snapshot" -require-remaining; then
-    echo "e2e assertion failed: scenario ${scenario} resume snapshot is not a resumable mid-flight abort" >&2
+  # -require-progress: the snapshot path IS the scan's -resume input, so mere
+  # existence proves nothing; requiring an advanced cursor proves the aborted
+  # run persisted its progress. -require-remaining proves it was aborted with
+  # work still pending rather than having quietly finished.
+  if ! go run ./e2e/tools/assert-resume-snapshot \
+    -file "$host_bucket" -require-progress -require-remaining; then
+    echo "e2e assertion failed: scenario ${scenario} left no resumable snapshot after abort" >&2
     exit 1
   fi
 }
 
-run_expected_failure "api_5xx" "http://pressure-api-5xx:8080/api/pressure" "200ms"
-run_api_timeout_failure
-run_expected_failure "api_conn_fail" "http://127.0.0.1:9/api/pressure" "200ms"
+run_expected_failure "api_5xx" "http://pressure-api-5xx:8080/api/pressure" "200ms" "pressure-api-5xx"
+run_expected_failure "api_timeout" "http://pressure-api-timeout:8080/api/pressure" "200ms" "pressure-api-timeout"
+run_expected_failure "api_conn_fail" "http://127.0.0.1:9/api/pressure" "200ms" ""
 
 # ---------------------------------------------------------------------------
 # Interrupt-and-resume (requirements 3 + 4). Scan a paced 10-target bucket,
