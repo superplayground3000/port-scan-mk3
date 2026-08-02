@@ -248,21 +248,34 @@ func TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
 	}
 }
 
-// TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesNothing
-// is the exact boundary of the compatibility rule, and it exists because the
-// rule is easy to overstate: the upgrade to absolute paths happens only in a
-// snapshot the run actually SAVES. A resume that finishes cleanly saves none -
-// persistResumeSnapshot returns early when there is nothing left to resume
-// (resume_manager.go: `!incomplete && runErr == nil && ...`) - so the legacy
-// relative string is still on disk afterwards. That is harmless precisely
-// because the work is finished, and it is the complement of
-// TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute,
-// which covers the interrupted case where the upgrade does happen.
-func TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesNothing(t *testing.T) {
+// TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchorsToTheResumeDirectory
+// pins the documented LIMIT of the snapshot-compatibility rule (docs/cli/flags.md):
+// resolving a legacy relative output path cannot recover the working directory the
+// old build never recorded, so a legacy snapshot resumed from a DIFFERENT directory
+// anchors against that new directory. The observable proof is the snapshot this
+// interrupted resume saves: the bare relative name an older build recorded is
+// rewritten as an ABSOLUTE path rooted at the RESUME directory, not the directory
+// the original run wrote from. Before the #61 fix the resume path stored the bare
+// relative string unchanged (both the reopened path and the re-saved snapshot), so
+// the absolute-anchoring assertions below are red on pre-fix code.
+//
+// It is the cross-directory complement of
+// TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute (the
+// same-directory case, where the anchor coincidentally equals the original
+// directory and so cannot show which directory the anchor actually is). The
+// clean-completion boundary — that a run which finishes with nothing left to
+// resume saves no snapshot at all — is a property of persistResumeSnapshot and is
+// pinned directly by TestRun_WhenScanCompletes_DoesNotWriteResumeState and
+// TestPersistResumeState_WhenRunCompletesCleanly_SkipsWrite; it does not need a
+// #61-specific test, and a #61-specific one could not discriminate the fix because
+// a same-directory legacy resume opens the same file whether or not the path was
+// anchored.
+func TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchorsToTheResumeDirectory(t *testing.T) {
 	base := t.TempDir()
-	workDir := filepath.Join(base, "work")
+	dirA := filepath.Join(base, "dir-a")
+	dirB := filepath.Join(base, "dir-b")
 	inputsDir := filepath.Join(base, "inputs")
-	for _, dir := range []string{workDir, inputsDir} {
+	for _, dir := range []string{dirA, dirB, inputsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -270,20 +283,24 @@ func TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesN
 
 	cfg, bucketsFile := newRelativeOutputScanConfig(t, inputsDir)
 
-	t.Chdir(workDir)
+	// Run 1 from directory A: interrupted with work still pending, so directory A
+	// holds the original output pair.
+	t.Chdir(dirA)
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("run 1: expected context.Canceled, got: %v", err)
+		t.Fatalf("run 1 (dir A): expected context.Canceled, got: %v", err)
 	}
 	cancel()
 
-	scanPath := mustFindOne(t, filepath.Join(workDir, "scan_results-*.csv"))
-	openPath := mustFindOne(t, filepath.Join(workDir, "opened_results-*.csv"))
+	scanPath := mustFindOne(t, filepath.Join(dirA, "scan_results-*.csv"))
+	openPath := mustFindOne(t, filepath.Join(dirA, "opened_results-*.csv"))
+	_, rowsA := readCSVRows(t, scanPath)
 
-	// Downgrade to the legacy (pre-fix) shape: bare relative names.
+	// Downgrade the snapshot to the legacy (pre-fix) shape: bare relative names,
+	// exactly what a build older than the #61 fix would have persisted.
 	snap, err := state.LoadSnapshot(bucketsFile)
 	if err != nil {
 		t.Fatalf("load snapshot: %v", err)
@@ -291,46 +308,51 @@ func TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesN
 	legacyScan := filepath.Base(scanPath)
 	legacyOpen := filepath.Base(openPath)
 	snap.Output = &state.OutputState{ScanPath: legacyScan, OpenPath: legacyOpen}
-	total := snap.Chunks[0].TotalCount
 	if err := state.SaveSnapshot(bucketsFile, snap); err != nil {
 		t.Fatalf("save legacy snapshot: %v", err)
 	}
 
-	// Resume from the same directory and let it run to completion.
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	// Resume from directory B, interrupted again so a snapshot is saved.
+	t.Chdir(dirB)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	if err := Run(ctx2, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("closed") },
-	}); err != nil {
-		t.Fatalf("run 2 (legacy resume to completion): %v", err)
+		Dial:            cancelOnFirstRefusedDial(cancel2),
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run 2 (dir B, legacy resume): expected context.Canceled, got: %v", err)
+	}
+	cancel2()
+
+	// The saved snapshot rewrote the bare legacy names as ABSOLUTE paths, anchored
+	// to the RESUME directory (B) — the fix cannot recover A, which the old build
+	// never recorded. Pre-fix these fields held the bare relative string, so both
+	// the IsAbs check and the equality are red on pre-fix code.
+	upgraded, err := state.LoadSnapshot(bucketsFile)
+	if err != nil {
+		t.Fatalf("load upgraded snapshot: %v", err)
+	}
+	if upgraded.Output == nil {
+		t.Fatal("expected the resumed run to record output paths")
+	}
+	wantScan := filepath.Join(dirB, legacyScan)
+	wantOpen := filepath.Join(dirB, legacyOpen)
+	if !filepath.IsAbs(upgraded.Output.ScanPath) || upgraded.Output.ScanPath != wantScan {
+		t.Fatalf("expected snapshot scan_path upgraded to the resume dir %s, got %q", wantScan, upgraded.Output.ScanPath)
+	}
+	if !filepath.IsAbs(upgraded.Output.OpenPath) || upgraded.Output.OpenPath != wantOpen {
+		t.Fatalf("expected snapshot open_path upgraded to the resume dir %s, got %q", wantOpen, upgraded.Output.OpenPath)
 	}
 
-	// The rows still went to the original files: one pair, one header, complete.
-	if got := mustFindOne(t, filepath.Join(workDir, "scan_results-*.csv")); got != scanPath {
-		t.Fatalf("legacy resume moved the scan output: got %s want %s", got, scanPath)
+	// The documented consequence, pinned so a later change cannot quietly claim to
+	// have "fixed" the cross-directory legacy case without updating this file: the
+	// resume wrote a SECOND set next to B (anchored there), while directory A's
+	// original scan file is left exactly as run 1 wrote it.
+	if got := mustFindOne(t, filepath.Join(dirB, "scan_results-*.csv")); got != wantScan {
+		t.Fatalf("expected the legacy cross-dir resume to write into %s, got %s", wantScan, got)
 	}
-	_, rows := readCSVRows(t, scanPath)
-	if len(rows) != total {
-		t.Fatalf("expected %d continuous rows in %s, got %d", total, scanPath, len(rows))
-	}
-	raw, err := os.ReadFile(scanPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := bytes.Count(raw, []byte("ip,ip_cidr,port,status")); n != 1 {
-		t.Fatalf("expected exactly one header line in %s, got %d", scanPath, n)
-	}
-
-	// The boundary itself: nothing was saved, so nothing was upgraded.
-	after, err := state.LoadSnapshot(bucketsFile)
-	if err != nil {
-		t.Fatalf("load snapshot after the completed legacy resume: %v", err)
-	}
-	if after.Output == nil {
-		t.Fatal("expected the snapshot to still carry its legacy output block")
-	}
-	if after.Output.ScanPath != legacyScan || after.Output.OpenPath != legacyOpen {
-		t.Fatalf("a cleanly completed resume must not rewrite the snapshot: want {%q %q}, got {%q %q}",
-			legacyScan, legacyOpen, after.Output.ScanPath, after.Output.OpenPath)
+	_, rowsAAfter := readCSVRows(t, scanPath)
+	if len(rowsAAfter) != len(rowsA) {
+		t.Fatalf("directory A's original file must be untouched by a dir-B resume: had %d rows, now %d", len(rowsA), len(rowsAAfter))
 	}
 }
 

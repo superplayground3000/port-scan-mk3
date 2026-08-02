@@ -99,9 +99,14 @@ func absOutputDir(outputPath string) (string, error) {
 // is the case where a later -resume still needs the path. A run that finishes
 // cleanly saves no snapshot at all (persistResumeSnapshot returns early when
 // nothing is resumable), so the legacy string stays on disk; that is harmless
-// because the work is done. Both halves are pinned by tests:
+// because the work is done. The upgrade is pinned by
 // TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
-// and TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesNothing.
+// (same directory) and
+// TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchorsToTheResumeDirectory
+// (which shows the anchor is the resume directory, the documented limit above);
+// the "clean completion saves nothing" half is pinned by
+// TestRun_WhenScanCompletes_DoesNotWriteResumeState and
+// TestPersistResumeState_WhenRunCompletesCleanly_SkipsWrite.
 //
 // It performs no filesystem access, so it never creates directories.
 func resolvePersistedOutputPaths(recorded state.OutputState) (state.OutputState, error) {
