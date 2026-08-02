@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -280,7 +281,9 @@ func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *
 	}
 
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-		Dial:                func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, dialErrnoFailure(syscall.ECONNREFUSED)
+		},
 		DisableKeyboard:     true,
 		ReachabilityChecker: checker,
 	}); err != nil {

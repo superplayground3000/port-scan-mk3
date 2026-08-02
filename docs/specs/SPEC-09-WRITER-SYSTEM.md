@@ -20,7 +20,7 @@ type Record struct {
     IP                string  // Target IP
     IPCidr            string  // CIDR boundary
     Port              int     // Target port
-    Status            string  // "open", "close", "close(timeout)"
+    Status            string  // "open", "close", "close(timeout)", "error(local)", "unknown"
     ResponseMS        int64   // Response time in ms (only for "open")
     FabName           string  // From input (optional)
     CIDR              string  // Legacy: alias for IPCidr
