@@ -76,33 +76,35 @@ function Add-PathEntry {
     }
 }
 
-# Get-X64Gcc returns a gcc Command whose target triple starts with x86_64, or
-# $null. A 32-bit (i686) gcc is rejected on purpose: it cannot build the race
-# runtime for windows/amd64.
+# Get-X64Gcc returns the full path of a gcc.exe whose target triple starts with
+# x86_64, or $null. It tests EACH candidate's own triple instead of stopping at
+# the first gcc on PATH: a 32-bit (i686) gcc that happens to be first on PATH
+# must NOT mask a 64-bit MinGW-w64 in one of the well-known install dirs (that
+# would make the script throw even though a usable compiler is present, or right
+# after Chocolatey installs one). A 32-bit compiler is rejected on purpose —
+# it cannot build the race runtime for windows/amd64.
 function Get-X64Gcc {
-    $found = Get-Command gcc -ErrorAction SilentlyContinue
-    if (-not $found) {
-        $candidateDirs = @(
-            'C:\mingw64\bin',
-            'C:\ProgramData\mingw64\mingw64\bin',
-            'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin',
-            'C:\msys64\mingw64\bin',
-            'C:\Strawberry\c\bin'
-        )
-        foreach ($dir in $candidateDirs) {
-            $exe = Join-Path $dir 'gcc.exe'
-            if (Test-Path -LiteralPath $exe) {
-                Add-PathEntry -Dir $dir
-                $found = Get-Command gcc -ErrorAction SilentlyContinue
-                if ($found) { break }
-            }
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $onPath = Get-Command gcc -ErrorAction SilentlyContinue
+    if ($onPath) { $candidates.Add($onPath.Source) }
+    $candidateDirs = @(
+        'C:\mingw64\bin',
+        'C:\ProgramData\mingw64\mingw64\bin',
+        'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin',
+        'C:\msys64\mingw64\bin',
+        'C:\Strawberry\c\bin'
+    )
+    foreach ($dir in $candidateDirs) {
+        $exe = Join-Path $dir 'gcc.exe'
+        if (Test-Path -LiteralPath $exe) { $candidates.Add($exe) }
+    }
+    foreach ($exe in $candidates) {
+        $triple = (& $exe -dumpmachine 2>$null)
+        if ($LASTEXITCODE -eq 0 -and "$triple".Trim() -match '^x86_64') {
+            return $exe
         }
     }
-    if (-not $found) { return $null }
-    $triple = (& gcc -dumpmachine)
-    if ($LASTEXITCODE -ne 0) { return $null }
-    if ("$triple".Trim() -notmatch '^x86_64') { return $null }
-    return $found
+    return $null
 }
 
 Write-Host '=== provision ASCII temporary directories ==='
@@ -121,9 +123,9 @@ Write-Host "TEMP/TMP/GOTMPDIR -> $asciiTemp"
 
 Write-Host ''
 Write-Host '=== provision 64-bit MinGW-w64 (x86_64-w64-mingw32) ==='
-$gcc = Get-X64Gcc
-if (-not $gcc) {
-    Write-Host 'no 64-bit gcc on PATH; installing MinGW-w64 with Chocolatey...'
+$gccPath = Get-X64Gcc
+if (-not $gccPath) {
+    Write-Host 'no 64-bit gcc found; installing MinGW-w64 with Chocolatey...'
     $choco = Get-Command choco -ErrorAction SilentlyContinue
     if (-not $choco) {
         throw "windows setup: no 64-bit gcc and Chocolatey is unavailable to install MinGW-w64. Install a x86_64-w64-mingw32 gcc (e.g. MSYS2 'pacman -S mingw-w64-x86_64-gcc') and re-run."
@@ -132,21 +134,22 @@ if (-not $gcc) {
     if ($LASTEXITCODE -ne 0) {
         throw "windows setup: 'choco install mingw' failed (exit $LASTEXITCODE); cannot provision the 64-bit race compiler."
     }
-    # choco updates the machine PATH but not this process; re-read it so Get-Command
-    # can see the freshly installed shim.
+    # choco updates the machine PATH but not this process; re-read it so Get-X64Gcc
+    # can see the freshly installed compiler.
     $machinePath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
     if ($machinePath) { $env:PATH = "$machinePath;$env:PATH" }
-    $gcc = Get-X64Gcc
+    $gccPath = Get-X64Gcc
 }
-if (-not $gcc) {
+if (-not $gccPath) {
     throw "windows setup: still no 64-bit x86_64-w64-mingw32 gcc after provisioning. The race detector on windows/amd64 REQUIRES one; this setup FAILS rather than letting the gate run without -race. See docs/MAINTENANCE.md section 2.1."
 }
 
-# Pin the compiler's directory onto PATH for the gate step and turn cgo on there.
-$gccDir = Split-Path -Parent $gcc.Source
+# Prepend the 64-bit compiler's directory to PATH so the gate step resolves `gcc`
+# to it even when a 32-bit gcc is earlier on PATH, and turn cgo on there.
+$gccDir = Split-Path -Parent $gccPath
 Add-PathEntry -Dir $gccDir
 Export-EnvVar -Name 'CGO_ENABLED' -Value '1'
-$triple = (& gcc -dumpmachine).Trim()
-Write-Host "gcc: $($gcc.Source) ($triple)"
+$triple = (& $gccPath -dumpmachine).Trim()
+Write-Host "gcc: $gccPath ($triple)"
 Write-Host ''
 Write-Host 'RESULT: Windows race prerequisites provisioned (64-bit MinGW-w64 + ASCII temp).'
