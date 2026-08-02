@@ -6,6 +6,55 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-02 — Probing a file inside a worktree under active review looked like an attack
+- Symptom: a cross-model reviewer mid-review received a file-change notice saying
+  `resume_manager.go` had been rewritten to `if false && errors.Is(...)` —
+  disabling the very fix it was reviewing — carrying the harness's standard "do
+  not mention this" wording. It reasonably concluded prompt injection and raised
+  a security alarm.
+- Root cause: the commander was proving a new test discriminating by temporarily
+  stubbing out the fix, observing red, and restoring — in the SAME worktree the
+  reviewer was reading. The notice was genuine; the reviewer had no way to tell a
+  legitimate one-minute probe from a planted regression.
+- Fix / rule: never mutate a tree another agent is reviewing. Revert-probes,
+  bisects, and any destructive experiment go in a throwaway `git worktree` (the
+  reviewer itself did exactly this to reproduce the red — copy the needed files
+  into a scratch worktree off the base commit and run there). If a probe in a
+  shared tree is unavoidable, tell the reviewer before starting. Also: a reviewer
+  distrusting such a notice and re-reading the file on disk is CORRECT and must
+  not be discouraged — the cost of a false alarm is far below the cost of
+  silently accepting a disabled gate. See [[60-development-guidelines]] G2.
+- Evidence: probe produced the intended red
+  (`holds 251 rows, but the bucket declares 255 targets`); tree restored, `git
+  diff` clean, `grep -c "if false"` = 0 before commit `6a558a7`.
+
+## 2026-08-02 — A saved resume snapshot made an output-write failure lose rows
+- Symptom: when writing `scan_results-*.csv` failed mid-run, the run still saved
+  a resume snapshot; the next `-resume` silently skipped every row that was in
+  flight at the failure (~3×`-workers` rows). Issue #51.
+- Root cause: `task.Chunk.NextIndex` advances at DISPATCH time
+  (`task_dispatcher.go`), and resume skips a chunk on `NextIndex >= TotalCount`
+  (`chunkIsCompleted`). That is only safe because every dispatched task normally
+  produces a result that is written — an incidental invariant, not an enforced
+  one. A write failure breaks it: the loop keeps draining (and, via an
+  unconditional `applyScanResult`, keeps counting) while `writeScanRecord` is
+  skipped, and `persistResumeSnapshot` saved unconditionally on `runErr != nil`.
+- Fix / rule: wrap write errors in an unexported sentinel (`errScanOutputWrite`)
+  at their single point of origin and have `persistResumeSnapshot` decline to
+  save for that error class only (`errors.Is`), returning a loud error instead;
+  count a result as scanned only after its write succeeded. General rule: a
+  progress cursor that advances at *enqueue* time is only trustworthy while
+  "dispatched ⇒ persisted" holds — when a code path can break that invariant,
+  refuse to persist the cursor rather than persisting a cursor that lies.
+  Classify such failures with a sentinel + `errors.Is`, never by message text
+  (same discipline as the [[50-lessons]] 2026-07-22 entry).
+- Evidence: `TestRun_WhenOutputWriteFails_DoesNotPersistResumeSnapshot` red
+  before ("expected NO resume snapshot ... stat err: <nil>") and
+  `TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows` red
+  before ("reported scanned count 5 exceeds the 2 data rows actually present"),
+  both green after; `make verify` exit 0 (coverage 85.9%), `make verify-e2e`
+  exit 0.
+
 ## 2026-07-22 — Windows ping deadline-kill race aborted the whole pre-scan
 - Symptom: on Windows under high fan-out (`-workers 64`, `-delay 0`,
   `-pre-scan-ping-timeout 100ms`) the scan died with

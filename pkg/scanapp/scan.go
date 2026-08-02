@@ -45,7 +45,18 @@ type RunOptions struct {
 	dashboardRenderer         dashboardRenderLoop
 	pressureObserver          pressureTelemetryObserver
 	controllerObserver        controllerTelemetryObserver
+	// batchOutputsOpener constructs the scan/open-only result writers. It is a
+	// test seam only (like dashboardRenderer above), letting a test wrap the real
+	// writers with one that fails on the Nth record so the output-write failure
+	// path is exercisable end-to-end. nil selects the production opener,
+	// openBatchOutputs. It stays unexported so the package/CLI contract is
+	// unchanged (constitution II).
+	batchOutputsOpener batchOutputsOpenFunc
 }
+
+// batchOutputsOpenFunc has the signature of openBatchOutputs; see
+// RunOptions.batchOutputsOpener.
+type batchOutputsOpenFunc func(scanPath, openPath string, appendMode bool) (*batchOutputs, error)
 
 // Run executes a full scan flow: load inputs, dispatch scan tasks, write batch
 // outputs, and persist resume state on interruption/failure.
@@ -154,7 +165,11 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		"elapsed_ms":        time.Since(parseStart).Milliseconds(),
 	})
 
-	outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
+	openOutputs := opts.batchOutputsOpener
+	if openOutputs == nil {
+		openOutputs = openBatchOutputs
+	}
+	outputs, err := openOutputs(scanPath, openPath, appendMode)
 	if err != nil {
 		return err
 	}
@@ -266,14 +281,22 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 				resultCh = nil
 				continue
 			}
+			// Only a result that reached the output file counts as scanned. A
+			// result written after runErr was set is never attempted, and a write
+			// that failed persisted nothing — counting either would inflate the
+			// scanned counter and the completion summary past the rows actually on
+			// disk (issue #51).
+			persisted := false
 			if runErr == nil {
 				if err := writeScanRecord(outputs.scanWriter, outputs.openOnlyWriter, res.record.AsWriterRecord()); err != nil {
 					runErr = err
 					cancel()
+				} else {
+					persisted = true
 				}
 			}
-			applyScanResult(plan.runtimes, res, &summary, resultObserver)
-			if runErr == nil {
+			if persisted {
+				applyScanResult(plan.runtimes, res, &summary, resultObserver)
 				emitScanResultEvents(stdout, logger, ctrl, progressStep, plan.runtimes, res, &summary, cfg.Quiet)
 			}
 		}
@@ -285,7 +308,11 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		}
 	}
 
+	// A snapshot failure (including the deliberate refusal to save after an
+	// output-write failure) is the run's outcome, so it still gets a completion
+	// summary — constitution VI requires every long-running scan to emit one.
 	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
+		emitCompletionSummary(logger, summary, startedAt, err)
 		return err
 	}
 
