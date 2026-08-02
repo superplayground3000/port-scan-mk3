@@ -6,6 +6,41 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-02 — A `select` loop raced its own exit condition and dropped a fatal error
+- Symptom: `TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError` failed ~6% of
+  runs (measured 7/120 on master `19eb4da`), always as `err == nil` in 0.00s.
+  Issue #59. In production: a scan in which a worker panicked exited
+  **successfully** — zero exit code, normal completion summary, rows missing.
+- Root cause: `Run`'s result loop selected over four channels but exited on
+  `for !dispatchDone || resultCh != nil`. A recovered worker panic lands on a
+  buffered `errCh` that is closed immediately, while the same waiter goroutine
+  closes `resultCh`. All of `executorErrCh`, `dispatchErrCh` and a closed
+  `resultCh` become ready together, and `select` picks uniformly at random — so
+  the loop could consume dispatch-done and the `resultCh` close without ever
+  consuming the pending error, then exit. The error was never read, so `Run`
+  returned nil.
+- Fix / rule: the exit condition must account for EVERY channel that can still
+  carry a fatal error, not just the ones that signal progress —
+  `for !dispatchDone || resultCh != nil || executorErrCh != nil`. General rule:
+  when a `select` loop's termination is decided by a subset of its cases, any
+  error-bearing case outside that subset can be dropped by a random pick; a
+  buffered send that is never received is indistinguishable from no error at
+  all. Verify termination separately: here it was already implied, because the
+  waiter closes `resultCh` immediately before `errCh` under the same
+  `sync.Once`, so the loop added no new liveness requirement. Same defect class
+  as the [[50-lessons]] #51 entry — a real error that never reaches the caller.
+- Testing note: a flake caused by `select` randomness cannot be red-proved
+  through the public entry point (every single run is a coin flip, so "red"
+  needs `-count=N`, which is not proof). Extract the loop behind a seam and
+  enter it in the exact terminal state — dispatch done, `resultCh` closed,
+  error queued — where the old condition is false on the first evaluation and
+  the drop is 100% reproducible.
+- Evidence: deterministic red verified twice independently, by the commander and
+  by the Codex reviewer, each reverting ONLY the exit-condition line in a
+  throwaway `git worktree` (per the lesson below): 40/40 FAIL each. After the
+  fix: 300/300 PASS under `-race`, `make verify` exit 0 (coverage 85.9%),
+  `make verify-e2e` exit 0.
+
 ## 2026-08-02 — Probing a file inside a worktree under active review looked like an attack
 - Symptom: a cross-model reviewer mid-review received a file-change notice saying
   `resume_manager.go` had been rewritten to `if false && errors.Is(...)` —
