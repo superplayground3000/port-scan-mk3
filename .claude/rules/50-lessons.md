@@ -6,6 +6,33 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-02 — A saved resume snapshot made an output-write failure lose rows
+- Symptom: when writing `scan_results-*.csv` failed mid-run, the run still saved
+  a resume snapshot; the next `-resume` silently skipped every row that was in
+  flight at the failure (~3×`-workers` rows). Issue #51.
+- Root cause: `task.Chunk.NextIndex` advances at DISPATCH time
+  (`task_dispatcher.go`), and resume skips a chunk on `NextIndex >= TotalCount`
+  (`chunkIsCompleted`). That is only safe because every dispatched task normally
+  produces a result that is written — an incidental invariant, not an enforced
+  one. A write failure breaks it: the loop keeps draining (and, via an
+  unconditional `applyScanResult`, keeps counting) while `writeScanRecord` is
+  skipped, and `persistResumeSnapshot` saved unconditionally on `runErr != nil`.
+- Fix / rule: wrap write errors in an unexported sentinel (`errScanOutputWrite`)
+  at their single point of origin and have `persistResumeSnapshot` decline to
+  save for that error class only (`errors.Is`), returning a loud error instead;
+  count a result as scanned only after its write succeeded. General rule: a
+  progress cursor that advances at *enqueue* time is only trustworthy while
+  "dispatched ⇒ persisted" holds — when a code path can break that invariant,
+  refuse to persist the cursor rather than persisting a cursor that lies.
+  Classify such failures with a sentinel + `errors.Is`, never by message text
+  (same discipline as the [[50-lessons]] 2026-07-22 entry).
+- Evidence: `TestRun_WhenOutputWriteFails_DoesNotPersistResumeSnapshot` red
+  before ("expected NO resume snapshot ... stat err: <nil>") and
+  `TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows` red
+  before ("reported scanned count 5 exceeds the 2 data rows actually present"),
+  both green after; `make verify` exit 0 (coverage 85.9%), `make verify-e2e`
+  exit 0.
+
 ## 2026-07-22 — Windows ping deadline-kill race aborted the whole pre-scan
 - Symptom: on Windows under high fan-out (`-workers 64`, `-delay 0`,
   `-pre-scan-ping-timeout 100ms`) the scan died with

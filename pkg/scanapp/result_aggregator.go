@@ -19,13 +19,32 @@ type resultSummary struct {
 	timeoutCount int
 }
 
+// errScanOutputWrite marks every error that originates from persisting a scan
+// result row. It is wrapped in at the single point such an error is produced
+// (writeScanRecord) so downstream code can classify the failure with errors.Is
+// instead of inspecting message text.
+//
+// The classification matters because the dispatch cursor (task.Chunk.NextIndex)
+// advances at enqueue time, not at write time: once a row fails to be written,
+// the cursor no longer describes what is on disk, so a resume snapshot saved
+// afterwards would make the next -resume skip the rows that were in flight
+// (issue #51). persistResumeSnapshot therefore refuses to save for this error
+// class and for no other.
+var errScanOutputWrite = errors.New("scan output write failed")
+
 // writeScanRecord writes a scan record to both the full-results writer and
 // the open-only writer. Both writers must implement the RecordWriter interface.
+//
+// A failure from either writer is returned wrapped in errScanOutputWrite; the
+// caller must treat the record as NOT persisted.
 func writeScanRecord(csvWriter, openOnlyWriter RecordWriter, record writer.Record) error {
 	if err := csvWriter.Write(record); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errScanOutputWrite, err)
 	}
-	return openOnlyWriter.Write(record)
+	if err := openOnlyWriter.Write(record); err != nil {
+		return fmt.Errorf("%w: %w", errScanOutputWrite, err)
+	}
+	return nil
 }
 
 func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSummary, observer resultTelemetryObserver) *resultSummary {

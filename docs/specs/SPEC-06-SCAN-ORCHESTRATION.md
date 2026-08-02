@@ -71,7 +71,9 @@ func Run(
 
 `Run` now **requires `cfg.Resume`** (the bucket snapshot). It loads that snapshot,
 scans its chunks, and on interrupt/error persists progress back **in place at the
-same `-resume` path** (`resumePath` returns `cfg.Resume` when set).
+same `-resume` path** (`resumePath` returns `cfg.Resume` when set) — with one
+exception: an **output-write failure persists nothing** (see §9), because the
+saved cursor would no longer match what is on disk.
 
 ### RunOptions
 
@@ -454,6 +456,11 @@ Updates:
 - `runtimes[result.chunkIdx].tracker.ScannedCount++`
 - `summary.{written, openCount, closeCount, timeoutCount}++`
 
+Called by the result loop **only for a result that was actually persisted**. A
+result whose write failed, or that arrived after the run had already failed and
+so was never written, is not counted — otherwise the scanned counter and the
+completion summary would claim more rows than the output CSV holds.
+
 ### writeScanRecord
 
 ```go
@@ -466,6 +473,10 @@ func writeScanRecord(
 Writes to both:
 - All results writer (CSV)
 - Open-only writer (filtered)
+
+A failure from either writer is returned wrapped in the package-internal
+`errScanOutputWrite` sentinel, so the resume manager can classify the run's
+terminating error with `errors.Is` instead of matching message text.
 
 ## 9. Resume Manager (resume_manager.go)
 
@@ -482,6 +493,16 @@ func persistResumeState(
 **Save conditions:**
 - Incomplete (some tasks not done) AND
 - (Error occurred OR shouldSaveOnDispatchErr)
+
+**Never saved when the run's error is an output-write failure**
+(`errors.Is(runErr, errScanOutputWrite)`). `NextIndex` advances at *dispatch*
+time, so after a write failure it covers rows that never reached the output
+file; a snapshot carrying that cursor would make the next `-resume` treat those
+rows as finished and skip them silently. In that case the run declines to save,
+logs the structured `resume_state_not_saved` event, and returns an error stating
+that resume state was deliberately not written and the scan must be restarted.
+Every other terminating error — pressure API failure, executor panic, graceful
+cancel / Ctrl+C — saves exactly as before.
 
 **Saved state:**
 ```go
