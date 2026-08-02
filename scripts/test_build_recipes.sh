@@ -39,6 +39,24 @@ failures=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*" >&2; failures=$((failures + 1)); }
 
+# Fingerprint of the default `dist/` tree, taken before any test runs.
+#
+# Every test builds into its own temporary DIST_DIR and must leave the default
+# `dist/` alone. This is deliberately a content fingerprint taken from the
+# FILESYSTEM rather than `git status -- dist`: dist/ is gitignored (issue #65
+# untracked the prebuilt binaries), so a git-based check would report "clean"
+# unconditionally and the assertion would silently stop binding — the same
+# vacuous-pass failure mode TEST 4 exists to prevent.
+dist_fingerprint() {
+  if [ -d dist ]; then
+    find dist -type f -exec sha256sum {} + 2>/dev/null | sort
+  else
+    echo "<no dist/ directory>"
+  fi
+}
+DIST_BEFORE="$WORK/dist-fingerprint-before"
+dist_fingerprint > "$DIST_BEFORE"
+
 # The command list, discovered exactly the way the Makefile's $(CMDS) does.
 CMDS=()
 for main_file in cmd/*/main.go; do
@@ -226,12 +244,16 @@ else
        "$(grep -F 'Verifying release artifacts' "$WORK/out-gated" || echo '<no gate output at all>')"
 fi
 
-# And the tracked dist/ must be untouched by any of the above.
-if [ -n "$(git status --porcelain -- dist 2>/dev/null)" ]; then
-  fail "the recipe tests modified the tracked dist/ tree; they must build only" \
-       "into a temporary DIST_DIR"
+# And the default dist/ tree must be untouched by any of the above: these tests
+# build only into temporary directories. Compared by content fingerprint, so
+# this keeps binding now that dist/ is gitignored (see dist_fingerprint above).
+dist_fingerprint > "$WORK/dist-fingerprint-after"
+if ! diff -q "$DIST_BEFORE" "$WORK/dist-fingerprint-after" >/dev/null 2>&1; then
+  fail "the recipe tests created or modified the default dist/ tree; they must" \
+       "build only into a temporary DIST_DIR. Difference:" \
+       "$(diff "$DIST_BEFORE" "$WORK/dist-fingerprint-after" | head -5 | tr '\n' ' ')"
 else
-  pass "the tracked dist/ tree was not modified"
+  pass "the default dist/ tree was not created or modified"
 fi
 
 # ===========================================================================
@@ -286,6 +308,75 @@ else
          "Output: $(cat "$WORK/out-mutant")"
   else
     pass "verify_dist.sh with an empty TARGETS list exited non-zero ($rc)"
+  fi
+fi
+
+# ===========================================================================
+# TEST 5 — release artifacts are byte-for-byte reproducible.
+#
+# Defect pinned: the recipes stamped `-X main.buildTime=$(BUILD_TIME)` from the
+# WALL CLOCK (`date -u`), so two builds of the same commit produced different
+# binaries, and `-trimpath` was absent so absolute build paths were baked in.
+# That makes the artifacts unverifiable: you cannot confirm a published binary
+# was built from the commit it claims, and every rebuild dirties the tree.
+# Issue #65 is titled "deterministic artifacts", so this is the invariant that
+# gives the title meaning.
+#
+# The two builds are deliberately separated in WALL-CLOCK TIME and run under
+# different TZs, because those are precisely the two inputs that used to leak:
+#   - the >=1s gap makes `date -u '+...%SZ'` produce a different stamp;
+#   - the differing TZ makes a naive `git log --date=format-local` (no TZ
+#     normalization) produce a different stamp for the SAME commit.
+# A build that is reproducible across both is reproducible for a given commit.
+#
+# Note the guarantee is per clean checkout of a commit: VERSION comes from
+# `git describe --dirty`, so a dirty tree intentionally stamps differently.
+# Both builds here run against the same tree state, so that is held constant.
+# ===========================================================================
+echo "TEST 5: release artifacts are byte-for-byte reproducible"
+
+digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+repro_a="$WORK/dist-repro-a"
+repro_b="$WORK/dist-repro-b"
+rc=0
+TZ=UTC make build DIST_DIR="$repro_a" > "$WORK/out-repro-a" 2>&1 || rc=$?
+# Cross a wall-clock second boundary; see the header note.
+sleep 1.1
+TZ=Asia/Tokyo make build DIST_DIR="$repro_b" > "$WORK/out-repro-b" 2>&1 || rc=$?
+
+if [ "$rc" -ne 0 ]; then
+  fail "a reproducibility build failed (exit $rc); see $WORK/out-repro-*"
+  cat "$WORK/out-repro-a" "$WORK/out-repro-b" >&2 || true
+else
+  repro_failures_before="$failures"
+  for spec in "linux|" "windows|.exe"; do
+    IFS='|' read -r subdir suffix <<<"$spec"
+    for cmd in "${CMDS[@]}"; do
+      a="$repro_a/$subdir/$cmd$suffix"
+      b="$repro_b/$subdir/$cmd$suffix"
+      if [ ! -f "$a" ] || [ ! -f "$b" ]; then
+        fail "reproducibility: $subdir/$cmd$suffix missing from one of the builds"
+        continue
+      fi
+      da="$(digest "$a")"
+      db="$(digest "$b")"
+      if [ "$da" != "$db" ]; then
+        fail "$subdir/$cmd$suffix is NOT reproducible: $da vs $db." \
+             "Two builds of the same commit must be byte-identical — a" \
+             "wall-clock buildTime stamp or a missing -trimpath will do this."
+      fi
+    done
+  done
+  if [ "$failures" -eq "$repro_failures_before" ]; then
+    pass "all $(( ${#CMDS[@]} * 2 )) artifacts are byte-identical across a" \
+         "wall-clock gap and a timezone change"
   fi
 fi
 

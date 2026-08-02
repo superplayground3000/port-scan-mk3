@@ -75,6 +75,27 @@ make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
   To build a cgo-linked binary
   deliberately, override it: `make build CGO_ENABLED_RELEASE=1` (the artifact
   gate will then correctly reject it).
+- **Release artifacts are byte-for-byte reproducible.** `buildTime` is derived
+  from the commit (`TZ=UTC0 git log -1 --date=format-local:...`), not the wall
+  clock, and every build passes `-trimpath` so absolute source paths are not
+  baked in. Two builds of the same commit — on different machines, in different
+  timezones, at different times — produce identical bytes. Before #65 the
+  recipes stamped `date -u`, so every rebuild differed and a published binary
+  could not be checked against the commit it claimed. `test_build_recipes.sh`
+  TEST 5 pins this by building twice across a wall-clock second boundary and a
+  timezone change and asserting byte-identical output. The guarantee is per
+  *clean* checkout of a commit: `VERSION` still comes from `git describe
+  --dirty`, so a dirty tree intentionally stamps differently.
+- **`dist/` is no longer tracked** and is git-ignored. This deliberately
+  reverses commit `97b4e8f` ("track linux and windows binaries in dist/"),
+  which had committed the 10 prebuilt binaries and dropped `dist/` from
+  `.gitignore` with a `!dist/windows/*.exe` negation. Committed binaries went
+  stale on every source change and bloated the repo, and — now that builds are
+  reproducible — they add nothing a rebuild cannot reproduce exactly.
+  **The replacement tag-driven release flow that would publish these artifacts
+  is issue #70 and does not exist yet**, so as of this change the binaries are
+  **not obtainable by cloning**: build them yourself with `make build` (they
+  land in the ignored `dist/`). This is a known, temporary gap until #70 ships.
 - **The artifact gate is `scripts/verify_dist.sh`.** It is not a comment or a
   convention: for every `cmd/*/main.go` it asserts the artifact exists and that
   both the toolchain build info (`go version -m`) *and* the on-disk executable
@@ -93,11 +114,14 @@ make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
   compile failure aborts the target *and stops it* rather than being masked by
   a later success, (2) a hostile `GOOS`/`GOARCH` in the environment cannot leak
   into either cross-build — checked against the produced binary's ELF/PE
-  header, (3) `make build` gates the `DIST_DIR` it wrote, and (4) the artifact
-  gate cannot pass vacuously. Every test builds into a temporary `DIST_DIR`, so
-  the suite never touches the tracked `dist/` tree. It runs in
-  `bash scripts/verify.sh` (hence in `make verify`) and CI calls the same
-  script, so local and CI cannot drift apart.
+  header, (3) `make build` gates the `DIST_DIR` it wrote, (4) the artifact
+  gate cannot pass vacuously, and (5) two builds of the same commit are
+  byte-for-byte identical (see the reproducibility bullet above). Every test
+  builds into a temporary `DIST_DIR`, so the suite never touches the working
+  `dist/` tree — TEST 3 asserts this by fingerprinting `dist/` on disk before
+  and after (a `git status -- dist` check would go vacuous now that `dist/` is
+  git-ignored). It runs in `bash scripts/verify.sh` (hence in `make verify`)
+  and CI calls the same script, so local and CI cannot drift apart.
 
 - **Product code** must build and run on Linux and Windows: use `filepath`,
   `t.TempDir()`, and `runtime.GOOS` instead of hardcoded paths.

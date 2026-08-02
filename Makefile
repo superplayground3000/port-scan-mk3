@@ -2,7 +2,17 @@
         fmt fmt-check vet cover verify verify-e2e e2e help
 
 VERSION := $(shell git describe --always --dirty 2>/dev/null || echo "dev")
-BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+# Derived from the COMMIT, not the wall clock, and normalized to UTC. Two
+# builds of the same commit must produce byte-identical artifacts (issue #65 —
+# "deterministic artifacts"); a `date -u` stamp broke that on every rebuild, and
+# an un-normalized local timestamp would break it between two builders in
+# different timezones. Falls back to the wall clock outside a git checkout
+# (e.g. a source tarball), where there is no commit to derive from.
+BUILD_TIME := $(shell TZ=UTC0 git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
+# -trimpath strips absolute source paths from the binary, so the artifact does
+# not depend on WHERE it was built. Required for reproducibility across
+# machines and CI runners.
+BUILDFLAGS := -trimpath
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
 GOCMD ?= go
@@ -48,7 +58,7 @@ build-linux:
 	@set -e; for cmd in $(CMDS); do \
 		echo "  Building $$cmd..."; \
 		CGO_ENABLED=$(CGO_ENABLED_RELEASE) GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_AMD64) \
-			$(GOCMD) build $(LDFLAGS) -o $(DIST_DIR)/linux/$$cmd ./cmd/$$cmd; \
+			$(GOCMD) build $(BUILDFLAGS) $(LDFLAGS) -o $(DIST_DIR)/linux/$$cmd ./cmd/$$cmd; \
 	done
 
 ## build-windows: Build Windows x64 binaries for all commands
@@ -58,7 +68,7 @@ build-windows:
 	@set -e; for cmd in $(CMDS); do \
 		echo "  Building $$cmd..."; \
 		CGO_ENABLED=$(CGO_ENABLED_RELEASE) GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) \
-			$(GOCMD) build $(LDFLAGS) -o $(DIST_DIR)/windows/$$cmd.exe ./cmd/$$cmd; \
+			$(GOCMD) build $(BUILDFLAGS) $(LDFLAGS) -o $(DIST_DIR)/windows/$$cmd.exe ./cmd/$$cmd; \
 	done
 
 ## verify-dist: Check every dist/ artifact exists and targets the right OS/ARCH
