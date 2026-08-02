@@ -504,8 +504,9 @@ that resume state was deliberately not written, plus the recovery options. The
 bucket file keeps the cursor it had before the run, so re-running the same
 `scan -resume` covers every target (pinned by
 `TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget`); the failed
-run's rows remain on disk, appended again or as a leftover partial file, so the
-operator reconciles before consuming. A fresh `generate-buckets` gives one clean
+run's rows remain on disk, appended again or as leftover partial files — in both
+result families, since `scan_results-*` and `opened_results-*` are opened
+together — so the operator reconciles both before consuming. A fresh `generate-buckets` gives one clean
 output instead. "Do not resume" is never an option — `scan` requires `-resume`
 (`errScanRequiresResume`).
 Every other terminating error — pressure API failure, executor panic, graceful

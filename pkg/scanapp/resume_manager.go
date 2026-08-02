@@ -49,7 +49,7 @@ func persistResumeSnapshot(cfg config.Config, opts RunOptions, logger *scanLogge
 		})
 		return fmt.Errorf(
 			"resume state was deliberately NOT saved to %s: writing scan output failed, so the saved dispatch cursor would cover rows that never reached the output file and the next -resume would skip them silently. "+
-				"The bucket file is unchanged, still holding the cursor from before this run, so re-running the same scan -resume command covers every target - but the rows this run already wrote stay on disk, either appended again to the same output or left behind as a separate partial scan_results-*.csv, so reconcile before consuming. "+
+				"The bucket file is unchanged, still holding the cursor from before this run, so re-running the same scan -resume command covers every target - but the rows this run already wrote stay on disk, either appended again to the same outputs or left behind as separate partial files, so reconcile BOTH scan_results-*.csv and opened_results-*.csv before consuming. "+
 				"For a clean single output, re-run generate-buckets and scan into a fresh path: %w",
 			savePath, runErr)
 	}

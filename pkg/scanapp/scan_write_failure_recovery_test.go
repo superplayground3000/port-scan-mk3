@@ -80,4 +80,18 @@ func TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget(t *testin
 		t.Fatalf("re-resume after a declined save lost targets: the fullest of %d output file(s) (%s) holds %d rows, but the bucket declares %d targets",
 			len(outputs), bestPath, best, totalTargets)
 	}
+
+	// Both result families are opened together by openBatchOutputs, so whatever
+	// leftover shape the recovery produces applies to the open-only file too. The
+	// operator-facing guidance tells people to reconcile before consuming, so it
+	// must not name only scan_results-*: if these counts ever diverge, the docs
+	// are describing one file while the other behaves differently.
+	openOnly, err := filepath.Glob(filepath.Join(tmp, "opened_results-*.csv"))
+	if err != nil {
+		t.Fatalf("glob open-only outputs: %v", err)
+	}
+	if len(openOnly) != len(outputs) {
+		t.Fatalf("the two result families left different leftover shapes: %d scan_results-* vs %d opened_results-*; the recovery guidance names both and assumes they match",
+			len(outputs), len(openOnly))
+	}
 }
