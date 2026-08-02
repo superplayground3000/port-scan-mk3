@@ -248,6 +248,92 @@ func TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
 	}
 }
 
+// TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesNothing
+// is the exact boundary of the compatibility rule, and it exists because the
+// rule is easy to overstate: the upgrade to absolute paths happens only in a
+// snapshot the run actually SAVES. A resume that finishes cleanly saves none -
+// persistResumeSnapshot returns early when there is nothing left to resume
+// (resume_manager.go: `!incomplete && runErr == nil && ...`) - so the legacy
+// relative string is still on disk afterwards. That is harmless precisely
+// because the work is finished, and it is the complement of
+// TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute,
+// which covers the interrupted case where the upgrade does happen.
+func TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesNothing(t *testing.T) {
+	base := t.TempDir()
+	workDir := filepath.Join(base, "work")
+	inputsDir := filepath.Join(base, "inputs")
+	for _, dir := range []string{workDir, inputsDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, bucketsFile := newRelativeOutputScanConfig(t, inputsDir)
+
+	t.Chdir(workDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            cancelOnFirstRefusedDial(cancel),
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run 1: expected context.Canceled, got: %v", err)
+	}
+	cancel()
+
+	scanPath := mustFindOne(t, filepath.Join(workDir, "scan_results-*.csv"))
+	openPath := mustFindOne(t, filepath.Join(workDir, "opened_results-*.csv"))
+
+	// Downgrade to the legacy (pre-fix) shape: bare relative names.
+	snap, err := state.LoadSnapshot(bucketsFile)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	legacyScan := filepath.Base(scanPath)
+	legacyOpen := filepath.Base(openPath)
+	snap.Output = &state.OutputState{ScanPath: legacyScan, OpenPath: legacyOpen}
+	total := snap.Chunks[0].TotalCount
+	if err := state.SaveSnapshot(bucketsFile, snap); err != nil {
+		t.Fatalf("save legacy snapshot: %v", err)
+	}
+
+	// Resume from the same directory and let it run to completion.
+	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("closed") },
+	}); err != nil {
+		t.Fatalf("run 2 (legacy resume to completion): %v", err)
+	}
+
+	// The rows still went to the original files: one pair, one header, complete.
+	if got := mustFindOne(t, filepath.Join(workDir, "scan_results-*.csv")); got != scanPath {
+		t.Fatalf("legacy resume moved the scan output: got %s want %s", got, scanPath)
+	}
+	_, rows := readCSVRows(t, scanPath)
+	if len(rows) != total {
+		t.Fatalf("expected %d continuous rows in %s, got %d", total, scanPath, len(rows))
+	}
+	raw, err := os.ReadFile(scanPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(raw, []byte("ip,ip_cidr,port,status")); n != 1 {
+		t.Fatalf("expected exactly one header line in %s, got %d", scanPath, n)
+	}
+
+	// The boundary itself: nothing was saved, so nothing was upgraded.
+	after, err := state.LoadSnapshot(bucketsFile)
+	if err != nil {
+		t.Fatalf("load snapshot after the completed legacy resume: %v", err)
+	}
+	if after.Output == nil {
+		t.Fatal("expected the snapshot to still carry its legacy output block")
+	}
+	if after.Output.ScanPath != legacyScan || after.Output.OpenPath != legacyOpen {
+		t.Fatalf("a cleanly completed resume must not rewrite the snapshot: want {%q %q}, got {%q %q}",
+			legacyScan, legacyOpen, after.Output.ScanPath, after.Output.OpenPath)
+	}
+}
+
 // TestResolveBatchOutputPaths_WhenOutputIsRelative_ReturnsAbsolutePaths pins the
 // chosen rule at its single point of origin: batch output paths are made
 // absolute (and cleaned) before they are opened or persisted, so nothing

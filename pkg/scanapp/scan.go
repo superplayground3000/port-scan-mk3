@@ -104,8 +104,9 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	// to the working directory of the run that produced it, and reopening that
 	// string from a different directory or drive would append to a SECOND set of
 	// files instead of the originals. resolvePersistedOutputPaths documents the
-	// compatibility rule; the resolved paths are what this run records back into
-	// the snapshot, so the ambiguity is repaired once.
+	// compatibility rule; the resolved paths are what this run records IF it
+	// saves a snapshot at all - a run that completes cleanly saves none, because
+	// there is then nothing left to resume.
 	var (
 		scanPath   string
 		openPath   string

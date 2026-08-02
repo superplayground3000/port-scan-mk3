@@ -88,9 +88,20 @@ func absOutputDir(outputPath string) (string, error) {
 //   - A relative recorded path can only come from a build older than this fix.
 //     It is completed against the process working directory, which is exactly
 //     what the old build did implicitly when it reopened the file - so resuming
-//     such a snapshot from its original directory behaves as before. The caller
-//     persists the resolved absolute paths back into the snapshot, so the
-//     ambiguity is repaired from that resume onwards.
+//     such a snapshot from its original directory behaves as before. Note this
+//     recovers no information the old build failed to persist: the directory
+//     that produced a legacy relative path was never recorded, so a legacy
+//     snapshot resumed from a DIFFERENT directory still resolves against that
+//     new directory. Only paths minted by this build are anchored.
+//
+// The upgrade of a legacy path is written back only in a snapshot the run
+// actually saves - i.e. one that is interrupted or leaves work incomplete, which
+// is the case where a later -resume still needs the path. A run that finishes
+// cleanly saves no snapshot at all (persistResumeSnapshot returns early when
+// nothing is resumable), so the legacy string stays on disk; that is harmless
+// because the work is done. Both halves are pinned by tests:
+// TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
+// and TestRun_WhenLegacySnapshotResumeCompletesCleanly_AppendsInPlaceAndUpgradesNothing.
 //
 // It performs no filesystem access, so it never creates directories.
 func resolvePersistedOutputPaths(recorded state.OutputState) (state.OutputState, error) {
