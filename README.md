@@ -254,8 +254,8 @@ truth for target metadata.
    file is overwritten with updated progress; re-running the same command
    continues from there). The one exception is a **failure to write the output
    CSV**: progress is then deliberately NOT saved (the bucket file is left
-   untouched) and the command exits with an error telling you to restart the
-   scan — see "Output and Resume Behavior" below.
+   untouched) and the command exits with an error explaining your recovery
+   options — see "Output and Resume Behavior" below.
 
 The "unreachable results are finalized before any TCP dial" guarantee is
 enforced by this **step sequencing** — `preping` completes before `scan` runs.
@@ -268,7 +268,9 @@ enforced by this **step sequencing** — `preping` completes before `scan` runs.
 - To skip the reachability gate, skip the `preping` step and run `generate-buckets` without `-unreachable-file`.
 - The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel/error saves progress back to that exact path (in place). Re-running the same `scan` command continues from there.
 - The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist so `scan` reuses the same filtering decision without pinging.
-- **If writing the output CSV fails, no resume progress is saved.** The dispatch cursor advances when a task is enqueued, so after a write failure it covers rows that never reached the file; saving it would make the next `-resume` skip those rows silently. `scan` therefore leaves the bucket file unchanged, logs `resume_state_not_saved`, and exits with an error asking you to restart the scan from the beginning. Every other failure (Ctrl+C, pressure-API error, worker panic) saves progress as usual.
+- **If writing the output CSV fails, no resume progress is saved.** The dispatch cursor advances when a task is enqueued, so after a write failure it covers rows that never reached the file; saving it would make the next `-resume` skip those rows silently. `scan` therefore leaves the bucket file unchanged, logs `resume_state_not_saved`, and exits with an error. Every other failure (Ctrl+C, pressure-API error, worker panic) saves progress as usual.
+
+  Recovering from it: the bucket file still holds the cursor from **before** this run, so you have two options. Re-running the same `scan -resume` command loses no targets, but it re-scans from that earlier cursor and may append duplicates of rows this run already wrote — de-duplicate the output afterwards. For a duplicate-free result, re-run `generate-buckets` to mint a fresh bucket file and scan into a new output path. (Note that "just don't resume" is not an option: `scan` requires `-resume <bucket file>`.)
 
 ## Dashboard and Logging
 

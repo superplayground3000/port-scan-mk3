@@ -500,7 +500,11 @@ time, so after a write failure it covers rows that never reached the output
 file; a snapshot carrying that cursor would make the next `-resume` treat those
 rows as finished and skip them silently. In that case the run declines to save,
 logs the structured `resume_state_not_saved` event, and returns an error stating
-that resume state was deliberately not written and the scan must be restarted.
+that resume state was deliberately not written, plus the recovery options. The
+bucket file keeps the cursor it had before the run, so re-running the same
+`scan -resume` loses no targets but may duplicate rows this run already wrote;
+a fresh `generate-buckets` gives a duplicate-free output. "Do not resume" is
+never an option — `scan` requires `-resume` (`errScanRequiresResume`).
 Every other terminating error — pressure API failure, executor panic, graceful
 cancel / Ctrl+C — saves exactly as before.
 

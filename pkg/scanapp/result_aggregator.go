@@ -35,8 +35,12 @@ var errScanOutputWrite = errors.New("scan output write failed")
 // writeScanRecord writes a scan record to both the full-results writer and
 // the open-only writer. Both writers must implement the RecordWriter interface.
 //
-// A failure from either writer is returned wrapped in errScanOutputWrite; the
-// caller must treat the record as NOT persisted.
+// A failure from either writer is returned wrapped in errScanOutputWrite. The
+// caller must treat the record as NOT fully persisted: writes are attempted in
+// order, so an open-only failure can leave the row already present in the
+// full-results CSV. Counting such a record as scanned is still wrong — the
+// dispatch cursor must not be saved either way — so the asymmetry is safe here,
+// but it does mean the two output files can differ by that one row.
 func writeScanRecord(csvWriter, openOnlyWriter RecordWriter, record writer.Record) error {
 	if err := csvWriter.Write(record); err != nil {
 		return fmt.Errorf("%w: %w", errScanOutputWrite, err)
