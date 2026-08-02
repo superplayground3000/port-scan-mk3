@@ -11,9 +11,17 @@ Every command below was executed and verified when this file was written.
 
 ## 1. The quality gate (single source of truth)
 
-Everything runs through `scripts/verify.sh`, exposed as make targets. CI
-(`.github/workflows/ci.yml`) calls the same scripts, so **green locally means
-green in CI**.
+Everything runs through `scripts/verify.sh`, exposed as make targets, so
+**green locally means green in CI**.
+
+One honest caveat: CI does not literally call `verify.sh`. It calls
+`scripts/coverage_gate.sh` and `e2e/run_e2e.sh`, but its Linux `gate` job
+inlines gofmt/vet/build/test instead of invoking the script — so a check added
+only to `verify.sh` would never run in CI. That is why the line-ending rules
+below are additionally guarded by a Go test, which both CI jobs do run.
+Switching the `gate` job to `bash scripts/verify.sh` would remove the caveat;
+`.claude/rules/90-letter-to-future-sessions.md` already names that as the
+intended design, and `.github/workflows/ci.yml` is owned by issues #63/#71.
 
 | Command | What it runs | When |
 |---|---|---|

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -162,6 +163,27 @@ func TestBatchFilesAreNormalisedInTheIndexButCRLFOnDisk(t *testing.T) {
 	}
 }
 
+// TestGofmtBinaryName_UsesExeSuffixOnWindows pins the fallback path used when
+// gofmt is not on PATH. GOROOT/bin holds gofmt.exe on Windows, so a bare
+// "gofmt" would stat a path that never exists and fail the whole
+// repo-hygiene suite on a Windows developer machine that installed Go from the
+// zip archive (no PATH entry) — a platform-only failure this Linux box cannot
+// otherwise catch.
+func TestGofmtBinaryName_UsesExeSuffixOnWindows(t *testing.T) {
+	for _, tc := range []struct {
+		goos string
+		want string
+	}{
+		{"windows", "gofmt.exe"},
+		{"linux", "gofmt"},
+		{"darwin", "gofmt"},
+	} {
+		if got := gofmtBinaryName(tc.goos); got != tc.want {
+			t.Errorf("gofmtBinaryName(%q) = %q, want %q", tc.goos, got, tc.want)
+		}
+	}
+}
+
 type exportedTree struct {
 	dir   string
 	files []string // slash-separated, relative to dir
@@ -242,13 +264,23 @@ func repoRoot(t *testing.T) string {
 	return gitOutput(t, wd, "rev-parse", "--show-toplevel")
 }
 
+// gofmtBinaryName returns the file name of the gofmt executable on goos.
+// Windows needs the .exe suffix: GOROOT/bin holds gofmt.exe there, so joining
+// a bare "gofmt" would stat a path that never exists.
+func gofmtBinaryName(goos string) string {
+	if goos == "windows" {
+		return "gofmt.exe"
+	}
+	return "gofmt"
+}
+
 func gofmtPath(t *testing.T) string {
 	t.Helper()
 	if p, err := exec.LookPath("gofmt"); err == nil {
 		return p
 	}
 	goroot := gitFreeCommand(t, "go", "env", "GOROOT")
-	p := filepath.Join(goroot, "bin", "gofmt")
+	p := filepath.Join(goroot, "bin", gofmtBinaryName(runtime.GOOS))
 	if _, err := os.Stat(p); err != nil {
 		t.Fatalf("gofmt not found on PATH nor at %s: %v", p, err)
 	}
