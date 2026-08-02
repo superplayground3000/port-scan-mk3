@@ -65,7 +65,10 @@ downstream consumer that filters on `close` — for example
 `pkg/preprocess.LoadCleanedCIDRs` — can mistake a local Winsock failure for a
 confirmed closed port. The first local resource failure of a run also emits an
 `error`-level log line; every occurrence carries `outcome` in its
-`scan_probe_result` event.
+`scan_probe_result` event, an `error_cause` of `local_resource` /
+`indeterminate` in its `scan_result` event, and its own counter
+(`local_error_count` / `unknown_count`) in the `scan_completion` summary —
+`close_count` counts only rows whose status is exactly `close`.
 
 Rejected alternatives: aborting the run (a transient Winsock exhaustion would
 throw away a long scan and, under the issue #51 rule, its resume snapshot), and

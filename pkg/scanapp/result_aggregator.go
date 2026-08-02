@@ -5,18 +5,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
+// resultSummary counts written rows by the outcome the row records.
+//
+// closeCount is deliberately narrow: it counts ONLY rows the remote end
+// characterized as shut (scanner.StatusClose). Rows that the scanning host
+// failed to send (scanner.StatusLocalError) and rows carrying an unrecognized
+// transport error (scanner.StatusUnknown) get their own counters, because
+// folding them into closeCount would report the scanner's own socket exhaustion
+// to the operator as "the target is closed" — exactly the claim issue #62
+// forbids.
 type resultSummary struct {
-	written      int
-	openCount    int
-	closeCount   int
-	timeoutCount int
+	written         int
+	openCount       int
+	closeCount      int
+	timeoutCount    int
+	localErrorCount int
+	unknownCount    int
 }
 
 // errScanOutputWrite marks every error that originates from persisting a scan
@@ -61,13 +72,23 @@ func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSu
 	}
 
 	summary.written++
-	switch {
-	case strings.EqualFold(res.record.Status(), "open"):
+	// The switch is over the exact status enum produced by
+	// scanner.statusForOutcome, not over substrings of it: a substring match
+	// ("contains timeout") silently reclassifies any status added later, and a
+	// default: that means "closed" turns every unforeseen status into a claim
+	// about the remote port. Anything this switch does not recognize is counted
+	// as unknown, which is the honest answer.
+	switch res.record.Status() {
+	case scanner.StatusOpen:
 		summary.openCount++
-	case strings.Contains(strings.ToLower(res.record.Status()), "timeout"):
+	case scanner.StatusCloseTimeout:
 		summary.timeoutCount++
-	default:
+	case scanner.StatusClose:
 		summary.closeCount++
+	case scanner.StatusLocalError:
+		summary.localErrorCount++
+	default:
+		summary.unknownCount++
 	}
 	return summary
 }
@@ -107,24 +128,33 @@ func emitCompletionSummary(logger *scanLogger, summary resultSummary, startedAt 
 		cause = errorCause(err)
 	}
 	logger.eventf("scan_completion", "", 0, "completion_summary", cause, map[string]any{
-		"total_tasks":   summary.written,
-		"open_count":    summary.openCount,
-		"close_count":   summary.closeCount,
-		"timeout_count": summary.timeoutCount,
-		"duration_ms":   time.Since(startedAt).Milliseconds(),
-		"success":       success,
+		"total_tasks":       summary.written,
+		"open_count":        summary.openCount,
+		"close_count":       summary.closeCount,
+		"timeout_count":     summary.timeoutCount,
+		"local_error_count": summary.localErrorCount,
+		"unknown_count":     summary.unknownCount,
+		"duration_ms":       time.Since(startedAt).Milliseconds(),
+		"success":           success,
 	})
 }
 
+// statusErrorCause maps a written row's status to the error_cause field of its
+// scan_result event. Constitution VI requires the cause to be visible in the
+// structured log, so the two non-probing outcomes name themselves rather than
+// reporting "none" as if nothing had gone wrong.
 func statusErrorCause(status string) string {
-	s := strings.ToLower(status)
-	switch {
-	case strings.Contains(s, "timeout"):
+	switch status {
+	case scanner.StatusCloseTimeout:
 		return "timeout"
-	case s == "close":
+	case scanner.StatusClose:
 		return "closed"
+	case scanner.StatusLocalError:
+		return "local_resource"
+	case scanner.StatusOpen:
+		return LogEventNone
 	default:
-		return "none"
+		return "indeterminate"
 	}
 }
 

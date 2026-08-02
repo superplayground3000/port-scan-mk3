@@ -4,8 +4,45 @@ import (
 	"io"
 	"testing"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
+
+// BenchmarkApplyScanResult measures the per-result summary update, which runs
+// once for every scanned target in Run's result loop (a hot path), immediately
+// next to the write measured by BenchmarkWriteScanRecord. It cycles through the
+// status vocabulary so every branch of the classification switch is exercised
+// rather than only the one the branch predictor has already learned.
+func BenchmarkApplyScanResult(b *testing.B) {
+	ch := &task.Chunk{CIDR: "10.9.0.0/24", TotalCount: 1 << 20}
+	runtimes := []*chunkRuntime{{state: ch, tracker: newChunkStateTracker(ch)}}
+
+	statuses := []string{
+		scanner.StatusOpen,
+		scanner.StatusClose,
+		scanner.StatusCloseTimeout,
+		scanner.StatusLocalError,
+		scanner.StatusUnknown,
+	}
+	results := make([]scanResult, 0, len(statuses))
+	for _, status := range statuses {
+		results = append(results, scanResult{
+			chunkIdx: 0,
+			record: recordFromScanTask(
+				scanTask{chunkIdx: 0, ipCidr: "10.9.0.0/24", ip: "10.9.0.7", port: 443},
+				scanner.Result{IP: "10.9.0.7", Port: 443, Status: status},
+			),
+		})
+	}
+
+	summary := &resultSummary{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		summary = applyScanResult(runtimes, results[i%len(results)], summary, nil)
+	}
+}
 
 // BenchmarkWriteScanRecord measures the per-result output write, which runs once
 // for every scanned target in Run's result loop (a hot path). It writes to

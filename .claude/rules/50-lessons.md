@@ -6,42 +6,6 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
-## 2026-08-02 — "Everything else is close" turned a local Winsock failure into a scan result
-- Symptom: `pkg/scanner.ScanTCP` mapped every non-timeout dial error to status
-  `close`. On Windows, WSAEADDRNOTAVAIL / WSAENOBUFS / WSAEACCES (the scanning
-  host running out of ephemeral addresses or socket buffers, or being denied
-  permission) were therefore written to `scan_results-*.csv` as if the remote
-  port had been probed and confirmed closed — and flowed on into every consumer
-  that filters on `close`, e.g. `pkg/preprocess.LoadCleanedCIDRs`. Issue #62.
-- Root cause: an else-branch used as a classification. The code only ever asked
-  "is this a timeout?"; a default that asserts a *fact about the target* is only
-  safe if every other branch also proves that fact, and a local failure proves
-  nothing at all.
-- Fix / rule: classify explicitly into refused / timeout / local-resource /
-  indeterminate, structurally (`*net.OpError -> *os.SyscallError ->
-  syscall.Errno`, `errors.As`), never by message text — Windows localizes it.
-  Two platform traps worth remembering: Go's `syscall` package on Windows
-  exposes almost no `WSAE*` names, and its Unix-style `E*` constants there are
-  synthetic values above `APPLICATION_ERROR` (1<<29), so a Windows dial failure
-  can ONLY be matched by the numeric Winsock code (10013, 10049, 10055, ...);
-  and the goos is passed in as a parameter (as `pingProcessTimeout` does) so
-  Linux CI can unit-test the Windows table. Local failures stay non-fatal and
-  are written as their own status, which keeps "dispatched ⇒ persisted" — the
-  invariant the resume cursor depends on ([[50-lessons]] issue #51 entry) —
-  intact instead of aborting and losing the snapshot.
-- Perf note: the first implementation used `errors.As` for both the net.Error
-  and the errno lookup and cost +48% ns/op and +2 allocs on
-  `BenchmarkScanTCPDialFailure` (`errors.As` forces its target to escape). A
-  plain type-assertion fast path for the stdlib shape, with `errors.As` kept as
-  the fallback, brought it back to parity. Benchmark the dial path before
-  believing an error-handling change is free.
-- Evidence: red before the fix — `local resource failure must not be reported as
-  closed, got status "close"` (scanner) and `local resource failure recorded as
-  a confirmed closed port: status "close"` (executor); Winsock table proved
-  discriminating in a throwaway worktree (all 12 subtests fail with the
-  `goos == "windows"` branch removed). `make verify` exit 0 (coverage 86.0%),
-  `make verify-e2e` exit 0.
-
 ## 2026-08-02 — Probing a file inside a worktree under active review looked like an attack
 - Symptom: a cross-model reviewer mid-review received a file-change notice saying
   `resume_manager.go` had been rewritten to `if false && errors.Is(...)` —
