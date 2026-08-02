@@ -38,18 +38,59 @@ scan logger. Do not remove `-race` from the test path.
 The product cross-compiles for both from the Makefile:
 
 ```bash
-make build          # builds dist/linux/* and dist/windows/*.exe for every cmd/
+make build          # builds dist/linux/* and dist/windows/*.exe for every cmd/,
+                    # then runs the artifact gate below
 make build-linux    # Linux x64 only
 make build-windows  # Windows x64 only
+make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
 ```
+
+### Release artifact rules (issue #65)
+
+- **Cross-builds are explicit.** Both recipes set `GOOS`, `GOARCH` and
+  `CGO_ENABLED` themselves and never inherit them from the build host, so
+  `dist/linux/` always holds `linux/amd64` and `dist/windows/` always holds
+  `windows/amd64` — whether you build on Linux, on Windows, or in CI.
+  Windows ARM64 is deliberately not produced.
+- **The build loops are fail-fast** (`set -e`). A shell `for` loop's exit status
+  is the status of its *last* iteration, so before #65 a command that failed to
+  compile in the middle of the loop was masked by a later success: `make build`
+  exited 0 with an artifact missing from `dist/`. Any single command build
+  failure now aborts the target immediately. Do not remove `set -e` from those
+  recipes.
+- **`CGO_ENABLED=0` for release artifacts.** Decided in #65. With cgo enabled
+  the output depends on whether the *build host* has a C toolchain, and the
+  Linux binary links dynamically against that host's glibc — the same source
+  then yields materially different artifacts on different machines, which is
+  exactly the non-determinism #65 is about. With `CGO_ENABLED=0` the Linux
+  binary is statically linked and portable, and Go uses the pure-Go (`netgo`)
+  resolver. That is sufficient here because the scanner uses only stdlib `net`
+  (constitution "Technology Stack"); the accepted trade-off is that host lookups
+  no longer go through glibc NSS plugins (LDAP, mDNS, …) — `/etc/hosts` and DNS
+  still work normally. On Windows Go has no cgo resolver at all, so the setting
+  only makes the existing behavior explicit. This also aligns the Makefile with
+  the production-like path that already existed: `e2e/scanner/Dockerfile:6`
+  builds the scanner with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`.
+  To build a cgo-linked binary
+  deliberately, override it: `make build CGO_ENABLED_RELEASE=1` (the artifact
+  gate will then correctly reject it).
+- **The artifact gate is `scripts/verify_dist.sh`.** It is not a comment or a
+  convention: for every `cmd/*/main.go` it asserts the artifact exists and that
+  both the toolchain build info (`go version -m`) *and* the on-disk executable
+  header (ELF vs. PE `MZ`) agree with the directory it sits in. It discovers the
+  command list itself rather than trusting the Makefile, so a command the
+  Makefile forgot to build is caught. CI runs it via `make clean build`.
+  Running it on a fresh clone without building first is expected to fail — it
+  verifies what you built, not what is committed under `dist/`.
 
 - **Product code** must build and run on Linux and Windows: use `filepath`,
   `t.TempDir()`, and `runtime.GOOS` instead of hardcoded paths.
 - **Dev scripts** (`scripts/verify.sh`, `e2e/run_e2e.sh`) are bash. On Windows,
   run them from **Git Bash** or **WSL**. `go build` / `go test` / `make` work
   natively on Windows with a POSIX-shell make.
-- CI runs the full gate on Linux and additionally builds + tests on
-  `windows-latest`.
+- CI runs the full gate on Linux — including `make clean build`, so the
+  cross-build recipes and the artifact gate are exercised on every PR, not just
+  `go build ./...` — and additionally builds + tests on `windows-latest`.
 
 ## 3. Complete runnable example (self-contained, loopback only)
 

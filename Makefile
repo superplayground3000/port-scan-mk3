@@ -1,4 +1,4 @@
-.PHONY: build build-linux build-windows build-all clean test lint \
+.PHONY: build build-linux build-windows build-all verify-dist clean test lint \
         fmt fmt-check vet cover verify verify-e2e e2e help
 
 VERSION := $(shell git describe --always --dirty 2>/dev/null || echo "dev")
@@ -10,6 +10,16 @@ GOARCH_AMD64 := amd64
 GOOS_LINUX := linux
 GOOS_WINDOWS := windows
 
+# Release artifacts are built with cgo disabled. Rationale (docs/MAINTENANCE.md
+# section 2): with CGO_ENABLED=1 the artifact depends on whether the *build
+# host* happens to have a C toolchain, and the Linux binary links dynamically
+# against the host glibc — the same source produces materially different
+# artifacts on different machines. Pinning it to 0 makes `make build` produce
+# the same kind of binary everywhere, gives a statically linked Linux binary,
+# and selects the pure-Go (netgo) resolver, which is sufficient because the
+# scanner uses only stdlib `net` (constitution "Technology Stack").
+CGO_ENABLED_RELEASE := 0
+
 DIST_DIR := dist
 
 # Discover all commands in cmd/
@@ -18,26 +28,42 @@ CMDS := $(patsubst cmd/%/main.go,%,$(wildcard cmd/*/main.go))
 # Default target
 build: build-all
 
-## build: Build all targets (linux and windows x64)
+## build: Build all targets (linux and windows x64) and verify the artifacts
 build-all: build-linux build-windows
+	@bash scripts/verify_dist.sh
+
+# Every cross-build below sets GOOS/GOARCH/CGO_ENABLED explicitly so the output
+# directory always matches the binary's real target, whatever the build host is
+# (issue #65: `build-linux` used to inherit the host's GOOS and dropped Windows
+# PE binaries into dist/linux when run on Windows).
+#
+# `set -e` is what makes the loop fail-fast: without it the recipe's exit status
+# is the status of the LAST iteration, so a failed build in the middle was
+# masked by a later success and the target exited 0 with an artifact missing.
 
 ## build-linux: Build Linux x64 binaries for all commands
 build-linux:
 	@echo "Building Linux x64..."
 	@mkdir -p $(DIST_DIR)/linux
-	@for cmd in $(CMDS); do \
+	@set -e; for cmd in $(CMDS); do \
 		echo "  Building $$cmd..."; \
-		$(GOCMD) build $(LDFLAGS) -o $(DIST_DIR)/linux/$$cmd ./cmd/$$cmd; \
+		CGO_ENABLED=$(CGO_ENABLED_RELEASE) GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_AMD64) \
+			$(GOCMD) build $(LDFLAGS) -o $(DIST_DIR)/linux/$$cmd ./cmd/$$cmd; \
 	done
 
 ## build-windows: Build Windows x64 binaries for all commands
 build-windows:
 	@echo "Building Windows x64..."
 	@mkdir -p $(DIST_DIR)/windows
-	@for cmd in $(CMDS); do \
+	@set -e; for cmd in $(CMDS); do \
 		echo "  Building $$cmd..."; \
-		GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) $(GOCMD) build $(LDFLAGS) -o $(DIST_DIR)/windows/$$cmd.exe ./cmd/$$cmd; \
+		CGO_ENABLED=$(CGO_ENABLED_RELEASE) GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) \
+			$(GOCMD) build $(LDFLAGS) -o $(DIST_DIR)/windows/$$cmd.exe ./cmd/$$cmd; \
 	done
+
+## verify-dist: Check every dist/ artifact exists and targets the right OS/ARCH
+verify-dist:
+	bash scripts/verify_dist.sh
 
 ## clean: Remove build artifacts
 clean:

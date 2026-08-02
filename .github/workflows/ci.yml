@@ -48,6 +48,13 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      # `go build ./...` only proves the packages compile for the host. This
+      # exercises the real release path: the fail-fast cross-builds plus
+      # scripts/verify_dist.sh, which asserts every dist/ artifact exists and
+      # really targets the OS/ARCH its directory claims. `clean` first so a
+      # committed-but-stale binary cannot satisfy the gate (issue #65).
+      - name: make build (cross-platform artifacts + artifact gate)
+        run: make clean build
       - name: go test -race
         run: go test -race -shuffle=on ./...
       - name: coverage gate (>= 85%)

@@ -17,7 +17,9 @@ their trigger applies.
   override convenience. When in doubt, the constitution wins.
 
 ## Build & Test Commands
-- Build all binaries (Linux + Windows): `make build`
+- Build all binaries (Linux + Windows): `make build` — cross-builds are
+  explicit (`GOOS`/`GOARCH`/`CGO_ENABLED=0`), fail-fast, and end with the
+  artifact gate `make verify-dist`. See `docs/MAINTENANCE.md` section 2.
 - Build one command: `go build ./cmd/port-scan` (commands live in `cmd/*/`;
   there is **no** `cmd/app`)
 - Run tests: `make test` (`go test -race -shuffle=on ./...`)
