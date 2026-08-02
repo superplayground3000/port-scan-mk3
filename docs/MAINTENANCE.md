@@ -78,14 +78,22 @@ make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
 - **Release artifacts are byte-for-byte reproducible.** `buildTime` is derived
   from the commit (`TZ=UTC0 git log -1 --date=format-local:...`), not the wall
   clock, and every build passes `-trimpath` so absolute source paths are not
-  baked in. Two builds of the same commit — on different machines, in different
-  timezones, at different times — produce identical bytes. Before #65 the
-  recipes stamped `date -u`, so every rebuild differed and a published binary
-  could not be checked against the commit it claimed. `test_build_recipes.sh`
-  TEST 5 pins this by building twice across a wall-clock second boundary and a
-  timezone change and asserting byte-identical output. The guarantee is per
-  *clean* checkout of a commit: `VERSION` still comes from `git describe
-  --dirty`, so a dirty tree intentionally stamps differently.
+  baked in. Two builds of the same commit produce identical bytes. Before #65
+  the recipes stamped `date -u`, so every rebuild differed and a published
+  binary could not be checked against the commit it claimed.
+  `test_build_recipes.sh` TEST 5 pins this along both axes that used to leak:
+  5a builds twice across a wall-clock second boundary and a timezone change (the
+  `buildTime` axis), and 5b builds the same commit from two different absolute
+  paths (the `-trimpath` axis), each asserting byte-identical output.
+  The guarantee is scoped: it holds for the same commit built from the **same
+  repo tag metadata**, in a *clean* checkout. `VERSION` comes from `git describe
+  --always --dirty`, which is not a pure function of the commit alone — a dirty
+  tree stamps differently on purpose, and two clones of the same commit that can
+  see different tags resolve a different `VERSION`, which changes the `-ldflags`
+  string recorded in build info and therefore the bytes. Pinning a fully
+  commit-derived version belongs with the tag-driven release contract in issue
+  #70; until then, read the guarantee as "same commit **and** same tag
+  metadata", not "same commit" unconditionally.
 - **`dist/` is no longer tracked** and is git-ignored. This deliberately
   reverses commit `97b4e8f` ("track linux and windows binaries in dist/"),
   which had committed the 10 prebuilt binaries and dropped `dist/` from
@@ -116,7 +124,10 @@ make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
   into either cross-build — checked against the produced binary's ELF/PE
   header, (3) `make build` gates the `DIST_DIR` it wrote, (4) the artifact
   gate cannot pass vacuously, and (5) two builds of the same commit are
-  byte-for-byte identical (see the reproducibility bullet above). Every test
+  byte-for-byte identical — both across a wall-clock/timezone change (5a) and
+  across two different absolute build paths (5b), the two inputs a commit-derived
+  `buildTime` and `-trimpath` exist to neutralize (see the reproducibility
+  bullet above). Every test
   builds into a temporary `DIST_DIR`, so the suite never touches the working
   `dist/` tree — TEST 3 asserts this by fingerprinting `dist/` on disk before
   and after (a `git status -- dist` check would go vacuous now that `dist/` is
@@ -128,9 +139,13 @@ make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
 - **Dev scripts** (`scripts/verify.sh`, `e2e/run_e2e.sh`) are bash. On Windows,
   run them from **Git Bash** or **WSL**. `go build` / `go test` / `make` work
   natively on Windows with a POSIX-shell make.
-- CI runs the full gate on Linux — including `make clean build`, so the
-  cross-build recipes and the artifact gate are exercised on every PR, not just
-  `go build ./...` — and additionally builds + tests on `windows-latest`.
+- CI runs the full gate on Linux — after `go build ./...` it runs
+  `bash scripts/test_build_recipes.sh` (the same recipe suite `make verify`
+  runs), so the fail-fast cross-build recipes and the `verify_dist.sh` artifact
+  gate are exercised on every PR, not just `go build ./...`. It does **not** run
+  `make clean build`: the suite builds into a temporary `DIST_DIR` instead of
+  cleaning and rewriting the ignored `dist/` tree. CI additionally builds +
+  tests on `windows-latest`.
 
 ## 3. Complete runnable example (self-contained, loopback only)
 

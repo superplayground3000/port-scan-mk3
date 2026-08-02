@@ -316,22 +316,31 @@ fi
 #
 # Defect pinned: the recipes stamped `-X main.buildTime=$(BUILD_TIME)` from the
 # WALL CLOCK (`date -u`), so two builds of the same commit produced different
-# binaries, and `-trimpath` was absent so absolute build paths were baked in.
-# That makes the artifacts unverifiable: you cannot confirm a published binary
-# was built from the commit it claims, and every rebuild dirties the tree.
-# Issue #65 is titled "deterministic artifacts", so this is the invariant that
-# gives the title meaning.
+# binaries, and `-trimpath` was absent so the absolute path of the build
+# directory was baked into every binary. Either defect makes the artifacts
+# unverifiable: you cannot confirm a published binary was built from the commit
+# it claims. Issue #65 is titled "deterministic artifacts", so this is the
+# invariant that gives the title meaning.
 #
-# The two builds are deliberately separated in WALL-CLOCK TIME and run under
-# different TZs, because those are precisely the two inputs that used to leak:
-#   - the >=1s gap makes `date -u '+...%SZ'` produce a different stamp;
-#   - the differing TZ makes a naive `git log --date=format-local` (no TZ
-#     normalization) produce a different stamp for the SAME commit.
-# A build that is reproducible across both is reproducible for a given commit.
+# The two defects have INDEPENDENT inputs, so a single build pair cannot expose
+# both — this test varies them separately:
+#   5a varies WALL-CLOCK TIME and TIMEZONE while building in the same directory
+#      (the buildTime axis): the >=1s gap makes `date -u '+...%SZ'` produce a
+#      different stamp, and the differing TZ makes a naive
+#      `git log --date=format-local` (no TZ normalization) produce a different
+#      stamp for the SAME commit.
+#   5b varies the BUILD DIRECTORY while holding buildTime and VERSION constant
+#      (the -trimpath axis): without `-trimpath` the absolute source path is
+#      baked in, so the same commit built under two different paths diverges.
+#      5a alone cannot catch a removed `-trimpath` — it builds both times in
+#      $ROOT, so the SAME path leaks into both and they still match (this is
+#      exactly the gap Codex flagged reviewing PR #73).
 #
 # Note the guarantee is per clean checkout of a commit: VERSION comes from
-# `git describe --dirty`, so a dirty tree intentionally stamps differently.
-# Both builds here run against the same tree state, so that is held constant.
+# `git describe --always --dirty`, so a dirty tree intentionally stamps
+# differently, and tag metadata that differs between clones changes VERSION too
+# (see docs/MAINTENANCE.md). 5a holds the tree state constant; 5b pins VERSION
+# and buildTime so the build directory is its only variable.
 # ===========================================================================
 echo "TEST 5: release artifacts are byte-for-byte reproducible"
 
@@ -343,6 +352,35 @@ digest() {
   fi
 }
 
+# Compare every built artifact between two DIST_DIRs. $1 label, $2 dir a, $3 dir
+# b. Records a failure per divergent artifact and returns non-zero if any
+# diverged, so callers can gate a single pass line on it.
+compare_dists() {
+  local label="$1" dir_a="$2" dir_b="$3" before="$failures"
+  local spec subdir suffix cmd a b da db
+  for spec in "linux|" "windows|.exe"; do
+    IFS='|' read -r subdir suffix <<<"$spec"
+    for cmd in "${CMDS[@]}"; do
+      a="$dir_a/$subdir/$cmd$suffix"
+      b="$dir_b/$subdir/$cmd$suffix"
+      if [ ! -f "$a" ] || [ ! -f "$b" ]; then
+        fail "$label: $subdir/$cmd$suffix missing from one of the builds"
+        continue
+      fi
+      da="$(digest "$a")"
+      db="$(digest "$b")"
+      if [ "$da" != "$db" ]; then
+        fail "$label: $subdir/$cmd$suffix is NOT reproducible: $da vs $db"
+      fi
+    done
+  done
+  [ "$failures" -eq "$before" ]
+}
+
+# ---- 5a — reproducible across a wall-clock gap and a timezone change --------
+# buildTime is derived naturally here (not pinned): that is exactly what a
+# reintroduced `date -u`, or a `git --date=format-local` with no TZ
+# normalization, would corrupt.
 repro_a="$WORK/dist-repro-a"
 repro_b="$WORK/dist-repro-b"
 rc=0
@@ -352,31 +390,45 @@ sleep 1.1
 TZ=Asia/Tokyo make build DIST_DIR="$repro_b" > "$WORK/out-repro-b" 2>&1 || rc=$?
 
 if [ "$rc" -ne 0 ]; then
-  fail "a reproducibility build failed (exit $rc); see $WORK/out-repro-*"
+  fail "a 5a reproducibility build failed (exit $rc); see $WORK/out-repro-*"
   cat "$WORK/out-repro-a" "$WORK/out-repro-b" >&2 || true
+elif compare_dists "5a (time/timezone)" "$repro_a" "$repro_b"; then
+  pass "5a: all $(( ${#CMDS[@]} * 2 )) artifacts are byte-identical across a" \
+       "wall-clock gap and a timezone change"
+fi
+
+# ---- 5b — reproducible from a different absolute build path -----------------
+# The -trimpath axis. Build A runs in $ROOT; build B runs from a COPY of the
+# working tree at a different absolute path. BOTH pin an identical buildTime and
+# VERSION, so the build DIRECTORY is the only variable: with `-trimpath` the
+# source path is stripped and the two match; without it, $ROOT vs the copy's
+# path leak into the binaries and they diverge. The copy is of the WORKING TREE
+# (via `git ls-files` through tar), not of HEAD, so it exercises the recipe as
+# currently edited and excludes .git and untracked build output.
+repro_pin_v="repro-test-pinned-version"
+repro_pin_t="2026-01-01T00:00:00Z"
+repro_altroot="$WORK/altpath-checkout"
+mkdir -p "$repro_altroot"
+if ! git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$repro_altroot"; then
+  fail "5b: could not copy the working tree to an alternate path for the" \
+       "-trimpath check"
 else
-  repro_failures_before="$failures"
-  for spec in "linux|" "windows|.exe"; do
-    IFS='|' read -r subdir suffix <<<"$spec"
-    for cmd in "${CMDS[@]}"; do
-      a="$repro_a/$subdir/$cmd$suffix"
-      b="$repro_b/$subdir/$cmd$suffix"
-      if [ ! -f "$a" ] || [ ! -f "$b" ]; then
-        fail "reproducibility: $subdir/$cmd$suffix missing from one of the builds"
-        continue
-      fi
-      da="$(digest "$a")"
-      db="$(digest "$b")"
-      if [ "$da" != "$db" ]; then
-        fail "$subdir/$cmd$suffix is NOT reproducible: $da vs $db." \
-             "Two builds of the same commit must be byte-identical — a" \
-             "wall-clock buildTime stamp or a missing -trimpath will do this."
-      fi
-    done
-  done
-  if [ "$failures" -eq "$repro_failures_before" ]; then
-    pass "all $(( ${#CMDS[@]} * 2 )) artifacts are byte-identical across a" \
-         "wall-clock gap and a timezone change"
+  repro_path_a="$WORK/dist-repro-path-a"
+  rc=0
+  make build DIST_DIR="$repro_path_a" \
+    VERSION="$repro_pin_v" BUILD_TIME="$repro_pin_t" \
+    > "$WORK/out-repro-path-a" 2>&1 || rc=$?
+  ( cd "$repro_altroot" && make build DIST_DIR="$repro_altroot/dist" \
+      VERSION="$repro_pin_v" BUILD_TIME="$repro_pin_t" ) \
+    > "$WORK/out-repro-path-b" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    fail "a 5b reproducibility build failed (exit $rc); see" \
+         "$WORK/out-repro-path-*"
+    cat "$WORK/out-repro-path-a" "$WORK/out-repro-path-b" >&2 || true
+  elif compare_dists "5b (build path / -trimpath)" "$repro_path_a" \
+       "$repro_altroot/dist"; then
+    pass "5b: all $(( ${#CMDS[@]} * 2 )) artifacts are byte-identical when the" \
+         "same commit is built from two different absolute paths"
   fi
 fi
 
