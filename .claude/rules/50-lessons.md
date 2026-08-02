@@ -6,6 +6,28 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-02 — Probing a file inside a worktree under active review looked like an attack
+- Symptom: a cross-model reviewer mid-review received a file-change notice saying
+  `resume_manager.go` had been rewritten to `if false && errors.Is(...)` —
+  disabling the very fix it was reviewing — carrying the harness's standard "do
+  not mention this" wording. It reasonably concluded prompt injection and raised
+  a security alarm.
+- Root cause: the commander was proving a new test discriminating by temporarily
+  stubbing out the fix, observing red, and restoring — in the SAME worktree the
+  reviewer was reading. The notice was genuine; the reviewer had no way to tell a
+  legitimate one-minute probe from a planted regression.
+- Fix / rule: never mutate a tree another agent is reviewing. Revert-probes,
+  bisects, and any destructive experiment go in a throwaway `git worktree` (the
+  reviewer itself did exactly this to reproduce the red — copy the needed files
+  into a scratch worktree off the base commit and run there). If a probe in a
+  shared tree is unavoidable, tell the reviewer before starting. Also: a reviewer
+  distrusting such a notice and re-reading the file on disk is CORRECT and must
+  not be discouraged — the cost of a false alarm is far below the cost of
+  silently accepting a disabled gate. See [[60-development-guidelines]] G2.
+- Evidence: probe produced the intended red
+  (`holds 251 rows, but the bucket declares 255 targets`); tree restored, `git
+  diff` clean, `grep -c "if false"` = 0 before commit `6a558a7`.
+
 ## 2026-08-02 — A saved resume snapshot made an output-write failure lose rows
 - Symptom: when writing `scan_results-*.csv` failed mid-run, the run still saved
   a resume snapshot; the next `-resume` silently skipped every row that was in
