@@ -149,12 +149,19 @@ them:
 - The pressure-failure scenarios in `e2e/run_e2e.sh` (`api_5xx`, `api_timeout`,
   `api_conn_fail`) used to be timing-sensitive: `api_timeout` could finish its
   tiny scan before the pressure-timeout path turned fatal, so it passed without
-  ever exercising the fatal abort. They are now **event-driven** and no longer
-  race a clock. The mock pressure API counts every failure it serves
-  (`GET /admin/stats`); each mock-backed scenario baselines that counter, runs
-  the scan in the background, and **waits** for the mock to serve the scanner's
-  fatal threshold (3 consecutive failures) before judging the run — watching the
-  scan PID so an early exit fails loudly instead of hanging.
+  ever exercising the fatal abort. The **mock-backed** scenarios (`api_5xx`,
+  `api_timeout`) are now **event-driven** and no longer race a clock. The mock
+  pressure API counts every failure it serves (`GET /admin/stats`); each
+  mock-backed scenario baselines that counter, runs the scan in the background,
+  and **waits** for the mock to serve the scanner's fatal threshold (3
+  consecutive failures) before judging the run — watching the scan PID so an
+  early exit fails loudly instead of hanging.
+- `api_conn_fail` is deliberately **not** mock-watched: it points the scanner at
+  a closed port (`127.0.0.1:9`), so there is no mock to instrument and it passes
+  an empty `watch_service`. It is not event-driven, and it does not need to be —
+  it cannot pass vacuously, because the shared reason-specific assertions below
+  still apply: exit 0 is rejected, exit 124 is rejected, and the fatal pressure
+  log line plus a resumable snapshot are both required.
 - The correctness of the assertion, not just its timing, was hardened. A
   non-zero exit alone is not accepted: the scenario **rejects exit 0** (should
   have failed), **rejects exit 124** (the outer `timeout` hard-kill — a hang, not
