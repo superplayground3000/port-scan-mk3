@@ -45,12 +45,12 @@ func persistResumeSnapshot(cfg config.Config, opts RunOptions, logger *scanLogge
 		logger.eventf("resume_state_not_saved", "", 0, "resume_state_not_saved", LogEventRuntimeErr, map[string]any{
 			"reason":      "scan_output_write_failed",
 			"resume_path": savePath,
-			"action":      "re-running the same scan -resume is safe but may duplicate rows this run already wrote; re-run generate-buckets for a duplicate-free result",
+			"action":      "re-running the same scan -resume covers every target, but this run's already-written rows stay on disk; reconcile before consuming, or re-run generate-buckets for a clean single output",
 		})
 		return fmt.Errorf(
 			"resume state was deliberately NOT saved to %s: writing scan output failed, so the saved dispatch cursor would cover rows that never reached the output file and the next -resume would skip them silently. "+
-				"The bucket file is unchanged, still holding the cursor from before this run: re-running the same scan -resume command loses no targets, but re-scans from that cursor and may append duplicates of rows this run already wrote (de-duplicate the output afterwards). "+
-				"For a duplicate-free result, re-run generate-buckets and scan into a fresh output path: %w",
+				"The bucket file is unchanged, still holding the cursor from before this run, so re-running the same scan -resume command covers every target - but the rows this run already wrote stay on disk, either appended again to the same output or left behind as a separate partial scan_results-*.csv, so reconcile before consuming. "+
+				"For a clean single output, re-run generate-buckets and scan into a fresh path: %w",
 			savePath, runErr)
 	}
 	if err := state.SaveSnapshot(savePath, state.Snapshot{
