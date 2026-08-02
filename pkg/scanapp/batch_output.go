@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 type batchOutputPaths struct {
@@ -13,10 +15,27 @@ type batchOutputPaths struct {
 	unreachablePath string
 }
 
+// resolveBatchOutputPaths mints the timestamped scan/open/unreachable paths for
+// a fresh batch under the -output anchor's directory.
+//
+// The returned paths are ALWAYS absolute and cleaned, even when outputPath is
+// relative (the shipped default is the bare name `scan_results.csv`). That is
+// the chosen rule for issue #61: output locations are made unambiguous at their
+// single point of origin, BEFORE any file is opened and before they are recorded
+// in a resume snapshot. A relative path recorded in a snapshot is only meaningful
+// together with the working directory that produced it, which is not persisted;
+// resuming from another directory - or, on Windows, another drive - re-resolved
+// the same string somewhere else and silently produced a second set of CSVs.
+//
+// The alternative considered was persisting paths relative to the snapshot file
+// and always resolving them from the snapshot's directory. It was rejected
+// because the snapshot location (`-buckets-out`/`-resume`) and the output anchor
+// (`-output`) are independent flags, so the snapshot directory is not a base the
+// user chose for outputs.
 func resolveBatchOutputPaths(outputPath string, now time.Time) (batchOutputPaths, error) {
-	baseDir := filepath.Dir(outputPath)
-	if baseDir == "" {
-		baseDir = "."
+	baseDir, err := absOutputDir(outputPath)
+	if err != nil {
+		return batchOutputPaths{}, err
 	}
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return batchOutputPaths{}, err
@@ -40,6 +59,64 @@ func resolveBatchOutputPaths(outputPath string, now time.Time) (batchOutputPaths
 		}
 	}
 	return batchOutputPaths{}, fmt.Errorf("failed to allocate unique batch output paths")
+}
+
+// absOutputDir returns the absolute, cleaned directory that the batch output
+// files derived from outputPath are written into. filepath.Abs completes every
+// non-absolute shape against the process working directory, which on Windows
+// covers the two that are easy to mistake for absolute: a rooted path with no
+// volume (`\out\scan.csv`) and a drive-relative path (`C:scan.csv`).
+func absOutputDir(outputPath string) (string, error) {
+	dir := filepath.Dir(outputPath)
+	if dir == "" {
+		dir = "."
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output directory %q: %w", dir, err)
+	}
+	return abs, nil
+}
+
+// resolvePersistedOutputPaths makes the output paths recorded in a resume
+// snapshot unambiguous before they are reopened (issue #61).
+//
+// Compatibility rule for existing snapshots:
+//   - An absolute recorded path (every snapshot written by this build, and any
+//     older one produced from an absolute -output) is used as-is, only cleaned.
+//     Explicit snapshot output paths therefore keep working unchanged.
+//   - A relative recorded path can only come from a build older than this fix.
+//     It is completed against the process working directory, which is exactly
+//     what the old build did implicitly when it reopened the file - so resuming
+//     such a snapshot from its original directory behaves as before. The caller
+//     persists the resolved absolute paths back into the snapshot, so the
+//     ambiguity is repaired from that resume onwards.
+//
+// It performs no filesystem access, so it never creates directories.
+func resolvePersistedOutputPaths(recorded state.OutputState) (state.OutputState, error) {
+	scanPath, err := absOutputFile(recorded.ScanPath)
+	if err != nil {
+		return state.OutputState{}, fmt.Errorf("resolve recorded scan output path: %w", err)
+	}
+	openPath, err := absOutputFile(recorded.OpenPath)
+	if err != nil {
+		return state.OutputState{}, fmt.Errorf("resolve recorded open-only output path: %w", err)
+	}
+	return state.OutputState{ScanPath: scanPath, OpenPath: openPath}, nil
+}
+
+// absOutputFile completes a single recorded output file path. An empty path is
+// left empty: it carries no location to anchor, and the open path below reports
+// the resulting failure with the original (empty) name.
+func absOutputFile(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("%q: %w", path, err)
+	}
+	return abs, nil
 }
 
 func fileExists(path string) bool {
