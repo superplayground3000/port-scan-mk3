@@ -65,6 +65,17 @@ if [[ "$RUN_FAST" -eq 1 ]]; then
   go build ./...
   echo "go build: ok"
 
+  # `go build ./...` above only proves the packages compile for the HOST. This
+  # exercises the real release path: the fail-fast cross-build recipes and the
+  # dist artifact gate (issue #65). It lives here, in the script, rather than
+  # inline in .github/workflows/ci.yml, so that a green `make verify` locally
+  # still predicts a green CI run — see .claude/rules/90-letter-to-future-
+  # sessions.md ("CI and the local scripts diverge ... keep the workflow thin;
+  # logic lives in the scripts"). It builds into a temporary DIST_DIR, so it
+  # never rewrites the tracked dist/ tree.
+  step "release build recipes (cross-build + artifact gate)"
+  bash "$ROOT/scripts/test_build_recipes.sh"
+
   step "go test -race (all packages)"
   go test -race -shuffle=on ./...
 

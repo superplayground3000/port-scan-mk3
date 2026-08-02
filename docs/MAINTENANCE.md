@@ -43,6 +43,7 @@ make build          # builds dist/linux/* and dist/windows/*.exe for every cmd/,
 make build-linux    # Linux x64 only
 make build-windows  # Windows x64 only
 make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
+                    # honours DIST_DIR: `make verify-dist DIST_DIR=x` gates x/
 ```
 
 ### Release artifact rules (issue #65)
@@ -79,9 +80,24 @@ make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
   both the toolchain build info (`go version -m`) *and* the on-disk executable
   header (ELF vs. PE `MZ`) agree with the directory it sits in. It discovers the
   command list itself rather than trusting the Makefile, so a command the
-  Makefile forgot to build is caught. CI runs it via `make clean build`.
+  Makefile forgot to build is caught. It also refuses to report success if it
+  inspected zero artifacts, so an emptied target list cannot make it pass
+  vacuously. It always gates the directory the Makefile actually built into
+  (`make build DIST_DIR=x` verifies `x`, not `dist/`).
   Running it on a fresh clone without building first is expected to fail — it
   verifies what you built, not what is committed under `dist/`.
+- **The recipes themselves are pinned by `scripts/test_build_recipes.sh`.**
+  The #65 fixes live in Makefile recipes, which `go test` cannot reach, so this
+  is the retained regression suite that keeps them fixed: it drives the real
+  `build-linux`/`build-windows`/`build` targets and asserts (1) a mid-loop
+  compile failure aborts the target *and stops it* rather than being masked by
+  a later success, (2) a hostile `GOOS`/`GOARCH` in the environment cannot leak
+  into either cross-build — checked against the produced binary's ELF/PE
+  header, (3) `make build` gates the `DIST_DIR` it wrote, and (4) the artifact
+  gate cannot pass vacuously. Every test builds into a temporary `DIST_DIR`, so
+  the suite never touches the tracked `dist/` tree. It runs in
+  `bash scripts/verify.sh` (hence in `make verify`) and CI calls the same
+  script, so local and CI cannot drift apart.
 
 - **Product code** must build and run on Linux and Windows: use `filepath`,
   `t.TempDir()`, and `runtime.GOOS` instead of hardcoded paths.

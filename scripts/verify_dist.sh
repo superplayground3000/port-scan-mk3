@@ -145,6 +145,18 @@ for target in "${TARGETS[@]}"; do
   done
 done
 
+# Fail-open guard. `failures -eq 0` alone is not enough to pass: if TARGETS ever
+# ends up empty (an edit, a bad merge), the loop body never runs, `failures`
+# stays 0 and this gate would report success while having inspected NOTHING.
+# A gate that passes vacuously is worse than no gate, because it is trusted.
+# The same reasoning already guards the CMDS discovery above; `checked` closes
+# the other half.
+if [ "$checked" -eq 0 ]; then
+  echo "verify_dist.sh: inspected 0 artifacts (TARGETS is empty?) — refusing to" \
+       "pass a vacuous check" >&2
+  exit 1
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "dist artifact gate FAILED: $failures problem(s) across $checked expected artifact(s)." >&2
   echo "Run 'make clean && make build' and re-run this gate." >&2

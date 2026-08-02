@@ -30,7 +30,7 @@ build: build-all
 
 ## build: Build all targets (linux and windows x64) and verify the artifacts
 build-all: build-linux build-windows
-	@bash scripts/verify_dist.sh
+	@bash scripts/verify_dist.sh $(DIST_DIR)
 
 # Every cross-build below sets GOOS/GOARCH/CGO_ENABLED explicitly so the output
 # directory always matches the binary's real target, whatever the build host is
@@ -62,8 +62,11 @@ build-windows:
 	done
 
 ## verify-dist: Check every dist/ artifact exists and targets the right OS/ARCH
+# Always gate the directory this Makefile actually builds into: passing
+# $(DIST_DIR) explicitly keeps `make build DIST_DIR=x` from verifying `dist/`,
+# i.e. reporting on a tree it never wrote.
 verify-dist:
-	bash scripts/verify_dist.sh
+	bash scripts/verify_dist.sh $(DIST_DIR)
 
 ## clean: Remove build artifacts
 clean:
