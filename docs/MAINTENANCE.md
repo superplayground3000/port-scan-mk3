@@ -145,12 +145,18 @@ them:
   (`internal/testkit.WaitFor`) rather than sleeping a fixed budget. **Lengthening
   a sleep is not a fix** — it raises the stake on the same gamble.
 
-**e2e determinism — still open:**
-- The `api_timeout` failure-injection scenario in `e2e/run_e2e.sh` is
-  timing-sensitive: the scan can complete before the pressure-timeout turns
-  fatal on fast runners. Make the scenario deterministic (e.g. more work, or a
-  hard fail signal) so the assertion is stable, then drop that job's
-  `continue-on-error`.
+**e2e determinism — resolved (issue #71):**
+- The `api_timeout` failure-injection scenario in `e2e/run_e2e.sh` used to be
+  timing-sensitive (the scan could finish before the pressure-timeout turned
+  fatal). It is now **event-driven** and no longer races a clock: the mock
+  pressure API counts every failure it serves (`GET /admin/stats`), and the
+  scenario launches the scan in the background and **waits** for the mock to
+  have served the scanner's fatal threshold of pressure failures before judging
+  the run. It then asserts BOTH a non-zero scan exit AND a resumable mid-flight
+  snapshot via `e2e/tools/assert-resume-snapshot -require-remaining` (a fully
+  dispatched snapshot would mean the scan finished, not aborted). Because the
+  correctness signal is the served-failure event rather than the scan being slow
+  enough, the Docker e2e job is now **blocking** (`continue-on-error` removed).
 
 **Still uncovered on Windows** (Part 1 paid down test-quality debt; it did not
 add Windows-specific coverage). See `docs/windows-ci-fix/design.md` Part 2:
