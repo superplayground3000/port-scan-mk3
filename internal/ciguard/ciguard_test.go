@@ -42,6 +42,34 @@ func TestReadRepoFile_ReadsAPathRelativeToTheRepoRoot(t *testing.T) {
 	}
 }
 
+// TestNormalizeNewlines_MakesAWindowsCheckoutReadLikeALinuxOne guards the fix
+// for the first red run of the native Windows gate: git checks these files out
+// with CRLF on windows-latest, so every line-exact assertion below (the job-key
+// match in particular) silently stopped matching there.
+func TestNormalizeNewlines_MakesAWindowsCheckoutReadLikeALinuxOne(t *testing.T) {
+	cases := map[string]string{
+		"  windows-build-test:\r\n    runs-on: windows-latest\r\n": "  windows-build-test:\n    runs-on: windows-latest\n",
+		"already\nlf\n": "already\nlf\n",
+		"old\rmac\r":    "old\nmac\n",
+		"":              "",
+	}
+	for in, want := range cases {
+		if got := normalizeNewlines(in); got != want {
+			t.Fatalf("normalizeNewlines(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestReadRepoFile_ReturnsNoCarriageReturns(t *testing.T) {
+	got, err := ReadRepoFile(".", ".github/workflows/ci.yml")
+	if err != nil {
+		t.Fatalf("ReadRepoFile(ci.yml): %v", err)
+	}
+	if strings.Contains(got, "\r") {
+		t.Fatal("ReadRepoFile returned carriage returns; line-exact assertions would be platform-dependent")
+	}
+}
+
 func TestReadRepoFile_WhenFileIsMissing_ReturnsAWrappedNotExistError(t *testing.T) {
 	_, err := ReadRepoFile(".", "no/such/file-for-ciguard.txt")
 	if !errors.Is(err, os.ErrNotExist) {

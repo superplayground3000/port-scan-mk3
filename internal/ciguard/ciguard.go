@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ErrRepoRootNotFound is returned by RepoRoot when no ancestor directory of the
@@ -59,6 +60,12 @@ func RepoRoot(start string) (string, error) {
 // ReadRepoFile reads a file addressed by its slash-separated path relative to
 // the repository root, so callers never hardcode an OS-specific path.
 //
+// Line endings are normalized to "\n". A Windows checkout gets CRLF in text
+// files (git's core.autocrlf is true on the GitHub windows-latest runner), so
+// without this every line-exact assertion in this package would pass on Linux
+// and fail on Windows — which is exactly what happened the first time the
+// native Windows gate ran.
+//
 // # Parameters
 //
 //	start: any path inside the checkout (see RepoRoot).
@@ -66,8 +73,8 @@ func RepoRoot(start string) (string, error) {
 //
 // # Returns
 //
-//	The file contents, or a wrapped error if the root cannot be located or the
-//	file cannot be read.
+//	The file contents with LF line endings, or a wrapped error if the root
+//	cannot be located or the file cannot be read.
 func ReadRepoFile(start, relSlashPath string) (string, error) {
 	root, err := RepoRoot(start)
 	if err != nil {
@@ -78,5 +85,11 @@ func ReadRepoFile(start, relSlashPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ciguard: read %s: %w", relSlashPath, err)
 	}
-	return string(data), nil
+	return normalizeNewlines(string(data)), nil
+}
+
+// normalizeNewlines converts CRLF and lone CR line endings to LF.
+func normalizeNewlines(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
 }

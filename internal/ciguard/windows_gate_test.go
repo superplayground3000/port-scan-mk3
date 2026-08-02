@@ -157,7 +157,10 @@ func TestCIWorkflow_WindowsJobRunsTheGateScriptAndIsBlocking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
-	job := windowsJobBlock(t, body)
+	job, ok := windowsJobBlock(body)
+	if !ok {
+		t.Fatal("ci.yml no longer defines a `windows-build-test:` job")
+	}
 
 	if !strings.Contains(job, "scripts/windows_gate.ps1") {
 		t.Fatalf("the windows-build-test job must call %s; job block:\n%s", windowsGateScript, job)
@@ -176,11 +179,36 @@ func TestCIWorkflow_WindowsJobRunsTheGateScriptAndIsBlocking(t *testing.T) {
 	}
 }
 
+// TestWindowsJobBlock_SurvivesACRLFCheckout is the regression test for the very
+// first red run of the native Windows gate: on windows-latest git checks ci.yml
+// out with CRLF, the job key then reads "  windows-build-test:\r", the exact
+// match failed, and the gate reported that the job had been deleted. It pins
+// both halves of the fix — the raw CRLF text must NOT parse (so the assertion is
+// not vacuous) and the text ReadRepoFile returns must.
+func TestWindowsJobBlock_SurvivesACRLFCheckout(t *testing.T) {
+	body, err := ReadRepoFile(".", ciWorkflow)
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	crlf := strings.ReplaceAll(body, "\n", "\r\n")
+
+	if _, ok := windowsJobBlock(crlf); ok {
+		t.Fatal("windowsJobBlock matched raw CRLF text; this test can no longer detect the normalization being removed")
+	}
+	job, ok := windowsJobBlock(normalizeNewlines(crlf))
+	if !ok {
+		t.Fatal("windowsJobBlock could not find the job after newline normalization — a Windows checkout would report the job as deleted")
+	}
+	if !strings.Contains(job, "windows-latest") {
+		t.Fatalf("normalized job block looks wrong:\n%s", job)
+	}
+}
+
 // windowsJobBlock slices ci.yml from the `windows-build-test:` job key to the
 // next job key at the same indentation, so assertions cannot accidentally read
-// a neighbouring job (the e2e job legitimately carries continue-on-error).
-func windowsJobBlock(t *testing.T, workflow string) string {
-	t.Helper()
+// a neighbouring job (the e2e job legitimately carries continue-on-error). It
+// reports false when no such job key exists.
+func windowsJobBlock(workflow string) (string, bool) {
 	lines := strings.Split(workflow, "\n")
 	start := -1
 	for i, l := range lines {
@@ -190,7 +218,7 @@ func windowsJobBlock(t *testing.T, workflow string) string {
 		}
 	}
 	if start < 0 {
-		t.Fatal("ci.yml no longer defines a `windows-build-test:` job")
+		return "", false
 	}
 	jobKey := regexp.MustCompile(`^  [A-Za-z0-9_-]+:\s*$`)
 	end := len(lines)
@@ -200,7 +228,7 @@ func windowsJobBlock(t *testing.T, workflow string) string {
 			break
 		}
 	}
-	return strings.Join(lines[start:end], "\n")
+	return strings.Join(lines[start:end], "\n"), true
 }
 
 // stripYAMLComments drops whole-line `#` comments so prose about a setting is
