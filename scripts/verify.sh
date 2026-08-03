@@ -41,6 +41,42 @@ done
 step() { printf '\n=== %s ===\n' "$1"; }
 
 if [[ "$RUN_FAST" -eq 1 ]]; then
+  step "line endings (.gitattributes)"
+  # Runs BEFORE gofmt on purpose. Without repository-owned line-ending rules,
+  # a Windows checkout with core.autocrlf=true (the Git for Windows installer
+  # default) arrives as CRLF and every Go file fails the gofmt gate below —
+  # a confusing "your pristine clone is unformatted" (issue #64). Catching it
+  # here names the real cause in one line.
+  #
+  # This checks THIS working tree against the rules the repository declares.
+  # The deeper check — simulating a core.autocrlf=true checkout and asserting
+  # it stays LF and gofmt-clean — lives in tests/repohygiene/line_endings_test.go
+  # so that it also runs in CI, on Linux and on Windows, via `go test ./...`.
+  if [[ ! -f .gitattributes ]]; then
+    echo "Missing .gitattributes: line endings would fall back to each developer's" >&2
+    echo "core.autocrlf, and a Windows checkout would fail the gofmt gate. See issue #64." >&2
+    exit 1
+  fi
+  eol_mismatch="$(git ls-files --eol | awk -F'\t' '
+    {
+      info = $1; path = $2
+      w = ""
+      if (match(info, /w\/[a-z-]+/)) w = substr(info, RSTART + 2, RLENGTH - 2)
+      want = ""
+      if (info ~ /eol=crlf/)    want = "crlf"
+      else if (info ~ /eol=lf/) want = "lf"
+      # Skip binaries, empty files and symlinks: no line endings to disagree on.
+      if (want == "" || w == "" || w == "none" || w == "-text") next
+      if (w != want) printf "%s (on disk: %s, declared: eol=%s)\n", path, w, want
+    }')"
+  if [[ -n "$eol_mismatch" ]]; then
+    echo "These files do not have the line endings .gitattributes declares for them." >&2
+    echo "Fix with: git add --renormalize . && git checkout-index -f -a" >&2
+    echo "$eol_mismatch" >&2
+    exit 1
+  fi
+  echo "line endings: match .gitattributes"
+
   step "gofmt (formatting)"
   # gofmt -l lists files that are NOT formatted. Any output is a failure.
   # Capture the file list first: gofmt with no path args would read stdin and
@@ -64,6 +100,17 @@ if [[ "$RUN_FAST" -eq 1 ]]; then
   step "go build (compile everything)"
   go build ./...
   echo "go build: ok"
+
+  # `go build ./...` above only proves the packages compile for the HOST. This
+  # exercises the real release path: the fail-fast cross-build recipes and the
+  # dist artifact gate (issue #65). It lives here, in the script, rather than
+  # inline in .github/workflows/ci.yml, so that a green `make verify` locally
+  # still predicts a green CI run — see .claude/rules/90-letter-to-future-
+  # sessions.md ("CI and the local scripts diverge ... keep the workflow thin;
+  # logic lives in the scripts"). It builds into a temporary DIST_DIR, so it
+  # never rewrites the tracked dist/ tree.
+  step "release build recipes (cross-build + artifact gate)"
+  bash "$ROOT/scripts/test_build_recipes.sh"
 
   step "go test -race (all packages)"
   go test -race -shuffle=on ./...

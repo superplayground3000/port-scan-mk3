@@ -114,6 +114,22 @@ inputs only; never scans or pings.
   snapshot appends the remaining rows to the *same* files (one continuous file,
   a single header) instead of minting a new timestamped pair. If the prior
   output file was deleted before resuming, it is recreated with a header.
+- **Output paths are recorded as absolute paths.** A relative `-output` (the
+  default `scan_results.csv` is one) is resolved against the working directory
+  *once*, when the batch paths are first minted, and the resulting absolute
+  paths are what the snapshot stores. Resuming from a different directory — or,
+  on Windows, a different drive — therefore keeps appending to the original
+  files instead of silently creating a second set next to the new working
+  directory. Compatibility: a snapshot written by an older build may still hold
+  a relative path; it is resolved against the current working directory (what
+  the older build did implicitly, so a same-directory resume is unchanged) and
+  rewritten as absolute *in the snapshot that run saves* — that is, only when the
+  run is interrupted or leaves work incomplete. A resume that finishes cleanly
+  saves no snapshot at all, so the legacy relative path stays on disk; nothing is
+  left to resume, so it no longer matters. Resolving a legacy path cannot recover
+  the directory the old build never recorded, so a legacy snapshot resumed from a
+  *different* directory still resolves against that new directory. Absolute paths
+  already recorded in a snapshot are used exactly as recorded.
 - The `-unreachable-file` name is timestamped and non-deterministic — capture
   `preping`'s printed stdout path when chaining rather than hard-coding it.
 

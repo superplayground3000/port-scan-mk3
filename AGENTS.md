@@ -17,13 +17,19 @@ their trigger applies.
   override convenience. When in doubt, the constitution wins.
 
 ## Build & Test Commands
-- Build all binaries (Linux + Windows): `make build`
+- Build all binaries (Linux + Windows): `make build` — cross-builds are
+  explicit (`GOOS`/`GOARCH`/`CGO_ENABLED=0`), fail-fast, and end with the
+  artifact gate `make verify-dist`. See `docs/MAINTENANCE.md` section 2.
 - Build one command: `go build ./cmd/port-scan` (commands live in `cmd/*/`;
   there is **no** `cmd/app`)
 - Run tests: `make test` (`go test -race -shuffle=on ./...`)
-- **Full quality gate (run before claiming done): `make verify`** — runs gofmt,
-  `go vet`, build, race tests, and the >=85% coverage gate. It mirrors CI
-  exactly. Add the isolated Docker e2e with `make verify-e2e`.
+- **Full quality gate (run before claiming done): `make verify`** — runs the
+  line-ending check, gofmt, `go vet`, build, race tests, and the >=85% coverage
+  gate. CI enforces the same things but does **not** call this script: its
+  Linux job inlines gofmt/vet/build/test (it does call `coverage_gate.sh`), and
+  the line-ending rules are enforced in CI by `tests/repohygiene` on the Linux
+  *and* Windows jobs, not by the `verify.sh` step. Add the isolated Docker e2e
+  with `make verify-e2e`.
 - Format: `make fmt` · Lint: `make lint` (uses golangci-lint if installed) ·
   Tidy: `go mod tidy` · List targets: `make help`
 

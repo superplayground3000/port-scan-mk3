@@ -98,14 +98,27 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	// output path (a prior interrupted run) makes this run APPEND to the same
 	// files (design §3.7); otherwise this is the first scan of the bucket and we
 	// mint fresh timestamped paths and record them so the next -resume appends.
+	//
+	// Recorded paths are resolved to absolute form first (issue #61): a snapshot
+	// written by an older build can hold a path that is only meaningful relative
+	// to the working directory of the run that produced it, and reopening that
+	// string from a different directory or drive would append to a SECOND set of
+	// files instead of the originals. resolvePersistedOutputPaths documents the
+	// compatibility rule; the resolved paths are what this run records IF it
+	// saves a snapshot at all - a run that completes cleanly saves none, because
+	// there is then nothing left to resume.
 	var (
 		scanPath   string
 		openPath   string
 		appendMode bool
 	)
 	if snapshot.Output != nil {
-		scanPath = snapshot.Output.ScanPath
-		openPath = snapshot.Output.OpenPath
+		recorded, resolveErr := resolvePersistedOutputPaths(*snapshot.Output)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		scanPath = recorded.ScanPath
+		openPath = recorded.OpenPath
 		appendMode = true
 	} else {
 		outputPaths, resolveErr := resolveRunOutputPaths(cfg, deps, time.Now())
@@ -249,58 +262,22 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		close(taskCh)
 	}()
 
-	var (
-		dispatchDone bool
-		dispatchErr  error
-		runErr       error
-		summary      resultSummary
-	)
 	startedAt := time.Now()
-	for !dispatchDone || resultCh != nil {
-		select {
-		case apiErr := <-apiErrCh:
-			if apiErr != nil && runErr == nil {
-				runErr = apiErr
-				cancel()
-			}
-		case executorErr, ok := <-executorErrCh:
-			if !ok {
-				executorErrCh = nil
-				continue
-			}
-			if executorErr != nil && runErr == nil {
-				runErr = executorErr
-				cancel()
-			}
-		case err := <-dispatchErrCh:
-			dispatchDone = true
-			dispatchErr = err
-			dispatchErrCh = nil
-		case res, ok := <-resultCh:
-			if !ok {
-				resultCh = nil
-				continue
-			}
-			// Only a result that reached the output file counts as scanned. A
-			// result written after runErr was set is never attempted, and a write
-			// that failed persisted nothing — counting either would inflate the
-			// scanned counter and the completion summary past the rows actually on
-			// disk (issue #51).
-			persisted := false
-			if runErr == nil {
-				if err := writeScanRecord(outputs.scanWriter, outputs.openOnlyWriter, res.record.AsWriterRecord()); err != nil {
-					runErr = err
-					cancel()
-				} else {
-					persisted = true
-				}
-			}
-			if persisted {
-				applyScanResult(plan.runtimes, res, &summary, resultObserver)
-				emitScanResultEvents(stdout, logger, ctrl, progressStep, plan.runtimes, res, &summary, cfg.Quiet)
-			}
-		}
-	}
+	summary, dispatchErr, runErr := runResultLoop(cancel, false, resultLoopChannels{
+		apiErrCh:      apiErrCh,
+		executorErrCh: executorErrCh,
+		dispatchErrCh: dispatchErrCh,
+		resultCh:      resultCh,
+	}, resultLoopDeps{
+		outputs:        outputs,
+		runtimes:       plan.runtimes,
+		resultObserver: resultObserver,
+		stdout:         stdout,
+		logger:         logger,
+		ctrl:           ctrl,
+		progressStep:   progressStep,
+		quiet:          cfg.Quiet,
+	})
 
 	for _, rt := range plan.runtimes {
 		if rt.bkt != nil {
