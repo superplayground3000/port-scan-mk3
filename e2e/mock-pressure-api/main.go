@@ -38,6 +38,45 @@ var validTokens = struct {
 
 var configStore *responseConfigStore
 
+// servedStats is the process-wide counter set for the running mock. It exists
+// only so main() has something to wire into newMux/newPressureHandler; every
+// other consumer takes a *pressureStats explicitly.
+var servedStats = newPressureStats()
+
+// pressureStats counts what the mock has SERVED on /api/pressure: every GET,
+// and the subset of those the scanner will experience as a failure.
+//
+// The e2e harness polls these counters (via GET /admin/stats) to wait for a
+// real event instead of racing a scan against the pressure poller (issue #71).
+// Handlers run on independent net/http goroutines, so every field is guarded.
+type pressureStats struct {
+	mu       sync.Mutex
+	requests int
+	failures int
+}
+
+func newPressureStats() *pressureStats {
+	return &pressureStats{}
+}
+
+func (s *pressureStats) recordRequest() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requests++
+}
+
+func (s *pressureStats) recordFailure() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures++
+}
+
+func (s *pressureStats) snapshot() (requests, failures int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requests, s.failures
+}
+
 type pressureState struct {
 	mu       sync.Mutex
 	current  int
@@ -210,12 +249,35 @@ func main() {
 }
 
 func newMux() *http.ServeMux {
+	return newMuxWithStats(servedStats)
+}
+
+func newMuxWithStats(stats *pressureStats) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth", handleAuth)
 	mux.HandleFunc("/data", handleData)
 	mux.HandleFunc("/admin/config", handleConfigInfo)
 	mux.HandleFunc("/admin/config/reload", handleConfigReload)
+	mux.HandleFunc("/admin/stats", newStatsHandler(stats))
 	return mux
+}
+
+// newStatsHandler reports what the mock has served so far. The counters are
+// cumulative for the process lifetime, so consumers must compare against a
+// baseline they read themselves rather than assuming they start at zero.
+func newStatsHandler(stats *pressureStats) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		requests, failures := stats.snapshot()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]int{
+			"pressure_requests": requests,
+			"pressure_failures": failures,
+		})
+	}
 }
 
 func newPressureHandler(mode string, delayMS int, state *pressureState) http.HandlerFunc {
@@ -223,6 +285,10 @@ func newPressureHandler(mode string, delayMS int, state *pressureState) http.Han
 }
 
 func newPressureHandlerWithConfig(mode string, delayMS int, state *pressureState, store *responseConfigStore) http.HandlerFunc {
+	return newPressureHandlerWithStats(mode, delayMS, state, store, servedStats)
+}
+
+func newPressureHandlerWithStats(mode string, delayMS int, state *pressureState, store *responseConfigStore, stats *pressureStats) http.HandlerFunc {
 	writeBody := func(w http.ResponseWriter) {
 		if store != nil {
 			body := store.Body()
@@ -251,15 +317,24 @@ func newPressureHandlerWithConfig(mode string, delayMS int, state *pressureState
 			return
 		}
 
+		stats.recordRequest()
+
 		switch mode {
 		case "ok":
 			writeBody(w)
 		case "fail":
+			stats.recordFailure()
 			http.Error(w, "mock fail", http.StatusInternalServerError)
 		case "timeout":
+			// Record BEFORE the stall, not after: the scanner's HTTP client
+			// gives up mid-sleep and never sees a response, so the stall
+			// starting IS the failure it observes. Counting after the sleep
+			// would report the failure long after the scanner acted on it.
+			stats.recordFailure()
 			time.Sleep(time.Duration(delayMS) * time.Millisecond)
 			writeBody(w)
 		default:
+			stats.recordFailure()
 			http.Error(w, "unknown mode", http.StatusInternalServerError)
 		}
 	}
