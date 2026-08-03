@@ -98,14 +98,27 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	// output path (a prior interrupted run) makes this run APPEND to the same
 	// files (design §3.7); otherwise this is the first scan of the bucket and we
 	// mint fresh timestamped paths and record them so the next -resume appends.
+	//
+	// Recorded paths are resolved to absolute form first (issue #61): a snapshot
+	// written by an older build can hold a path that is only meaningful relative
+	// to the working directory of the run that produced it, and reopening that
+	// string from a different directory or drive would append to a SECOND set of
+	// files instead of the originals. resolvePersistedOutputPaths documents the
+	// compatibility rule; the resolved paths are what this run records IF it
+	// saves a snapshot at all - a run that completes cleanly saves none, because
+	// there is then nothing left to resume.
 	var (
 		scanPath   string
 		openPath   string
 		appendMode bool
 	)
 	if snapshot.Output != nil {
-		scanPath = snapshot.Output.ScanPath
-		openPath = snapshot.Output.OpenPath
+		recorded, resolveErr := resolvePersistedOutputPaths(*snapshot.Output)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		scanPath = recorded.ScanPath
+		openPath = recorded.OpenPath
 		appendMode = true
 	} else {
 		outputPaths, resolveErr := resolveRunOutputPaths(cfg, deps, time.Now())
