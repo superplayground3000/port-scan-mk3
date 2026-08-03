@@ -11,13 +11,21 @@ Every command below was executed and verified when this file was written.
 
 ## 1. The quality gate (single source of truth)
 
-Everything runs through `scripts/verify.sh`, exposed as make targets. CI
-(`.github/workflows/ci.yml`) calls the same scripts, so **green locally means
-green in CI**.
+Everything runs through `scripts/verify.sh`, exposed as make targets, so
+**green locally means green in CI**.
+
+One honest caveat: CI does not literally call `verify.sh`. It calls
+`scripts/coverage_gate.sh` and `e2e/run_e2e.sh`, but its Linux `gate` job
+inlines gofmt/vet/build/test instead of invoking the script — so a check added
+only to `verify.sh` would never run in CI. That is why the line-ending rules
+below are additionally guarded by a Go test, which both CI jobs do run.
+Switching the `gate` job to `bash scripts/verify.sh` would remove the caveat;
+`.claude/rules/90-letter-to-future-sessions.md` already names that as the
+intended design, and `.github/workflows/ci.yml` is owned by issues #63/#71.
 
 | Command | What it runs | When |
 |---|---|---|
-| `make verify` | gofmt · `go vet` · `go build` · `go test -race -shuffle=on` · coverage ≥85% | Before every "done" |
+| `make verify` | line endings · gofmt · `go vet` · `go build` · `go test -race -shuffle=on` · coverage ≥85% | Before every "done" |
 | `make verify-e2e` | all of the above **plus** the isolated Docker e2e suite | When you touch the scan pipeline, writers, or pressure control |
 | `make test` | `go test -race -shuffle=on ./...` | Quick inner loop |
 | `make cover` | coverage gate only (`scripts/coverage_gate.sh`) | Checking the 85% floor |
@@ -50,6 +58,44 @@ make build-windows  # Windows x64 only
   natively on Windows with a POSIX-shell make.
 - CI runs the full gate on Linux and additionally builds + tests on
   `windows-latest`.
+
+### Line endings are owned by the repository, not by your git config
+
+`.gitattributes` at the repository root pins what lands on disk, so a checkout
+is the same on every machine. Without it, git falls back to each developer's
+`core.autocrlf`; the Git for Windows installer offers `core.autocrlf=true` as
+its default, which rewrites LF to CRLF at checkout time — and then `gofmt -l`
+rejects a pristine clone before anyone has edited a line (issue #64), while
+bash refuses the CRLF shell scripts.
+
+The policy, and why:
+
+| Pattern | Rule | Reason |
+|---|---|---|
+| `*` | `text=auto eol=lf` | Default: git detects text vs binary, normalises text to LF in the index, checks out LF everywhere. |
+| `*.go`, `*.sh`, `Makefile`, `Dockerfile`, `*.yml`, `*.mod`, `*.sum` | `text eol=lf` | Redundant with the catch-all **on purpose** — these are the ones whose breakage is a build failure, so they survive a careless edit of the catch-all. |
+| `*.ps1` | `text eol=lf` | PowerShell 5.1 and 7 both run LF-only scripts, and the repository's only `.ps1` is LF and linted in a Linux container. Switch to `eol=crlf` if this project ever ships Authenticode-signed scripts — `Set-AuthenticodeSignature` appends a CRLF signature block. |
+| `*.bat`, `*.cmd` | `text eol=crlf` | The one deliberate exception. `cmd.exe` parses a batch file line by line as it executes it, and label/multi-line handling depends on the CR. There is no batch file in the repository yet; the rule is here so the first one is correct by default. |
+| `dist/**`, `*.exe`, `*.pptx`, image/archive types | `binary` | `binary` is git's macro for `-text -diff`: never EOL-converted (that would corrupt them), never diffed as text. `text=auto` would auto-detect most of these, but detection is a heuristic and a corrupted committed binary is silent. |
+
+Two checks defend this, because they catch different regressions:
+
+- **`scripts/verify.sh`** (`make verify`, first step) compares *your* working
+  tree against the declared attributes via `git ls-files --eol`, and fails if
+  `.gitattributes` is missing. Fast, and names the real cause instead of
+  letting gofmt blame your source.
+- **`tests/repohygiene/line_endings_test.go`** re-materialises the tracked
+  files through `git checkout-index` with `core.autocrlf=true` forced on and
+  asserts the result is LF and gofmt-clean. It reproduces the Windows failure
+  deterministically *from any platform*, and it runs in CI on both the Linux
+  (`go test -race -shuffle=on ./...`) and Windows (`go test ./...`) jobs.
+
+If you ever do end up with a mismatched tree:
+
+```bash
+git add --renormalize .
+git checkout-index -f -a
+```
 
 ## 3. Complete runnable example (self-contained, loopback only)
 
