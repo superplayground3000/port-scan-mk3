@@ -249,58 +249,22 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		close(taskCh)
 	}()
 
-	var (
-		dispatchDone bool
-		dispatchErr  error
-		runErr       error
-		summary      resultSummary
-	)
 	startedAt := time.Now()
-	for !dispatchDone || resultCh != nil {
-		select {
-		case apiErr := <-apiErrCh:
-			if apiErr != nil && runErr == nil {
-				runErr = apiErr
-				cancel()
-			}
-		case executorErr, ok := <-executorErrCh:
-			if !ok {
-				executorErrCh = nil
-				continue
-			}
-			if executorErr != nil && runErr == nil {
-				runErr = executorErr
-				cancel()
-			}
-		case err := <-dispatchErrCh:
-			dispatchDone = true
-			dispatchErr = err
-			dispatchErrCh = nil
-		case res, ok := <-resultCh:
-			if !ok {
-				resultCh = nil
-				continue
-			}
-			// Only a result that reached the output file counts as scanned. A
-			// result written after runErr was set is never attempted, and a write
-			// that failed persisted nothing — counting either would inflate the
-			// scanned counter and the completion summary past the rows actually on
-			// disk (issue #51).
-			persisted := false
-			if runErr == nil {
-				if err := writeScanRecord(outputs.scanWriter, outputs.openOnlyWriter, res.record.AsWriterRecord()); err != nil {
-					runErr = err
-					cancel()
-				} else {
-					persisted = true
-				}
-			}
-			if persisted {
-				applyScanResult(plan.runtimes, res, &summary, resultObserver)
-				emitScanResultEvents(stdout, logger, ctrl, progressStep, plan.runtimes, res, &summary, cfg.Quiet)
-			}
-		}
-	}
+	summary, dispatchErr, runErr := runResultLoop(cancel, false, resultLoopChannels{
+		apiErrCh:      apiErrCh,
+		executorErrCh: executorErrCh,
+		dispatchErrCh: dispatchErrCh,
+		resultCh:      resultCh,
+	}, resultLoopDeps{
+		outputs:        outputs,
+		runtimes:       plan.runtimes,
+		resultObserver: resultObserver,
+		stdout:         stdout,
+		logger:         logger,
+		ctrl:           ctrl,
+		progressStep:   progressStep,
+		quiet:          cfg.Quiet,
+	})
 
 	for _, rt := range plan.runtimes {
 		if rt.bkt != nil {
