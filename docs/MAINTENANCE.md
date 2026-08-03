@@ -46,18 +46,114 @@ scan logger. Do not remove `-race` from the test path.
 The product cross-compiles for both from the Makefile:
 
 ```bash
-make build          # builds dist/linux/* and dist/windows/*.exe for every cmd/
+make build          # builds dist/linux/* and dist/windows/*.exe for every cmd/,
+                    # then runs the artifact gate below
 make build-linux    # Linux x64 only
 make build-windows  # Windows x64 only
+make verify-dist    # artifact gate only (checks whatever is in dist/ right now)
+                    # honours DIST_DIR: `make verify-dist DIST_DIR=x` gates x/
 ```
+
+### Release artifact rules (issue #65)
+
+- **Cross-builds are explicit.** Both recipes set `GOOS`, `GOARCH` and
+  `CGO_ENABLED` themselves and never inherit them from the build host, so
+  `dist/linux/` always holds `linux/amd64` and `dist/windows/` always holds
+  `windows/amd64` — whether you build on Linux, on Windows, or in CI.
+  Windows ARM64 is deliberately not produced.
+- **The build loops are fail-fast** (`set -e`). A shell `for` loop's exit status
+  is the status of its *last* iteration, so before #65 a command that failed to
+  compile in the middle of the loop was masked by a later success: `make build`
+  exited 0 with an artifact missing from `dist/`. Any single command build
+  failure now aborts the target immediately. Do not remove `set -e` from those
+  recipes.
+- **`CGO_ENABLED=0` for release artifacts.** Decided in #65. With cgo enabled
+  the output depends on whether the *build host* has a C toolchain, and the
+  Linux binary links dynamically against that host's glibc — the same source
+  then yields materially different artifacts on different machines, which is
+  exactly the non-determinism #65 is about. With `CGO_ENABLED=0` the Linux
+  binary is statically linked and portable, and Go uses the pure-Go (`netgo`)
+  resolver. That is sufficient here because the scanner uses only stdlib `net`
+  (constitution "Technology Stack"); the accepted trade-off is that host lookups
+  no longer go through glibc NSS plugins (LDAP, mDNS, …) — `/etc/hosts` and DNS
+  still work normally. On Windows Go has no cgo resolver at all, so the setting
+  only makes the existing behavior explicit. This also aligns the Makefile with
+  the production-like path that already existed: `e2e/scanner/Dockerfile:6`
+  builds the scanner with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`.
+  To build a cgo-linked binary
+  deliberately, override it: `make build CGO_ENABLED_RELEASE=1` (the artifact
+  gate will then correctly reject it).
+- **Release artifacts are byte-for-byte reproducible.** `buildTime` is derived
+  from the commit (`TZ=UTC0 git log -1 --date=format-local:...`), not the wall
+  clock, and every build passes `-trimpath` so absolute source paths are not
+  baked in. Two builds of the same commit produce identical bytes. Before #65
+  the recipes stamped `date -u`, so every rebuild differed and a published
+  binary could not be checked against the commit it claimed.
+  `test_build_recipes.sh` TEST 5 pins this along both axes that used to leak:
+  5a builds twice across a wall-clock second boundary and a timezone change (the
+  `buildTime` axis), and 5b builds the same commit from two different absolute
+  paths (the `-trimpath` axis), each asserting byte-identical output.
+  The guarantee is scoped: it holds for the same commit built from the **same
+  repo tag metadata**, in a *clean* checkout. `VERSION` comes from `git describe
+  --always --dirty`, which is not a pure function of the commit alone — a dirty
+  tree stamps differently on purpose, and two clones of the same commit that can
+  see different tags resolve a different `VERSION`, which changes the `-ldflags`
+  string recorded in build info and therefore the bytes. Pinning a fully
+  commit-derived version belongs with the tag-driven release contract in issue
+  #70; until then, read the guarantee as "same commit **and** same tag
+  metadata", not "same commit" unconditionally.
+- **`dist/` is no longer tracked** and is git-ignored. This deliberately
+  reverses commit `97b4e8f` ("track linux and windows binaries in dist/"),
+  which had committed the 10 prebuilt binaries and dropped `dist/` from
+  `.gitignore` with a `!dist/windows/*.exe` negation. Committed binaries went
+  stale on every source change and bloated the repo, and — now that builds are
+  reproducible — they add nothing a rebuild cannot reproduce exactly.
+  **The replacement tag-driven release flow that would publish these artifacts
+  is issue #70 and does not exist yet**, so as of this change the binaries are
+  **not obtainable by cloning**: build them yourself with `make build` (they
+  land in the ignored `dist/`). This is a known, temporary gap until #70 ships.
+- **The artifact gate is `scripts/verify_dist.sh`.** It is not a comment or a
+  convention: for every `cmd/*/main.go` it asserts the artifact exists and that
+  both the toolchain build info (`go version -m`) *and* the on-disk executable
+  header (ELF vs. PE `MZ`) agree with the directory it sits in. It discovers the
+  command list itself rather than trusting the Makefile, so a command the
+  Makefile forgot to build is caught. It also refuses to report success if it
+  inspected zero artifacts, so an emptied target list cannot make it pass
+  vacuously. It always gates the directory the Makefile actually built into
+  (`make build DIST_DIR=x` verifies `x`, not `dist/`).
+  Running it on a fresh clone without building first is expected to fail — it
+  verifies what you built, not what is committed under `dist/`.
+- **The recipes themselves are pinned by `scripts/test_build_recipes.sh`.**
+  The #65 fixes live in Makefile recipes, which `go test` cannot reach, so this
+  is the retained regression suite that keeps them fixed: it drives the real
+  `build-linux`/`build-windows`/`build` targets and asserts (1) a mid-loop
+  compile failure aborts the target *and stops it* rather than being masked by
+  a later success, (2) a hostile `GOOS`/`GOARCH` in the environment cannot leak
+  into either cross-build — checked against the produced binary's ELF/PE
+  header, (3) `make build` gates the `DIST_DIR` it wrote, (4) the artifact
+  gate cannot pass vacuously, and (5) two builds of the same commit are
+  byte-for-byte identical — both across a wall-clock/timezone change (5a) and
+  across two different absolute build paths (5b), the two inputs a commit-derived
+  `buildTime` and `-trimpath` exist to neutralize (see the reproducibility
+  bullet above). Every test
+  builds into a temporary `DIST_DIR`, so the suite never touches the working
+  `dist/` tree — TEST 3 asserts this by fingerprinting `dist/` on disk before
+  and after (a `git status -- dist` check would go vacuous now that `dist/` is
+  git-ignored). It runs in `bash scripts/verify.sh` (hence in `make verify`)
+  and CI calls the same script, so local and CI cannot drift apart.
 
 - **Product code** must build and run on Linux and Windows: use `filepath`,
   `t.TempDir()`, and `runtime.GOOS` instead of hardcoded paths.
 - **Dev scripts** (`scripts/verify.sh`, `e2e/run_e2e.sh`) are bash. On Windows,
   run them from **Git Bash** or **WSL**. `go build` / `go test` / `make` work
   natively on Windows with a POSIX-shell make.
-- CI runs the full gate on Linux and additionally builds + tests on
-  `windows-latest`.
+- CI runs the full gate on Linux — after `go build ./...` it runs
+  `bash scripts/test_build_recipes.sh` (the same recipe suite `make verify`
+  runs), so the fail-fast cross-build recipes and the `verify_dist.sh` artifact
+  gate are exercised on every PR, not just `go build ./...`. It does **not** run
+  `make clean build`: the suite builds into a temporary `DIST_DIR` instead of
+  cleaning and rewriting the ignored `dist/` tree. CI additionally builds +
+  tests on `windows-latest`.
 
 ### Line endings are owned by the repository, not by your git config
 

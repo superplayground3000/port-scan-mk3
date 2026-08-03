@@ -48,6 +48,17 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      # `go build ./...` only proves the packages compile for the host. This
+      # exercises the real release path: the fail-fast cross-build recipes plus
+      # scripts/verify_dist.sh, which asserts every artifact exists and really
+      # targets the OS/ARCH its directory claims (issue #65).
+      #
+      # It calls the SCRIPT, not `make clean build`, for two reasons: the same
+      # script runs inside `bash scripts/verify.sh`, so local and CI cannot
+      # drift apart; and it builds into a temporary DIST_DIR instead of `clean`
+      # -ing and rewriting the tracked dist/ tree.
+      - name: release build recipes (cross-build + artifact gate)
+        run: bash scripts/test_build_recipes.sh
       - name: go test -race
         run: go test -race -shuffle=on ./...
       - name: coverage gate (>= 85%)
