@@ -93,12 +93,11 @@ jobs:
   e2e:
     name: Isolated e2e (Docker Compose)
     runs-on: ubuntu-latest
-    # Non-blocking for now: one failure-injection scenario (api_timeout) is
-    # timing-sensitive — the tiny fail-scenario scan can finish before the
-    # pressure-timeout becomes fatal on fast runners, so it exits 0 instead of
-    # failing. Tracked for a follow-up fix that makes the scenario deterministic;
-    # see docs/MAINTENANCE.md "Known e2e follow-ups". Flip to blocking once fixed.
-    continue-on-error: true
+    # Blocking. The api_timeout scenario used to be timing-sensitive (the scan
+    # could finish before the pressure-timeout became fatal); it is now
+    # event-driven — it waits for the mock to serve the scanner's fatal
+    # threshold of pressure failures before judging the run, and asserts a
+    # resumable mid-flight snapshot (issue #71). No scenario races a clock.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
