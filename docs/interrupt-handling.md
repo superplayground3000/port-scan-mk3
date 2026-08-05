@@ -96,6 +96,17 @@ A graceful stop has neither problem: its snapshot records exactly what was
 dispatched, and the resumed run appends to the same file with no gap and no
 duplicate.
 
+That is worth stating precisely, because the dispatch cursor advances when a
+task is *enqueued*, not when its row is written — the same asymmetry that made
+issue #51 a data-loss bug. It is safe here because the cursor advances only
+*after* a task has been handed to a worker (`pkg/scanapp/task_dispatcher.go`
+advances `NextIndex` after the send succeeds, and returns without advancing when
+the context is already canceled), and because workers drain every task they
+received and the result loop keeps running until the result channel closes. So
+on a cancel, every task counted by the cursor has produced a row. The invariant
+that does *not* hold is the one issue #51 covers: if writing the output fails,
+the snapshot is deliberately not saved at all.
+
 ## Where this is verified
 
 - `pkg/state/signal_windows_test.go` builds the real `port-scan.exe`, starts a
