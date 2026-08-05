@@ -350,6 +350,13 @@ preprocess --input <file> --cleaned-cidrs <file> --fab-name <name> --output-dir 
 
 **Output:** Timestamped CSV at `<output-dir>/<fab-name>/<timestamp>/input.csv` plus a summary (total / kept / dropped) on stderr.
 
+`--fab-name` must be a single safe directory name and is validated before any
+input is read: path separators, `.`/`..`, absolute paths, the characters
+`< > : " | ? *`, control characters, a trailing dot or space, and Windows
+reserved device names (`CON`, `NUL`, `COM1`, … — including `con.txt`) are
+rejected rather than sanitized. See
+[docs/apps/preprocess/SPEC.md](docs/apps/preprocess/SPEC.md) for the full list.
+
 ### cidr-compare
 
 Compare open CIDRs against deny CIDRs using an interval tree for efficient lookup.

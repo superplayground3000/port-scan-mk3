@@ -37,6 +37,14 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 		return errors.New("all flags --input, --cleaned-cidrs, --fab-name, --output-dir are required")
 	}
 
+	// The fab name becomes a directory under --output-dir, so it is checked
+	// before any input is opened: an unsafe name must fail immediately rather
+	// than late in os.MkdirAll, or worse, place output outside the base
+	// directory.
+	if err := preprocess.ValidateFabName(*fabName); err != nil {
+		return fmt.Errorf("--fab-name: %w", err)
+	}
+
 	// Load closed CIDRs for this fab.
 	cidrsFile, err := os.Open(*cleanedCIDRs)
 	if err != nil {

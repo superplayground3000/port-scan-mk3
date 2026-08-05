@@ -23,6 +23,31 @@ All four flags are required.
 | `--fab-name` | Data center / fabric name (used to filter closed CIDRs) |
 | `--output-dir` | Base output directory |
 
+### `--fab-name` constraints
+
+The fab name becomes a directory under `--output-dir`, so it must be a single
+safe path component. It is validated before any input file is opened, and an
+unusable value is rejected with an error naming the flag rather than being
+sanitized. The rules are the strictest of Linux and Windows and apply on every
+platform, because output written on one is routinely read on the other.
+
+Rejected:
+
+- Path separators (`/` or `\`), absolute, drive-relative and UNC paths, and the
+  relative elements `.` and `..`.
+- Characters Windows forbids in a name: `< > : " | ? *` and control characters
+  `0x00`–`0x1F`.
+- A trailing dot or space — Windows strips them, silently renaming the output
+  directory.
+- Windows reserved device names, case-insensitively and including extension
+  variants: `CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, so
+  `con.txt` is rejected as well as `con`. Windows trims trailing spaces and
+  dots off the stem before it matches a device, so padded forms such as
+  `con .txt` are rejected too.
+
+Accepted: letters (including non-ASCII, e.g. `fab 12 東京`), digits, interior
+spaces and dots, and the usual punctuation — `dc-east`, `fab_01`, `fab.v2`.
+
 ## Input Formats
 
 ### Rich CSV Input
