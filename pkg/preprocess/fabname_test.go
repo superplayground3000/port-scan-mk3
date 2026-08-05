@@ -120,6 +120,45 @@ func TestValidateFabName_RejectsTrailingDotsAndSpaces(t *testing.T) {
 	}
 }
 
+// TestValidateFabName_RejectsMultiComponentAndTraversalNames covers the names
+// that would move the output tree somewhere the operator did not ask for:
+// anything carrying a path separator (either platform's), an absolute or
+// drive-relative path, or a relative element that walks up or stays put.
+func TestValidateFabName_RejectsMultiComponentAndTraversalNames(t *testing.T) {
+	tests := []struct {
+		name string
+		fab  string
+	}{
+		{name: "forward slash", fab: "fab/sub"},
+		{name: "backslash", fab: `fab\sub`},
+		{name: "leading forward slash", fab: "/fab"},
+		{name: "leading backslash", fab: `\fab`},
+		{name: "trailing forward slash", fab: "fab/"},
+		{name: "parent traversal", fab: ".."},
+		{name: "parent traversal with slash", fab: "../escape"},
+		{name: "parent traversal with backslash", fab: `..\escape`},
+		{name: "nested traversal", fab: "fab/../../escape"},
+		{name: "current directory", fab: "."},
+		{name: "absolute unix path", fab: "/etc/cron.d"},
+		{name: "absolute windows path", fab: `C:\Windows\Temp`},
+		{name: "drive relative path", fab: "C:fab"},
+		{name: "bare drive", fab: "C:"},
+		{name: "UNC path", fab: `\\server\share`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateFabName(tt.fab)
+			if err == nil {
+				t.Fatalf("ValidateFabName(%q) = nil, want a rejection: it is not a single safe path component", tt.fab)
+			}
+			if !errors.Is(err, ErrInvalidFabName) {
+				t.Errorf("ValidateFabName(%q) error %v does not wrap ErrInvalidFabName", tt.fab, err)
+			}
+		})
+	}
+}
+
 // TestValidateFabName_RejectsEmptyName keeps the emptiness rule inside the
 // validator: the CLI already refuses an empty --fab-name, but a library caller
 // gets the same answer instead of an empty path component.

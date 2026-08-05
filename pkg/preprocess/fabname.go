@@ -40,14 +40,25 @@ var reservedDeviceNames = func() map[string]struct{} {
 // always explicit: nothing is silently sanitized, because a quietly rewritten
 // fab name would put results in a directory the operator did not ask for.
 //
-// A name is rejected when it is a Windows reserved device name (see
-// reservedDeviceNames), case-insensitively and including extension variants
-// such as "con.txt" — Windows resolves those as devices too.
+// A name is rejected when it is empty, carries a path separator of either
+// platform (which also covers absolute, drive-relative and UNC paths), is "."
+// or "..", contains a control character or a character Windows forbids, ends
+// with a dot or a space, or is a Windows reserved device name — the latter
+// case-insensitively and including extension variants such as "con.txt", which
+// Windows resolves as a device too.
 //
 // Every returned error wraps [ErrInvalidFabName].
 func ValidateFabName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: must not be empty", ErrInvalidFabName)
+	}
+
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("%w %q: must be a single directory name, not a path (it contains a path separator)", ErrInvalidFabName, name)
+	}
+
+	if name == "." || name == ".." {
+		return fmt.Errorf("%w %q: must name a directory, not a relative path element", ErrInvalidFabName, name)
 	}
 
 	for _, r := range name {
