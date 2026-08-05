@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
@@ -67,6 +68,34 @@ type preScanPingEnvelope struct {
 	UnreachableIPv4U32 []uint32 `json:"unreachable_ipv4_u32,omitempty"`
 }
 
+// snapshotFileOps holds the individual filesystem steps a snapshot write
+// performs. Production always uses defaultSnapshotFileOps; the indirection
+// exists so tests can inject a failure at one specific stage and assert the
+// previous snapshot survives it.
+type snapshotFileOps struct {
+	createTemp func(dir, pattern string) (*os.File, error)
+	write      func(f *os.File, data []byte) (int, error)
+	sync       func(f *os.File) error
+	closeFile  func(f *os.File) error
+	chmod      func(name string, mode os.FileMode) error
+	replace    func(oldPath, newPath string) error
+	remove     func(name string) error
+}
+
+func defaultSnapshotFileOps() snapshotFileOps {
+	return snapshotFileOps{
+		createTemp: os.CreateTemp,
+		write:      func(f *os.File, data []byte) (int, error) { return f.Write(data) },
+		sync:       func(f *os.File) error { return f.Sync() },
+		closeFile:  func(f *os.File) error { return f.Close() },
+		chmod:      os.Chmod,
+		replace:    os.Rename,
+		remove:     os.Remove,
+	}
+}
+
+var fileOps = defaultSnapshotFileOps()
+
 // SaveSnapshot writes resume state as the current JSON envelope.
 func SaveSnapshot(path string, snap Snapshot) error {
 	env := snapshotEnvelope{
@@ -90,7 +119,86 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeFileViaTempRename(path, data, snapshotFileMode)
+}
+
+// snapshotFileMode is the permission the snapshot file ends up with, matching
+// the mode the previous direct-write implementation passed to os.WriteFile.
+const snapshotFileMode os.FileMode = 0o644
+
+// writeFileViaTempRename writes data to a temp file in the destination's own
+// directory and only then renames that file over path.
+//
+// The guarantee is deliberately narrower than "atomic write":
+//
+//   - the destination is never truncated or written in place;
+//   - any failure before the rename leaves an existing file at path
+//     byte-for-byte intact, and is reported with the stage that failed;
+//   - the rename either replaces the destination or fails loudly, with the
+//     previous file still in place.
+//
+// The rename step itself is atomic only on POSIX. Go explicitly does not
+// promise that on Windows — os.Rename's documentation says "even within the
+// same directory, on non-Unix platforms Rename is not an atomic operation" —
+// so a crash during the rename is out of scope there; what holds on every
+// platform is the three points above. The temp file must be a sibling of the
+// destination: a rename across filesystems is atomic nowhere and may fail
+// outright.
+func writeFileViaTempRename(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	f, err := fileOps.createTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp snapshot file in %s: %w", dir, err)
+	}
+	tmpPath := f.Name()
+
+	// Until the rename succeeds the temp file is garbage: drop it so a failed
+	// save never leaves debris beside the snapshot it did not replace. If the
+	// removal fails too, report it alongside the original failure rather than
+	// leaving an unexplained file next to the snapshot.
+	defer func() {
+		if err == nil {
+			return
+		}
+		_ = fileOps.closeFile(f)
+		if removeErr := fileOps.remove(tmpPath); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove temp snapshot file %s: %w", tmpPath, removeErr))
+		}
+	}()
+
+	// os.CreateTemp opens at 0600; give the snapshot the permissions it would
+	// have had without the temp file in the way.
+	if chmodErr := fileOps.chmod(tmpPath, destinationMode(path, perm)); chmodErr != nil {
+		return fmt.Errorf("set mode on temp snapshot file %s: %w", tmpPath, chmodErr)
+	}
+
+	if _, writeErr := fileOps.write(f, data); writeErr != nil {
+		return fmt.Errorf("write temp snapshot file %s: %w", tmpPath, writeErr)
+	}
+	if syncErr := fileOps.sync(f); syncErr != nil {
+		return fmt.Errorf("sync temp snapshot file %s: %w", tmpPath, syncErr)
+	}
+	// Close before the rename: Windows refuses to rename a file that is still
+	// open without FILE_SHARE_DELETE. A close error can also be the first
+	// report of a failed flush, so it must not be discarded.
+	if closeErr := fileOps.closeFile(f); closeErr != nil {
+		return fmt.Errorf("close temp snapshot file %s: %w", tmpPath, closeErr)
+	}
+	if replaceErr := fileOps.replace(tmpPath, path); replaceErr != nil {
+		return fmt.Errorf("replace snapshot %s with temp file %s: %w", path, tmpPath, replaceErr)
+	}
+	return nil
+}
+
+// destinationMode reports the permissions a replacement file should carry:
+// those of the file it replaces when one exists, so a save never loosens
+// permissions an operator tightened, and fallback for a first save.
+func destinationMode(path string, fallback os.FileMode) os.FileMode {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fallback
+	}
+	return info.Mode().Perm()
 }
 
 // LoadSnapshot reads resume state from either the current envelope or legacy chunk array JSON.
