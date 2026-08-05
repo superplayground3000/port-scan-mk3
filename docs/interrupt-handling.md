@@ -29,18 +29,29 @@ Go runtime translates them (`runtime.ctrlHandler`): `CTRL_C_EVENT` and
 distinct "SIGBREAK" — no such signal exists in the standard library — so
 subscribing to `os.Interrupt` is the complete and only way to handle Ctrl+Break.
 
-| How the scan is stopped | Reaches the scan? | Result |
+That runtime mapping describes only what Go *would* surface. Whether the event
+is raised in the first place is a separate question, and for the logoff and
+shutdown events the answer is normally "not for a program like this one":
+Windows delivers them to services, not to interactive console processes, which
+are terminated before the signal is sent.
+
+The rows below split by *what event Windows actually raises*, because that — not
+the name of the button the operator pressed — decides whether the scan gets to
+shut down cleanly. The distinction that matters most is between ending the
+console **window** (which raises an event) and ending the **process** (which
+does not).
+
+| How the scan is stopped | What Windows raises | Result |
 |---|---|---|
-| **Ctrl+C** in the console | Yes — `CTRL_C_EVENT` → `os.Interrupt` | Graceful. Exit 130, resume snapshot written. |
-| **Ctrl+Break** in the console | Yes — `CTRL_BREAK_EVENT` → `os.Interrupt` | Graceful. Exit 130, resume snapshot written. |
-| `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)` from a parent process | Yes | Graceful. This is the only control event a parent can send to a child in its own process group. |
-| Closing the console window (the **X**) | Event arrives as `SIGTERM`, **not subscribed** | Not graceful — see below. |
-| **Logoff** / **shutdown** / restart | Event arrives as `SIGTERM`, **not subscribed** | Not graceful. |
-| Task Scheduler **End task** / task timeout | No | Not graceful — the process tree is terminated directly. |
-| Task Manager **End task** | No | Not graceful. |
-| `taskkill /F /PID …` | No | Not graceful — `TerminateProcess` runs no user code at all. |
-| Service **stop**, when run under a service wrapper (NSSM, WinSW, srvany) | Depends entirely on the wrapper | Graceful only if the wrapper is configured to send a console control event to the process group first; wrappers that terminate directly are not graceful. |
-| `TerminateProcess`, power loss, bugcheck | No | Not graceful. |
+| **Ctrl+C** in the console | `CTRL_C_EVENT` → `os.Interrupt` | **Graceful.** Exit 130, resume snapshot written. |
+| **Ctrl+Break** in the console | `CTRL_BREAK_EVENT` → `os.Interrupt` | **Graceful.** Exit 130, resume snapshot written. |
+| `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, group)` from a parent process | `CTRL_BREAK_EVENT` → `os.Interrupt` | **Graceful.** These two are the only events `GenerateConsoleCtrlEvent` can raise at all. |
+| Closing the console **window** (the **X**), or ending that window from Task Manager | `CTRL_CLOSE_EVENT` → `SIGTERM`, **not subscribed** | Not graceful. Even subscribed it would be unreliable — see below. |
+| Ending the **process** from Task Manager, `taskkill /F`, End process tree | Nothing — `TerminateProcess` runs no user code | Not graceful. |
+| Task Scheduler **End task** (`schtasks /end`) / task timeout | Nothing documented; the task's process tree is terminated | Not graceful. |
+| **Logoff** or **shutdown** while the scan runs interactively | Nothing reaches it. `CTRL_LOGOFF_EVENT` and `CTRL_SHUTDOWN_EVENT` are delivered only to *services*; interactive processes are already terminated by then | Not graceful. |
+| Service **stop** under a service wrapper (NSSM, WinSW, srvany) | Wrapper-dependent | **Graceful only if** the wrapper is configured to send a console control event to the process group first. Wrappers that terminate directly are not. |
+| Power loss, bugcheck | Nothing | Not graceful. |
 
 ### Why Ctrl+Break matters more than it looks
 
@@ -49,24 +60,26 @@ schedulers and CI harnesses commonly launch a long scan — has **Ctrl+C disable
 by Windows for that group**. In that setup Ctrl+Break is not an alternative to
 Ctrl+C, it is the *only* console interrupt that can reach the scan at all.
 
-### Why close / logoff / shutdown are not subscribed
+### Why the console-close event is not subscribed
 
-They are technically interceptable: `SIGTERM` is delivered and the Go runtime
-blocks in its handler to give cleanup a chance. They are still not worth
-subscribing here, for two reasons.
+Closing the console window is the one non-Ctrl case that *does* raise an event
+this program could subscribe to: `CTRL_CLOSE_EVENT` reaches Go as `SIGTERM`, and
+the runtime blocks in its handler to give cleanup a chance. It is still not worth
+subscribing, for two reasons.
 
-First, the cleanup window is not ours. Windows terminates the process on its own
-deadline once the handler is entered (single-digit seconds for a console close,
-and a policy-controlled budget for logoff/shutdown). A scan that has to close
-writers and serialise a snapshot may or may not finish inside it, so a snapshot
-written during shutdown could not be trusted without further work — a
-half-written one would be worse than none.
+First, the cleanup window is not ours. Once the handler is entered Windows
+terminates the process on its own short deadline (single-digit seconds), and a
+scan that has to close writers and serialise a snapshot may or may not finish
+inside it. A snapshot half-written during teardown would be worse than none.
 
 Second, `SIGTERM` is not Windows-only. Subscribing to it would silently change
 what `kill`, `docker stop` and a systemd stop mean on Linux, turning a
 termination into a graceful cancel across every deployment. That is a real
 behaviour change for non-Windows users and belongs in its own change with its
 own tests, not as a side effect of console handling.
+
+Logoff and shutdown are not in that trade-off at all: an interactive scan never
+receives those events, so there is nothing to subscribe to.
 
 If the shutdown-window case ever becomes worth covering, it needs an explicit
 decision recorded here plus tests on both platforms.

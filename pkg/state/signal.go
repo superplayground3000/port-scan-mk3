@@ -29,14 +29,19 @@ import (
 // subscribes to EVERYTHING and ordinary signal traffic would cancel a running
 // scan. It must also never contain a nil os.Signal for the same reason.
 //
-// Second, the remaining Windows console events are a separate decision, not an
-// oversight. Console close, logoff and shutdown arrive as SIGTERM (the runtime
+// Second, the remaining Windows terminations are a separate decision, not an
+// oversight, and they do not all behave the same way. Closing the console
+// WINDOW raises CTRL_CLOSE_EVENT, which does reach Go as SIGTERM (the runtime
 // blocks in its handler to allow cleanup, but Windows still terminates the
-// process on its own deadline), while Task Manager "End task", `taskkill /F`
-// and a service stop cannot be intercepted at all. This program deliberately
-// subscribes to neither SIGTERM nor anything else here; docs/interrupt-handling.md
-// records which events reach the scan, which do not, and what an operator
-// should expect from the resume snapshot in each case.
+// process on its own short deadline) -- so it is subscribable and deliberately
+// not subscribed. Ending the PROCESS is different: taskkill /F, Task Scheduler
+// and anything else routed through TerminateProcess run no user code at all and
+// cannot be intercepted by any means. Logoff and shutdown fall in between: those
+// events are delivered only to services, so an interactive scan never sees them.
+// A service wrapper's stop behaviour is whatever the wrapper does. This program
+// subscribes to none of them; docs/interrupt-handling.md records which events
+// reach the scan, which do not, and what an operator should expect from the
+// resume snapshot in each case.
 func interruptSignals() []os.Signal {
 	return []os.Signal{os.Interrupt}
 }
