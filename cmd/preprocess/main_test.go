@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,81 @@ func TestRunMain_MissingFlags(t *testing.T) {
 	err := runMain([]string{}, &stdout, &stderr, time.Now().UTC())
 	if err == nil {
 		t.Fatal("expected error for missing flags")
+	}
+}
+
+// entryNames lists the immediate children of dir, so a test can prove a failed
+// run created nothing new outside the directory it was pointed at.
+func entryNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestRunMain_UnsafeFabName_RejectedBeforeWritingAnything is the containment
+// test for #67. A fab name carrying a traversal or a Windows-hostile shape must
+// be refused with an error naming the flag, and — the part that actually
+// matters — must not create anything beside the output directory.
+//
+// The assertion is deliberately not "the output path is where I computed it
+// should be": it snapshots the parent of --output-dir before the run and
+// requires the listing to be unchanged afterwards. That cannot pass by
+// construction, because it never recomputes the path the way production does.
+func TestRunMain_UnsafeFabName_RejectedBeforeWritingAnything(t *testing.T) {
+	unsafeNames := []struct {
+		name string
+		fab  string
+	}{
+		{name: "parent traversal", fab: filepath.Join("..", "escape")},
+		{name: "parent traversal slash", fab: "../escape"},
+		{name: "nested traversal", fab: "sub/../../escape"},
+		{name: "reserved device", fab: "con"},
+		{name: "reserved device with extension", fab: "NUL.csv"},
+		{name: "invalid character", fab: "fab?1"},
+		{name: "trailing dot", fab: "fab."},
+		{name: "trailing space", fab: "fab "},
+		{name: "separator", fab: "fab/sub"},
+		{name: "absolute", fab: "/escape"},
+	}
+
+	for _, tt := range unsafeNames {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			inputPath := writeFile(t, dir, "input.csv", strings.Join(preprocesscfg.RichHeader(), ",")+"\n")
+			cidrsPath := writeFile(t, dir, "cidrs.csv", "fab,segment,status\ndc-east,10.0.0.0/8,close\n")
+			outDir := filepath.Join(dir, "output")
+
+			before := entryNames(t, dir)
+
+			var stdout, stderr bytes.Buffer
+			err := runMain([]string{
+				"--input", inputPath,
+				"--cleaned-cidrs", cidrsPath,
+				"--fab-name", tt.fab,
+				"--output-dir", outDir,
+			}, &stdout, &stderr, time.Date(2026, 4, 16, 15, 30, 0, 0, time.UTC))
+
+			if err == nil {
+				t.Fatalf("runMain with --fab-name %q returned nil, want a rejection", tt.fab)
+			}
+			if !strings.Contains(err.Error(), "--fab-name") {
+				t.Errorf("error %q does not name the offending flag --fab-name", err)
+			}
+
+			after := entryNames(t, dir)
+			if !slices.Equal(before, after) {
+				t.Errorf("run with --fab-name %q changed the contents of %s: before %v, after %v",
+					tt.fab, dir, before, after)
+			}
+		})
 	}
 }
 
