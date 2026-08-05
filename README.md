@@ -147,6 +147,50 @@ Exit code behavior:
 - `2`: CLI parsing/config error
 - `130`: scan canceled by `SIGINT` (`Ctrl+C`)
 
+## Version Contract
+
+All five commands — `port-scan`, `preprocess`, `enrich-targets`, `cidr-compare`,
+`csv-transform` — answer the same version request. The token must be the **first
+argument**; all three spellings are equivalent:
+
+```
+port-scan version
+port-scan --version
+port-scan -version
+```
+
+The report goes to stdout and exits `0`:
+
+```
+port-scan version v2.2.0
+commit:  702ded4238bc4643fd317612db519209c58a82d3
+built:   2026-08-05T04:04:10Z
+go:      go1.24.0 windows/amd64
+```
+
+| Field | Source | Policy |
+|-------|--------|--------|
+| version | `git describe --always --dirty` at build time | The nearest annotated tag plus distance and abbreviated commit, or a bare commit when no tag is reachable |
+| commit | `git rev-parse HEAD` at build time | Stamped separately from the version, because a build made exactly on a tag describes as just `v2.2.0` and would carry no commit at all |
+| built | The **commit** timestamp, normalized to UTC | Never the wall clock: two builds of one commit must be byte-identical, which is what makes a published checksum meaningful |
+| go | The running binary's toolchain and `GOOS/GOARCH` | Describes the artifact itself, so it cannot drift from it |
+
+**Dirty builds.** A working tree with uncommitted changes makes `git describe`
+append `-dirty`, and the report then carries an extra line:
+
+```
+warning: built from a modified working tree; this artifact cannot be reproduced from a commit and is not a published release
+```
+
+The release workflow refuses to package such a build, and
+`scripts/smoke_release.sh` refuses to pass one.
+
+**Unstamped builds.** A binary built without the release ldflags — `go build
+./cmd/...`, `go run`, or `go test` — reports `dev` for the version and `unknown`
+for the commit and build time. That is the documented fallback, not a failure;
+only artifacts produced by `make build` or the release workflow carry real
+values.
+
 ## Architecture and Data Flow
 
 ### port-scan Pipeline (three steps)
@@ -471,6 +515,112 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - Dispatch order is chunk-serial (not cross-CIDR fair round-robin).
 - E2E requires Docker runtime and `docker compose`.
 
+## Windows Install, Upgrade and Rollback (PowerShell)
+
+Release assets are Windows x64 (`amd64`) only — Windows ARM64 is deliberately
+out of scope. They are built from the tagged source by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) on a clean
+runner and every `.exe` is executed on a native Windows runner before the
+release is published; no binary is ever committed to this repository.
+
+All commands below are PowerShell 5.1 or 7+. Set `$Version` once:
+
+```powershell
+$Version = 'v2.2.0'
+$Archive = "port-scan-mk3_${Version}_windows_amd64.zip"
+```
+
+### 1. Download and verify the checksum
+
+Download `$Archive` and `SHA256SUMS.txt` from the release page, then verify
+before extracting anything:
+
+```powershell
+$expected = (Select-String -Path SHA256SUMS.txt -Pattern $Archive).Line.Split(' ')[0]
+$actual   = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLower()
+if ($actual -ne $expected) { throw "checksum mismatch: $actual != $expected" }
+'checksum ok'
+```
+
+The archive contains a second `SHA256SUMS.txt` covering the individual `.exe`
+files, so you can re-verify them after extraction.
+
+### 2. Install
+
+Per-user, no administrator rights needed (recommended):
+
+```powershell
+$Install = "$env:LOCALAPPDATA\Programs\port-scan-mk3"
+New-Item -ItemType Directory -Force -Path $Install | Out-Null
+Expand-Archive -Path $Archive -DestinationPath $Install -Force
+```
+
+For a machine-wide install use `"$env:ProgramFiles\port-scan-mk3"` instead and
+run PowerShell as Administrator. Do not install into a directory that a scan
+writes output to; keep binaries and scan output separate.
+
+### 3. Add it to PATH
+
+```powershell
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -notlike "*$Install*") {
+  [Environment]::SetEnvironmentVariable('Path', "$userPath;$Install", 'User')
+}
+```
+
+This affects **new** shells only. Open a new PowerShell window, then confirm the
+installed build is the one you verified:
+
+```powershell
+port-scan --version
+```
+
+The first line must read `port-scan version v2.2.0`. If it says `dev`, you are
+running a locally built binary rather than a release asset.
+
+### 4. Upgrade (snapshot backup first)
+
+Always snapshot the current install before overwriting it — this is what makes
+the rollback in step 5 possible:
+
+```powershell
+$Stamp    = Get-Date -Format 'yyyyMMdd-HHmmss'
+$Snapshot = "$env:LOCALAPPDATA\Programs\port-scan-mk3.backup-$Stamp"
+Copy-Item -Recurse -Force $Install $Snapshot
+
+Expand-Archive -Path $Archive -DestinationPath $Install -Force
+port-scan --version
+```
+
+Stop any running scan before upgrading: Windows keeps the `.exe` locked while it
+executes, and `Expand-Archive` will fail rather than replace it. A scan
+interrupted with `Ctrl+C` writes its resume snapshot, so it can be continued
+with `-resume` after the upgrade (see [Output and Resume
+Behavior](#output-and-resume-behavior)).
+
+### 5. Rollback
+
+```powershell
+Remove-Item -Recurse -Force $Install
+Copy-Item -Recurse -Force $Snapshot $Install
+port-scan --version   # must report the version you rolled back to
+```
+
+Verify the version after rolling back; that is the only check that proves which
+build you are actually running. Scan output written by the newer version is not
+modified by a rollback — check the release notes for that version for any output
+schema change before reusing those files.
+
+### What Windows validation does and does not cover
+
+The isolated Docker e2e suite (`make verify-e2e`) runs **Linux** containers, so
+it validates Linux behavior only — it says nothing about the Windows binaries.
+Windows is covered by two separate gates: the native Windows job in
+`.github/workflows/ci.yml` (build and `go test` on `windows-latest`), and the
+release workflow's smoke job, which executes every published `.exe` on a
+`windows-latest` runner and checks it reports the release version before
+anything is published.
+
 ## Testing and Verification
 
 - **Full quality gate (run before every "done"): `make verify`** — gofmt, `go vet`,
@@ -479,6 +629,9 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - Individual steps: `make test` · `make cover` · `make e2e` · `make fmt` (`make help` lists all)
 - Speed-control verification report: `bash e2e/speedcontrol/run_speedcontrol_e2e.sh`
 - CI runs these gates on every push and PR (`.github/workflows/ci.yml`).
+- Release assets are built, checksummed and smoke-tested by
+  `.github/workflows/release.yml` on a `v*` tag push; see
+  [Release evidence](docs/MAINTENANCE.md#7-release-evidence).
 - See [Maintainability Baseline](docs/MAINTENANCE.md) for the full contract, cross-platform
   notes, and a complete runnable example.
 

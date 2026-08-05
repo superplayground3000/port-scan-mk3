@@ -442,3 +442,37 @@ Product releases use semver and ship `docs/release-notes/<version>.md` with
 features, fixes, breaking changes, and migration guidance (constitution VII).
 Keep documentation in sync with code on every change
 ([`.claude/rules/documents.md`](../.claude/rules/documents.md)).
+
+### How a release is produced (issue #70)
+
+Pushing an **annotated** `v*` tag runs `.github/workflows/release.yml`:
+`package` (ubuntu) builds from the tagged source and calls
+`scripts/package_release.sh`; `smoke-windows` (windows-latest) verifies the
+checksums, extracts the archive and runs `scripts/smoke_release.sh`, which
+executes every `.exe`; `publish` then creates the GitHub Release from
+`docs/release-notes/<version>.md`. `workflow_dispatch` runs everything except
+`publish`, so the path can be exercised without publishing.
+
+Rules that hold this together — do not weaken them without reading the issue:
+
+- **The tag must be annotated and must equal `git describe`.** The workflow
+  fails otherwise. A lightweight tag is invisible to `git describe`, so the
+  binaries would report a version that does not match the release shipping them.
+  The checkout uses `fetch-depth: 0` for the same reason.
+- **`-X main.<var>` only writes to a variable in the linked binary's own `main`
+  package, and is silent when the target does not exist.** That is why every
+  command declares `version`, `buildTime` and `commit` in package main, and why
+  `tests/release` reads the Makefile's `LDFLAGS`, rebuilds with sentinels and
+  asserts they come back out. An in-process test asserting the `dev` fallback
+  proves nothing here — `go test` links no stamps at all. Renaming one of those
+  variables must fail that test, not go quiet.
+- **The Windows job is not optional.** A Windows EXE cannot be executed on the
+  Linux packaging runner, and the Docker e2e suite runs Linux containers
+  (constitution V), so it validates Linux only. Without the `smoke-windows` job
+  the published `.exe` assets would never have been run anywhere.
+- **`publish` is gated on `github.event_name == 'push'` as well as the ref**,
+  because a `workflow_dispatch` run can be started on a tag ref.
+- **Archives are reproducible too.** `package_release.sh` normalizes entry
+  timestamps to the commit's timestamp and sorts entries, so the published
+  checksum of a given tag is stable — the same guarantee section 2 makes for the
+  binaries.
