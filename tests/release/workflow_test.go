@@ -110,6 +110,19 @@ func TestReleaseWorkflow_FetchesTagsAndBuildsFromSource(t *testing.T) {
 		t.Errorf("release.yml checks out without fetch-depth: 0; `git describe` would " +
 			"not see the tag and every artifact would be stamped with a bare commit")
 	}
+	// fetch-depth: 0 is NOT enough: actions/checkout@v4 passes --no-tags unless
+	// fetch-tags is set, so a full-history checkout can still have no tag refs.
+	// That is what failed the v2.2.0 release -- `git describe` resolved to the
+	// previous tag and the version assertion refused to build. The workflow must
+	// either ask checkout for the tags or fetch them itself before describing.
+	fetchesTags := strings.Contains(wf, "fetch-tags: true") ||
+		strings.Contains(wf, "git fetch --force --tags")
+	if !fetchesTags {
+		t.Errorf("release.yml never fetches tags: fetch-depth: 0 alone leaves " +
+			"actions/checkout@v4 running with --no-tags, so `git describe` reports the " +
+			"PREVIOUS tag and the release is refused. Set fetch-tags: true on the " +
+			"checkout, or run `git fetch --force --tags` before `git describe`")
+	}
 	if !strings.Contains(wf, "scripts/package_release.sh") {
 		t.Errorf("release.yml does not build its assets with scripts/package_release.sh")
 	}

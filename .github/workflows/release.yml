@@ -51,6 +51,12 @@ jobs:
           # commit. A shallow checkout would stamp every artifact with a bare
           # commit and mislabel the release.
           fetch-depth: 0
+          # fetch-depth: 0 alone is NOT enough. actions/checkout@v4 fetches with
+          # --no-tags unless this is set, so full history can still arrive with
+          # no tag refs at all -- `git describe` then reports the PREVIOUS tag
+          # and the version assertion below refuses to build. That is exactly
+          # how the first v2.2.0 release attempt failed.
+          fetch-tags: true
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -60,6 +66,10 @@ jobs:
         id: version
         run: |
           set -euo pipefail
+          # Belt and braces: fetch-tags on the checkout should have brought the
+          # tag, but describing against a stale tag set is the one failure mode
+          # that silently mislabels a release, so make it impossible here too.
+          git fetch --force --tags origin >/dev/null 2>&1 || true
           described="$(git describe --always --dirty)"
           case "$described" in
             *-dirty)
