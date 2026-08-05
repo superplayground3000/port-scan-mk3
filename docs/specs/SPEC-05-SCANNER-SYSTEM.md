@@ -38,7 +38,8 @@ func ScanTCP(
 type Result struct {
     IP             string  // Input IP
     Port           int     // Input port
-    Status         string  // "open" | "close" | "close(timeout)"
+    Status         string  // CSV status string, derived from Outcome
+    Outcome        Outcome // Explicit classification of the attempt
     ResponseTimeMS int64   // Elapsed time in milliseconds (only for "open")
     Error          string  // Error message (only for non-"open")
 }
@@ -46,11 +47,32 @@ type Result struct {
 
 ### Status Values
 
-| Status | Description |
-|--------|-------------|
-| `"open"` | TCP connection successful |
-| `"close"` | TCP connection refused/reset |
-| `"close(timeout)"` | Connection timed out |
+| Status | Outcome | Description |
+|--------|---------|-------------|
+| `"open"` | `OutcomeOpen` | TCP connection successful |
+| `"close"` | `OutcomeRefused` | Remote end refused or reset the connection (`ECONNREFUSED`/`ECONNRESET`, `WSAECONNREFUSED`/`WSAECONNRESET`). The **only** status that asserts the port is closed |
+| `"close(timeout)"` | `OutcomeTimeout` | Connection timed out (`net.Error.Timeout`, context deadline, `ETIMEDOUT`/`WSAETIMEDOUT`) |
+| `"error(local)"` | `OutcomeLocalResource` | The dial failed on the **scanning host**: address/buffer exhaustion, handle limits or permission denied (`EADDRNOTAVAIL`/`ENOBUFS`/`EACCES`/`EMFILE`/`EADDRINUSE`/`ENOMEM`, Winsock `WSAEADDRNOTAVAIL`/`WSAENOBUFS`/`WSAEACCES`/`WSAEMFILE`/`WSAEADDRINUSE`/`WSAEPROCLIM`). The target was never characterized |
+| `"unknown"` | `OutcomeIndeterminate` | Any other transport error (host/network unreachable, an error carrying no recognizable errno). Port state unknown |
+
+### Failure policy (issue #62)
+
+`error(local)` and `unknown` are **indeterminate and non-fatal**. The scan
+continues and each affected target still produces exactly one persisted row, so
+the dispatch cursor stays truthful and `-resume` remains consistent (the
+invariant established by issue #51). They are never reported as `close`, so no
+downstream consumer that filters on `close` — for example
+`pkg/preprocess.LoadCleanedCIDRs` — can mistake a local Winsock failure for a
+confirmed closed port. The first local resource failure of a run also emits an
+`error`-level log line; every occurrence carries `outcome` in its
+`scan_probe_result` event, an `error_cause` of `local_resource` /
+`indeterminate` in its `scan_result` event, and its own counter
+(`local_error_count` / `unknown_count`) in the `scan_completion` summary —
+`close_count` counts only rows whose status is exactly `close`.
+
+Rejected alternatives: aborting the run (a transient Winsock exhaustion would
+throw away a long scan and, under the issue #51 rule, its resume snapshot), and
+retrying inside the dial path (unbounded added latency on a hot path).
 
 ## 3. DialFunc Interface
 
@@ -102,22 +124,18 @@ mockDial := func(ctx context.Context, network, address string) (net.Conn, error)
    - Return appropriate status
 ```
 
-### Timeout Classification
+### Error Classification
 
 ```go
-// Check if error is a timeout
-var netErr net.Error
-if errors.As(err, &netErr) && netErr.Timeout() {
-    return Result{Status: "close(timeout)", Error: err.Error()}
-}
-
-// Check for context deadline exceeded
-if errors.Is(err, context.DeadlineExceeded) {
-    return Result{Status: "close(timeout)", Error: err.Error()}
-}
-
-// All other errors = connection refused/reset
-return Result{Status: "close", Error: err.Error()}
+// Structural classification only - never error text, which Windows localizes.
+// classifyDialError(runtime.GOOS, err):
+//   1. errno lookup: *net.OpError -> *os.SyscallError -> syscall.Errno
+//      (errors.As fallback for any other wrapping), matched against the
+//      Winsock table when goos == "windows" and the portable table otherwise
+//   2. net.Error.Timeout() / context.DeadlineExceeded
+//   3. otherwise OutcomeIndeterminate
+outcome := classifyDialError(runtime.GOOS, err)
+return Result{Status: statusForOutcome(outcome), Outcome: outcome, Error: err.Error()}
 ```
 
 ### Response Time Measurement
@@ -234,13 +252,16 @@ tlsDial := func(ctx context.Context, network, address string) (net.Conn, error) 
 
 ### Adding Custom Error Classification
 
-Modify timeout classification logic in `scanner.go`:
+Add the case to `pkg/scanner/dial_error.go` — a new `Outcome` constant, its
+errno(s) in `classifyErrno` (Winsock table and/or portable table) and its status
+string in `statusForOutcome`. Never classify by error text: Windows localizes it.
 
 ```go
-// Add custom error handling
-if errors.Is(err, someCustomError) {
-    return Result{Status: "close(special)", Error: err.Error()}
-}
+const OutcomeSpecial Outcome = "special"
+
+// in classifyErrno
+case syscall.ESOMETHING:
+    return OutcomeSpecial, true
 ```
 
 ## 9. Implementation Files Reference
@@ -248,8 +269,11 @@ if errors.Is(err, someCustomError) {
 | File | Responsibility |
 |------|----------------|
 | `pkg/scanner/scanner.go` | Core TCP probe implementation |
+| `pkg/scanner/dial_error.go` | Dial-error classification (`Outcome`, errno tables, status mapping) |
 | `pkg/scanner/scanner_test.go` | Basic unit tests |
-| `pkg/scanner/scanner_extra_test.go` | Edge case tests (timeout, refused) |
+| `pkg/scanner/scanner_extra_test.go` | Edge case tests (timeout, refused, local resource, indeterminate) |
+| `pkg/scanner/dial_error_test.go` | Winsock/POSIX errno classification tables |
+| `pkg/scanner/scanner_bench_test.go` | Dial hot-path benchmarks |
 | `pkg/scanapp/scan.go` | DialFunc interface definition |
 | `pkg/scanapp/executor.go` | Worker pool consuming ScanTCP |
 

@@ -166,7 +166,7 @@ ip,ip_cidr,port,status,response_time_ms,fab_name,cidr_name,service_label,decisio
 | `ip` | Scanned IP address |
 | `ip_cidr` | Boundary CIDR |
 | `port` | TCP port number |
-| `status` | `open`, `close`, or `close(timeout)` |
+| `status` | `open`, `close`, `close(timeout)`, `error(local)` (the scanning host failed — port state unknown) or `unknown` (indeterminate transport error) |
 | `response_time_ms` | TCP connection latency in milliseconds |
 | `fab_name` | Fabric name from CIDR input |
 | `cidr_name` | CIDR label from CIDR input |

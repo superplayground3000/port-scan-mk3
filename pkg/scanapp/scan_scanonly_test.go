@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -163,7 +164,9 @@ func TestRun_NeverConstructsChecker(t *testing.T) {
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		ReachabilityChecker: spy,
-		Dial:                func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, dialErrnoFailure(syscall.ECONNREFUSED)
+		},
 	}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}

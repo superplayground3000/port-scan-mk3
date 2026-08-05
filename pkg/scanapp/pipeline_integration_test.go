@@ -3,11 +3,11 @@ package scanapp
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -55,7 +55,10 @@ func dialOpenFor(openIP string) DialFunc {
 		if strings.HasPrefix(addr, openIP+":") {
 			return stubConn{}, nil
 		}
-		return nil, errors.New("connection refused")
+		// A closed port is a *refusal* from the remote end, so the fixture must
+		// carry ECONNREFUSED: since issue #62 the scanner only reports "close"
+		// for an errno that proves the target answered.
+		return nil, dialErrnoFailure(syscall.ECONNREFUSED)
 	}
 }
 
