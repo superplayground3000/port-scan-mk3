@@ -76,6 +76,72 @@ func TestSaveSnapshot_WhenWriteFails_PreservesPreviousSnapshot(t *testing.T) {
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "write")
 }
 
+// TestSaveSnapshot_WhenSyncFails_PreservesPreviousSnapshot proves the temp file
+// is flushed to disk before it is promoted: a sync failure means the temp file
+// contents are not durable, so the previous snapshot must stay in place.
+func TestSaveSnapshot_WhenSyncFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		ops.sync = func(*os.File) error { return errInjected }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "sync")
+}
+
+// TestSaveSnapshot_WhenCloseFails_PreservesPreviousSnapshot covers the stage
+// that is easiest to ignore: on network filesystems a deferred flush surfaces
+// only at close, so a close error means the temp file may be incomplete and
+// must never be promoted over a good snapshot.
+func TestSaveSnapshot_WhenCloseFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		realClose := ops.closeFile
+		ops.closeFile = func(f *os.File) error {
+			// Still release the descriptor so the cleanup can remove the temp
+			// file on Windows, but report the failure to the caller.
+			_ = realClose(f)
+			return errInjected
+		}
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "close")
+}
+
+// TestSaveSnapshot_WhenReplaceFails_PreservesPreviousSnapshot covers the last
+// stage: if the rename itself fails, the destination must still hold the old
+// snapshot rather than a half-installed new one.
+func TestSaveSnapshot_WhenReplaceFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		ops.replace = func(string, string) error { return errInjected }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "replace")
+}
+
+// TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot covers the
+// stage before any file exists — a read-only or full directory.
+func TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		ops.createTemp = func(string, string) (*os.File, error) { return nil, errInjected }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "create")
+}
+
 // assertFailedSaveLeftSnapshotIntact checks the full contract of a failed save:
 // a wrapped error naming the failed stage, the previous snapshot untouched, and
 // no temp file abandoned next to it. It uses Errorf (not Fatalf) for the error

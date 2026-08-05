@@ -151,9 +151,15 @@ func writeFileAtomically(path string, data []byte, perm os.FileMode) (err error)
 	if _, writeErr := fileOps.write(f, data); writeErr != nil {
 		return fmt.Errorf("write temp snapshot file %s: %w", tmpPath, writeErr)
 	}
+	if syncErr := fileOps.sync(f); syncErr != nil {
+		return fmt.Errorf("sync temp snapshot file %s: %w", tmpPath, syncErr)
+	}
 	// Close before the rename: Windows refuses to rename a file that is still
-	// open without FILE_SHARE_DELETE.
-	_ = fileOps.closeFile(f)
+	// open without FILE_SHARE_DELETE. A close error can also be the first
+	// report of a failed flush, so it must not be discarded.
+	if closeErr := fileOps.closeFile(f); closeErr != nil {
+		return fmt.Errorf("close temp snapshot file %s: %w", tmpPath, closeErr)
+	}
 	if replaceErr := fileOps.replace(tmpPath, path); replaceErr != nil {
 		return fmt.Errorf("replace snapshot %s with temp file %s: %w", path, tmpPath, replaceErr)
 	}
