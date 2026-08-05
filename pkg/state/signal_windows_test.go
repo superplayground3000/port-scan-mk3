@@ -26,7 +26,6 @@ const ctrlBreakEvent = 1
 var (
 	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
 	procGenerateConsoleCtrlEvent = kernel32.NewProc("GenerateConsoleCtrlEvent")
-	procGetConsoleWindow         = kernel32.NewProc("GetConsoleWindow")
 	procAllocConsole             = kernel32.NewProc("AllocConsole")
 )
 
@@ -232,20 +231,31 @@ func TestWithSIGINTCancel_OnWindows_CtrlBreakExits130AndLeavesResumableSnapshot(
 	assertHandleReleased(t, buckets, "resume snapshot after Ctrl+Break")
 }
 
-// ensureConsoleForCtrlEvents guarantees this process has a console.
-// GenerateConsoleCtrlEvent only reaches process groups attached to the CALLER's
-// console, and a test binary launched by a CI runner service may have none. It
-// fails the test rather than skipping: a Ctrl+Break test that quietly opts out
-// on the one platform it exists for would be worse than no test.
+// ensureConsoleForCtrlEvents guarantees this process is attached to a console,
+// because GenerateConsoleCtrlEvent only reaches process groups attached to the
+// CALLER's console and a test binary launched by a CI runner may start without
+// one. It fails the test rather than skipping: a Ctrl+Break test that quietly
+// opts out on the one platform it exists for would be worse than no test.
+//
+// AllocConsole is the probe, not GetConsoleWindow. GetConsoleWindow returns
+// NULL for a console that has no WINDOW, which is exactly what a CI runner
+// provides (a pseudoconsole), so using it to mean "no console" is wrong and
+// measurably so: on windows-latest it reported NULL while AllocConsole then
+// failed with ERROR_ACCESS_DENIED -- the documented error for "this process
+// already has a console". That error is therefore the success case here.
 func ensureConsoleForCtrlEvents(t *testing.T) {
 	t.Helper()
 
-	if hwnd, _, _ := procGetConsoleWindow.Call(); hwnd != 0 {
+	ok, _, err := procAllocConsole.Call()
+	if ok != 0 {
+		// No console before; this call created one, which the child inherits.
 		return
 	}
-	if ok, _, err := procAllocConsole.Call(); ok == 0 {
-		t.Fatalf("this process has no console and AllocConsole failed (%v), so no console control event can be generated", err)
+	if errno, isErrno := err.(syscall.Errno); isErrno && errno == syscall.ERROR_ACCESS_DENIED {
+		// Already attached to a console -- the normal case, including CI.
+		return
 	}
+	t.Fatalf("this process has no console and AllocConsole failed (%v), so no console control event can be generated", err)
 }
 
 // sendCtrlBreak raises CTRL_BREAK_EVENT for the process group led by pid. The
