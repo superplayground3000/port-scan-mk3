@@ -61,9 +61,9 @@ func Parse(args []string) (Config, error)
 | `-output` | string | "scan_results.csv" | NO | Output directory anchor |
 | `-timeout` | duration | 100ms | NO | TCP connect timeout |
 | `-delay` | duration | 10ms | NO | Inter-task delay |
-| `-bucket-rate` | int | 100 | NO | Tokens per second |
-| `-bucket-capacity` | int | 100 | NO | Burst allowance |
-| `-workers` | int | 10 | NO | Worker pool size |
+| `-bucket-rate` | int | 100 | NO | Tokens per second (1-1000000) |
+| `-bucket-capacity` | int | 100 | NO | Burst allowance (1-1000000) |
+| `-workers` | int | 10 | NO | Worker pool size (1-1024) |
 | `-pressure-api` | string | "http://localhost:8080/api/pressure" | NO | Pressure API URL |
 | `-pressure-interval` | duration/int | 5s | NO | Supports "5" or "5s" |
 | `-disable-api` | bool | false | NO | Disable pressure API |

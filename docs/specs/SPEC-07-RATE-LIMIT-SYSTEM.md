@@ -143,8 +143,8 @@ func dispatchTasks(ctx context.Context, runtimes []chunkRuntime, ...) error {
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-bucket-rate` | 100 | Tokens per second |
-| `-bucket-capacity` | 100 | Burst capacity |
+| `-bucket-rate` | 100 | Tokens per second (accepted range 1-1000000) |
+| `-bucket-capacity` | 100 | Burst capacity (accepted range 1-1000000) |
 
 ### Example
 

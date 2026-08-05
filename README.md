@@ -298,7 +298,7 @@ defaults are in [All flags](docs/cli/flags.md).
 |------|---------------|-------|
 | `-cidr-file` (required) | all | Rich/basic CSV; source of truth for target metadata |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | all | Case-sensitive column mapping (defaults `ip` / `ip_cidr`) |
-| `-workers` | `preping`, `generate-buckets`, `scan` | Also parallelizes bucket generation (default `10`) |
+| `-workers` | `preping`, `generate-buckets`, `scan` | Also parallelizes bucket generation (default `10`, accepted range `1`-`1024`) |
 | `-progress-interval` | `preping`, `generate-buckets`, `scan` | Progress line cadence, count-based (default `100`) — **NEW** |
 | `-log-level` / `-format` / `-quiet` | all | Shared observability flags |
 | `-pre-scan-ping-timeout` | `preping` | Ping reply-wait (default `100ms`); removed from `scan` |
@@ -307,7 +307,7 @@ defaults are in [All flags](docs/cli/flags.md).
 | `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `preping` output) — **NEW** |
 | `-buckets-out` (required) | `generate-buckets` | Bucket snapshot output path — **NEW** |
 | `-resume` (required) | `scan` | Bucket snapshot to scan; updated in place on cancel/error |
-| `-timeout` / `-delay` / `-bucket-rate` / `-bucket-capacity` | `scan` | Dial/dispatch tuning |
+| `-timeout` / `-delay` / `-bucket-rate` / `-bucket-capacity` | `scan` | Dial/dispatch tuning (`-bucket-rate` and `-bucket-capacity` accept `1`-`1000000`) |
 | `-disable-api`, `-pressure-*` | `scan` | Pressure-API control (auth flags required with `-pressure-use-auth`) |
 
 ### enrich-targets

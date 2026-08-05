@@ -34,7 +34,7 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 | `-cidr-file` | string | required | Path to CIDR/rich CSV input file. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
 | `-pre-scan-ping-timeout` | duration | `100ms` | Reply-wait timeout for each ping reachability check. Must be > 0. On Windows an internal fixed startup allowance is added on top of this for the process wall-clock ceiling so a fast reply is not killed during ping launch; the reply-wait itself still uses this value. |
-| `-workers` | int | `10` | Concurrent ping workers. |
+| `-workers` | int | `10` | Concurrent ping workers. Accepted range `1`-`1024`; one ping process may run per worker. |
 | `-output` | string | `scan_results.csv` | Output anchor path; the directory and shared timestamp suffix for `unreachable_results-<ts>.csv`. |
 | `-progress-interval` | int | `100` | Progress line cadence (count of processed unique IPs); emitted to stderr. |
 | `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
@@ -53,7 +53,7 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 | `-port-file` | string | optional | Port list (`<port>/tcp` lines). Required in basic (non-rich) mode; ignored in rich mode (the per-target port is read from the CSV). |
 | `-unreachable-file` | string | optional | Blocklist CSV (a `preping` output). Its `ip` column is subtracted from the target set. Omit to bucket all targets. |
 | `-buckets-out` | string | **required** | Output path for the bucket snapshot (the resume `Snapshot` JSON). |
-| `-workers` | int | `10` | Parallel per-CIDR-group chunk builders. Output is deterministic (CIDR-sorted) regardless of worker count. |
+| `-workers` | int | `10` | Parallel per-CIDR-group chunk builders. Accepted range `1`-`1024`. Output is deterministic (CIDR-sorted) regardless of worker count. |
 | `-progress-interval` | int | `100` | Progress line cadence (count of processed CIDR groups); emitted to stderr. |
 | `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
 
@@ -70,9 +70,9 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 | `-output` | string | `scan_results.csv` | Output anchor; directory and shared suffix for `scan_results-<ts>.csv` and `opened_results-<ts>.csv`. |
 | `-timeout` | duration | `100ms` | TCP dial timeout per probe. |
 | `-delay` | duration | `10ms` | Dispatch delay between tasks. |
-| `-bucket-rate` | int | `100` | Leaky-bucket refill rate. |
-| `-bucket-capacity` | int | `100` | Leaky-bucket capacity. |
-| `-workers` | int | `10` | Number of scan workers. |
+| `-bucket-rate` | int | `100` | Leaky-bucket refill rate. Accepted range `1`-`1000000`; above that the refill interval falls below the runtime timer resolution. |
+| `-bucket-capacity` | int | `100` | Leaky-bucket capacity. Accepted range `1`-`1000000`; the bucket is filled token by token at construction. |
+| `-workers` | int | `10` | Number of scan workers. Accepted range `1`-`1024`. |
 | `-disable-api` | bool | `false` | Disable pressure-API polling completely. |
 | `-pressure-api` | string | `http://localhost:8080/api/pressure` | Pressure API endpoint. |
 | `-pressure-interval` | duration or int seconds | `5s` | Poll interval (duration like `200ms`/`5s`, or integer seconds). |
