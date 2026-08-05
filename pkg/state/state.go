@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
@@ -67,6 +68,34 @@ type preScanPingEnvelope struct {
 	UnreachableIPv4U32 []uint32 `json:"unreachable_ipv4_u32,omitempty"`
 }
 
+// snapshotFileOps holds the individual filesystem steps a snapshot write
+// performs. Production always uses defaultSnapshotFileOps; the indirection
+// exists so tests can inject a failure at one specific stage and assert the
+// previous snapshot survives it.
+type snapshotFileOps struct {
+	createTemp func(dir, pattern string) (*os.File, error)
+	write      func(f *os.File, data []byte) (int, error)
+	sync       func(f *os.File) error
+	closeFile  func(f *os.File) error
+	chmod      func(name string, mode os.FileMode) error
+	replace    func(oldPath, newPath string) error
+	remove     func(name string) error
+}
+
+func defaultSnapshotFileOps() snapshotFileOps {
+	return snapshotFileOps{
+		createTemp: os.CreateTemp,
+		write:      func(f *os.File, data []byte) (int, error) { return f.Write(data) },
+		sync:       func(f *os.File) error { return f.Sync() },
+		closeFile:  func(f *os.File) error { return f.Close() },
+		chmod:      os.Chmod,
+		replace:    os.Rename,
+		remove:     os.Remove,
+	}
+}
+
+var fileOps = defaultSnapshotFileOps()
+
 // SaveSnapshot writes resume state as the current JSON envelope.
 func SaveSnapshot(path string, snap Snapshot) error {
 	env := snapshotEnvelope{
@@ -90,7 +119,45 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomically(path, data, snapshotFileMode)
+}
+
+// snapshotFileMode is the permission the snapshot file ends up with, matching
+// the mode the previous direct-write implementation passed to os.WriteFile.
+const snapshotFileMode os.FileMode = 0o644
+
+// writeFileAtomically writes data to a temp file in the destination's own
+// directory and only then renames it over path, so that any failure before the
+// rename leaves an existing file at path byte-for-byte untouched. The temp file
+// must live in the same directory as the destination: a rename across
+// filesystems is not atomic (and may fail outright).
+func writeFileAtomically(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	f, err := fileOps.createTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp snapshot file in %s: %w", dir, err)
+	}
+	tmpPath := f.Name()
+
+	// Until the rename succeeds the temp file is garbage: drop it so a failed
+	// save never leaves debris beside the snapshot it did not replace.
+	defer func() {
+		if err != nil {
+			_ = fileOps.closeFile(f)
+			_ = fileOps.remove(tmpPath)
+		}
+	}()
+
+	if _, writeErr := fileOps.write(f, data); writeErr != nil {
+		return fmt.Errorf("write temp snapshot file %s: %w", tmpPath, writeErr)
+	}
+	// Close before the rename: Windows refuses to rename a file that is still
+	// open without FILE_SHARE_DELETE.
+	_ = fileOps.closeFile(f)
+	if replaceErr := fileOps.replace(tmpPath, path); replaceErr != nil {
+		return fmt.Errorf("replace snapshot %s with temp file %s: %w", path, tmpPath, replaceErr)
+	}
+	return nil
 }
 
 // LoadSnapshot reads resume state from either the current envelope or legacy chunk array JSON.
