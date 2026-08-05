@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
 // ParseFor processes CLI arguments for a single subcommand, registering only the
@@ -50,7 +52,9 @@ func ParseFor(command string, args []string) (Config, error) {
 	fs.BoolVar(&cfg.Quiet, "quiet", false, "suppress console logs, keep pressure API logs")
 
 	// Workers and progress cadence are shared by the three pipeline steps.
-	registerWorkers := func() { fs.IntVar(&cfg.Workers, "workers", 10, "worker count") }
+	registerWorkers := func() {
+		fs.IntVar(&cfg.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
+	}
 	registerProgress := func() {
 		fs.IntVar(&cfg.ProgressInterval, "progress-interval", defaultProgressInterval,
 			"progress line cadence (count of processed units)")
@@ -77,8 +81,8 @@ func ParseFor(command string, args []string) (Config, error) {
 		fs.StringVar(&cfg.Resume, "resume", "", "resume/bucket snapshot file (required)")
 		fs.DurationVar(&cfg.Timeout, "timeout", 100*time.Millisecond, "dial timeout")
 		fs.DurationVar(&cfg.Delay, "delay", 10*time.Millisecond, "dispatch delay")
-		fs.IntVar(&cfg.BucketRate, "bucket-rate", 100, "bucket rate")
-		fs.IntVar(&cfg.BucketCapacity, "bucket-capacity", 100, "bucket capacity")
+		fs.IntVar(&cfg.BucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
+		fs.IntVar(&cfg.BucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
 		fs.StringVar(&cfg.PressureAPI, "pressure-api", "http://localhost:8080/api/pressure", "pressure api")
 		fs.StringVar(&pressureIntervalRaw, "pressure-interval", "5s", "pressure poll interval (duration or seconds)")
 		fs.BoolVar(&cfg.DisableAPI, "disable-api", false, "disable pressure api")
@@ -113,14 +117,26 @@ func ParseFor(command string, args []string) (Config, error) {
 	// Command-specific required-flag and value validation.
 	switch command {
 	case "preping":
+		if err := validateWorkers(cfg.Workers); err != nil {
+			return Config{}, err
+		}
 		if cfg.PreScanPingTimeout <= 0 {
 			return Config{}, errors.New("-pre-scan-ping-timeout must be > 0")
 		}
 	case "generate-buckets":
+		if err := validateWorkers(cfg.Workers); err != nil {
+			return Config{}, err
+		}
 		if cfg.BucketsOut == "" {
 			return Config{}, errors.New("-buckets-out is required")
 		}
 	case "scan":
+		if err := validateWorkers(cfg.Workers); err != nil {
+			return Config{}, err
+		}
+		if err := validateBucketBounds(cfg.BucketRate, cfg.BucketCapacity); err != nil {
+			return Config{}, err
+		}
 		if cfg.Resume == "" {
 			return Config{}, errors.New("-resume is required")
 		}

@@ -14,9 +14,12 @@ package config
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
 // Config holds all CLI configuration for the port scanner. Zero values are
@@ -130,9 +133,9 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&cfg.Output, "output", "scan_results.csv", "output csv")
 	fs.DurationVar(&cfg.Timeout, "timeout", 100*time.Millisecond, "dial timeout")
 	fs.DurationVar(&cfg.Delay, "delay", 10*time.Millisecond, "dispatch delay")
-	fs.IntVar(&cfg.BucketRate, "bucket-rate", 100, "bucket rate")
-	fs.IntVar(&cfg.BucketCapacity, "bucket-capacity", 100, "bucket capacity")
-	fs.IntVar(&cfg.Workers, "workers", 10, "worker count")
+	fs.IntVar(&cfg.BucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
+	fs.IntVar(&cfg.BucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
+	fs.IntVar(&cfg.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.StringVar(&cfg.PressureAPI, "pressure-api", "http://localhost:8080/api/pressure", "pressure api")
 	fs.StringVar(&pressureIntervalRaw, "pressure-interval", "5s", "pressure poll interval (duration or seconds)")
 	fs.BoolVar(&cfg.DisableAPI, "disable-api", false, "disable pressure api")
@@ -186,6 +189,14 @@ func Parse(args []string) (Config, error) {
 	}
 	if cfg.PreScanPingTimeout <= 0 {
 		return Config{}, errors.New("-pre-scan-ping-timeout must be > 0")
+	}
+	// This legacy surface registers the worker and bucket flags too, so it
+	// enforces the same ranges as ParseFor rather than leaving a second door in.
+	if err := validateWorkers(cfg.Workers); err != nil {
+		return Config{}, err
+	}
+	if err := validateBucketBounds(cfg.BucketRate, cfg.BucketCapacity); err != nil {
+		return Config{}, err
 	}
 	if cfg.PressureUseAuth {
 		if cfg.PressureAuthURL == "" {
