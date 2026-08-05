@@ -46,6 +46,10 @@ var reservedDeviceNames = func() map[string]struct{} {
 //
 // Every returned error wraps [ErrInvalidFabName].
 func ValidateFabName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%w: must not be empty", ErrInvalidFabName)
+	}
+
 	for _, r := range name {
 		if r < 0x20 {
 			return fmt.Errorf("%w %q: contains control character 0x%02X", ErrInvalidFabName, name, r)
@@ -53,6 +57,10 @@ func ValidateFabName(name string) error {
 		if strings.ContainsRune(windowsInvalidNameChars, r) {
 			return fmt.Errorf("%w %q: %q is not allowed in a Windows path component", ErrInvalidFabName, name, r)
 		}
+	}
+
+	if last := name[len(name)-1]; last == '.' || last == ' ' {
+		return fmt.Errorf("%w %q: must not end with a dot or a space (Windows strips them, silently renaming the directory)", ErrInvalidFabName, name)
 	}
 
 	stem := name
