@@ -12,7 +12,9 @@ import (
 // execute TCP scans, and emit structured log events for each result.
 //
 // Parameters:
-//   - workers: number of concurrent scan workers; must be > 0
+//   - workers: number of concurrent scan workers; values outside
+//     1..config.MaxWorkers are clamped into range, so no caller value can
+//     overflow the result-queue sizing or start an unbounded pool
 //   - timeout: per-scan connection timeout
 //   - dial: TCP dial function (allows injection for testing)
 //   - logger: structured logger for scan events
@@ -22,11 +24,8 @@ import (
 //   - resultCh: closed when all workers finish scanning.
 //   - errCh: receives a fatal executor error (for example, recovered worker panic).
 func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger *scanLogger, taskCh <-chan scanTask) (<-chan scanResult, <-chan error) {
-	if workers <= 0 {
-		workers = 1
-	}
-
-	resultCh := make(chan scanResult, workers*2)
+	resultCh := make(chan scanResult, queueCapacityFor(workers))
+	workers = effectiveWorkerCount(workers)
 	errCh := make(chan error, 1)
 
 	var workerWG sync.WaitGroup

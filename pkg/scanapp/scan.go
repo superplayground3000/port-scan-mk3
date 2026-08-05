@@ -190,11 +190,8 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		_ = outputs.Finalize()
 	}()
 
-	workers := cfg.Workers
-	if workers <= 0 {
-		workers = 1
-	}
-	queueSize := workers * 2
+	workers := effectiveWorkerCount(cfg.Workers)
+	queueSize := queueCapacityFor(workers)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
