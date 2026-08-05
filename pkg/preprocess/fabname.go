@@ -11,6 +11,12 @@ import (
 // text.
 var ErrInvalidFabName = errors.New("invalid fab name")
 
+// windowsInvalidNameChars are the printable characters Windows forbids in a
+// file or directory name. Path separators are excluded here on purpose: they
+// get their own check so the operator is told the name must be a single
+// component rather than being told a character is invalid.
+const windowsInvalidNameChars = `<>:"|?*`
+
 // reservedDeviceNames holds the DOS device names Windows reserves in every
 // directory, lowercased for case-insensitive lookup. The set is the one
 // documented for current Windows (CON, PRN, AUX, NUL, COM0-COM9, LPT0-LPT9);
@@ -40,6 +46,15 @@ var reservedDeviceNames = func() map[string]struct{} {
 //
 // Every returned error wraps [ErrInvalidFabName].
 func ValidateFabName(name string) error {
+	for _, r := range name {
+		if r < 0x20 {
+			return fmt.Errorf("%w %q: contains control character 0x%02X", ErrInvalidFabName, name, r)
+		}
+		if strings.ContainsRune(windowsInvalidNameChars, r) {
+			return fmt.Errorf("%w %q: %q is not allowed in a Windows path component", ErrInvalidFabName, name, r)
+		}
+	}
+
 	stem := name
 	if i := strings.IndexByte(stem, '.'); i >= 0 {
 		stem = stem[:i]
