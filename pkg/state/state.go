@@ -148,6 +148,12 @@ func writeFileAtomically(path string, data []byte, perm os.FileMode) (err error)
 		}
 	}()
 
+	// os.CreateTemp opens at 0600; give the snapshot the permissions it would
+	// have had without the temp file in the way.
+	if chmodErr := fileOps.chmod(tmpPath, destinationMode(path, perm)); chmodErr != nil {
+		return fmt.Errorf("set mode on temp snapshot file %s: %w", tmpPath, chmodErr)
+	}
+
 	if _, writeErr := fileOps.write(f, data); writeErr != nil {
 		return fmt.Errorf("write temp snapshot file %s: %w", tmpPath, writeErr)
 	}
@@ -164,6 +170,17 @@ func writeFileAtomically(path string, data []byte, perm os.FileMode) (err error)
 		return fmt.Errorf("replace snapshot %s with temp file %s: %w", path, tmpPath, replaceErr)
 	}
 	return nil
+}
+
+// destinationMode reports the permissions a replacement file should carry:
+// those of the file it replaces when one exists, so a save never loosens
+// permissions an operator tightened, and fallback for a first save.
+func destinationMode(path string, fallback os.FileMode) os.FileMode {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fallback
+	}
+	return info.Mode().Perm()
 }
 
 // LoadSnapshot reads resume state from either the current envelope or legacy chunk array JSON.

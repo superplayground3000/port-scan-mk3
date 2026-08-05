@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -140,6 +142,128 @@ func TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot(t *testing.T
 
 	err := SaveSnapshot(path, replacementSnapshot())
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "create")
+}
+
+// TestSaveSnapshot_WhenSettingModeFails_PreservesPreviousSnapshot keeps the
+// permission step inside the same all-or-nothing contract as the other stages.
+func TestSaveSnapshot_WhenSettingModeFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		ops.chmod = func(string, os.FileMode) error { return errInjected }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "mode")
+}
+
+// TestSaveSnapshot_WhenReplacingExistingFile_LeavesValidJSONAndNoTempFile is
+// the success half of the contract, and the case native Windows CI exercises:
+// renaming over an existing file must succeed and leave nothing behind.
+func TestSaveSnapshot_WhenReplacingExistingFile_LeavesValidJSONAndNoTempFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	writeInitialSnapshot(t, path)
+
+	want := replacementSnapshot()
+	if err := SaveSnapshot(path, want); err != nil {
+		t.Fatalf("replacing an existing snapshot failed: %v", err)
+	}
+
+	got, err := LoadSnapshot(path)
+	if err != nil {
+		t.Fatalf("the replaced snapshot is not valid JSON: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("snapshot mismatch after replacement:\ngot  %+v\nwant %+v", got, want)
+	}
+
+	assertNoTempFilesBesideSnapshot(t, path)
+}
+
+// TestSaveSnapshot_WhenDestinationIsNew_CreatesItWithNoTempFileLeftBehind keeps
+// the first-save path covered now that it goes through a temp file too.
+func TestSaveSnapshot_WhenDestinationIsNew_CreatesItWithNoTempFileLeftBehind(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+
+	if err := SaveSnapshot(path, replacementSnapshot()); err != nil {
+		t.Fatalf("creating a new snapshot failed: %v", err)
+	}
+	if _, err := LoadSnapshot(path); err != nil {
+		t.Fatalf("the new snapshot is not valid JSON: %v", err)
+	}
+
+	assertNoTempFilesBesideSnapshot(t, path)
+}
+
+// TestSaveSnapshot_CreatesTempFileInDestinationDirectory pins the property the
+// atomicity depends on: a rename is only atomic within one filesystem, so the
+// temp file must be a sibling of the destination, never in the system temp dir.
+func TestSaveSnapshot_CreatesTempFileInDestinationDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+
+	var gotDirs []string
+	withFileOps(t, func(ops *snapshotFileOps) {
+		realCreate := ops.createTemp
+		ops.createTemp = func(dir, pattern string) (*os.File, error) {
+			gotDirs = append(gotDirs, dir)
+			return realCreate(dir, pattern)
+		}
+	})
+
+	if err := SaveSnapshot(path, replacementSnapshot()); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+	if want := []string{filepath.Dir(path)}; !reflect.DeepEqual(gotDirs, want) {
+		t.Fatalf("temp file directories: got %v, want %v", gotDirs, want)
+	}
+}
+
+// TestSaveSnapshot_WhenDestinationIsNew_UsesTheSameModeAsBefore guards against
+// the temp file's private 0600 default leaking into the snapshot's permissions.
+func TestSaveSnapshot_WhenDestinationIsNew_UsesTheSameModeAsBefore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not model POSIX permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+
+	if err := SaveSnapshot(path, replacementSnapshot()); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("snapshot mode: got %O, want %O", got, 0o644)
+	}
+}
+
+// TestSaveSnapshot_WhenDestinationExists_KeepsItsMode makes sure replacing a
+// snapshot does not loosen permissions an operator tightened on a file that
+// lists internal scan targets.
+func TestSaveSnapshot_WhenDestinationExists_KeepsItsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not model POSIX permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	writeInitialSnapshot(t, path)
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+
+	if err := SaveSnapshot(path, replacementSnapshot()); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("snapshot mode after replacement: got %O, want %O", got, 0o640)
+	}
 }
 
 // assertFailedSaveLeftSnapshotIntact checks the full contract of a failed save:
