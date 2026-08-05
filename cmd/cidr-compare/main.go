@@ -7,7 +7,16 @@ import (
 	"io"
 	"os"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/buildinfo"
 	"github.com/xuxiping/port-scan-mk3/pkg/cidrutil"
+)
+
+// Build metadata, stamped at link time by the Makefile's LDFLAGS. Must be
+// declared in package main — see the note in cmd/port-scan/main.go.
+var (
+	version   string
+	buildTime string
+	commit    string
 )
 
 func main() {
@@ -17,11 +26,18 @@ func main() {
 }
 
 func runMain(args []string, stdout io.Writer, stderr io.Writer) error {
+	if buildinfo.IsVersionRequest(args) {
+		fmt.Fprint(stdout, buildinfo.Resolve("cidr-compare", version, buildTime, commit).String())
+		return nil
+	}
+
 	fs := flag.NewFlagSet("cidr-compare", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: %s [flags]\n", os.Args[0])
 		fs.PrintDefaults()
+		fmt.Fprintf(stderr, "\n  version | --version | -version\n"+
+			"\tPrint version, commit and build time (must be the first argument).\n")
 	}
 
 	denyFile := fs.String("deny-file", "", "Path to deny CSV file (or CIDR_COMPARE_DENY_FILE)")

@@ -2,6 +2,13 @@
         fmt fmt-check vet cover verify verify-e2e e2e help
 
 VERSION := $(shell git describe --always --dirty 2>/dev/null || echo "dev")
+# The full commit, stamped SEPARATELY from VERSION. A build made exactly on a
+# tag describes as just "v2.2.0" and would otherwise carry no commit at all,
+# which is the one thing a release asset must be traceable to. Derived from the
+# commit, so it is constant for a given checkout and does not disturb the
+# byte-for-byte reproducibility guarantee below (issue #65/#73). Falls back
+# outside a git checkout, where there is no commit to name.
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 # Derived from the COMMIT, not the wall clock, and normalized to UTC. Two
 # builds of the same commit must produce byte-identical artifacts (issue #65 —
 # "deterministic artifacts"); a `date -u` stamp broke that on every rebuild, and
@@ -13,7 +20,12 @@ BUILD_TIME := $(shell TZ=UTC0 git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ 
 # not depend on WHERE it was built. Required for reproducibility across
 # machines and CI runners.
 BUILDFLAGS := -trimpath
-LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
+# `-X main.<var>` can only write to a variable declared in the linked binary's
+# own main package, and the linker says NOTHING when the target does not exist.
+# Every command therefore declares version/buildTime/commit in package main;
+# tests/release rebuilds them with these exact flags and asserts the values come
+# back out, so a rename here fails a test rather than silently shipping "dev".
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.commit=$(COMMIT)"
 
 GOCMD ?= go
 GOARCH_AMD64 := amd64

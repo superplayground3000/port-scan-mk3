@@ -10,17 +10,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/buildinfo"
 	"github.com/xuxiping/port-scan-mk3/pkg/preprocess"
 	"github.com/xuxiping/port-scan-mk3/pkg/preprocesscfg"
 )
 
+// Build metadata, stamped at link time by the Makefile's LDFLAGS. Must be
+// declared in package main — see the note in cmd/port-scan/main.go.
+var (
+	version   string
+	buildTime string
+	commit    string
+)
+
 func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
+	if buildinfo.IsVersionRequest(args) {
+		fmt.Fprint(stdout, buildinfo.Resolve("preprocess", version, buildTime, commit).String())
+		return nil
+	}
+
 	fs := flag.NewFlagSet("preprocess", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: preprocess [flags]\n\n")
 		fmt.Fprintf(stderr, "Filters a rich CSV by removing targets in closed CIDRs.\n\n")
 		fs.PrintDefaults()
+		fmt.Fprintf(stderr, "\n  version | --version | -version\n"+
+			"\tPrint version, commit and build time (must be the first argument).\n")
 	}
 
 	input := fs.String("input", "", "Path to rich CSV [required]")
