@@ -494,6 +494,7 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - [Maintainability Baseline](docs/MAINTENANCE.md) — quality gates, cross-platform, runnable example
 - [All flags](docs/cli/flags.md)
 - [Scenario cookbook](docs/cli/scenarios.md)
+- [Interrupt handling](docs/interrupt-handling.md) — which terminations stop a scan gracefully (Ctrl+C, Ctrl+Break) and which do not
 - [Pre-processing workflow spec](docs/specs/2026-04-16-preprocess-workflow-spec.md)
 - [E2E overview](docs/e2e/overview.md)
 - [Speed-control E2E](docs/e2e/speedcontrol.md)
