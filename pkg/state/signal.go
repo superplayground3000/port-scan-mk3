@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 )
 
 // interruptSignals returns every OS signal that must cancel the scan context.
@@ -38,7 +39,10 @@ import (
 // records which events reach the scan, which do not, and what an operator
 // should expect from the resume snapshot in each case.
 func interruptSignals() []os.Signal {
-	return []os.Signal{os.Interrupt}
+	// MUTATION PROBE (issue #68, DO NOT MERGE): os.Interrupt removed, so no
+	// Windows console control event reaches the scan. Proves the Ctrl+Break
+	// test is not vacuous.
+	return []os.Signal{syscall.SIGTERM}
 }
 
 // WithSIGINTCancel returns a context that is canceled when the process receives
