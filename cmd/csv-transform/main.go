@@ -8,7 +8,16 @@ import (
 	"os"
 	"strings"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/buildinfo"
 	"github.com/xuxiping/port-scan-mk3/pkg/spreadsheet"
+)
+
+// Build metadata, stamped at link time by the Makefile's LDFLAGS. Must be
+// declared in package main — see the note in cmd/port-scan/main.go.
+var (
+	version   string
+	buildTime string
+	commit    string
 )
 
 // TransformConfig holds all CLI configuration for the transform tool.
@@ -45,6 +54,10 @@ func runMain(args []string, stdout io.Writer, stderrOut io.Writer) int {
 	flagArgs := args
 	if len(flagArgs) > 0 {
 		flagArgs = flagArgs[1:]
+	}
+	if buildinfo.IsVersionRequest(flagArgs) {
+		fmt.Fprint(stdout, buildinfo.Resolve("csv-transform", version, buildTime, commit).String())
+		return 0
 	}
 	cfg, err := ParseConfigFromArgs(flagArgs)
 	if err != nil {

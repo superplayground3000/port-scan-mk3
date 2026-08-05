@@ -146,4 +146,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "port-scan validate -cidr-file <file> [-port-file <file>] [-format human|json]")
 	fmt.Fprintln(w, "    Validate CIDR/port inputs without scanning.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "port-scan version | --version | -version")
+	fmt.Fprintln(w, "    Print the release version, commit, build time and toolchain of this binary.")
 }
