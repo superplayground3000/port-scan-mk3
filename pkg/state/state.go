@@ -140,11 +140,16 @@ func writeFileAtomically(path string, data []byte, perm os.FileMode) (err error)
 	tmpPath := f.Name()
 
 	// Until the rename succeeds the temp file is garbage: drop it so a failed
-	// save never leaves debris beside the snapshot it did not replace.
+	// save never leaves debris beside the snapshot it did not replace. If the
+	// removal fails too, report it alongside the original failure rather than
+	// leaving an unexplained file next to the snapshot.
 	defer func() {
-		if err != nil {
-			_ = fileOps.closeFile(f)
-			_ = fileOps.remove(tmpPath)
+		if err == nil {
+			return
+		}
+		_ = fileOps.closeFile(f)
+		if removeErr := fileOps.remove(tmpPath); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove temp snapshot file %s: %w", tmpPath, removeErr))
 		}
 	}()
 

@@ -144,6 +144,53 @@ func TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot(t *testing.T
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "create")
 }
 
+// TestSaveSnapshot_WhenTempCleanupAlsoFails_ReportsBothFailures covers the
+// double fault: the save failed AND the temp file it created could not be
+// removed. Discarding the cleanup error would leave debris beside the snapshot
+// with nothing in the log to explain it, so both causes must reach the caller.
+func TestSaveSnapshot_WhenTempCleanupAlsoFails_ReportsBothFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	errRemove := errors.New("injected temp cleanup failure")
+	var tmpPath string
+	withFileOps(t, func(ops *snapshotFileOps) {
+		realCreate := ops.createTemp
+		ops.createTemp = func(dir, pattern string) (*os.File, error) {
+			f, err := realCreate(dir, pattern)
+			if f != nil {
+				tmpPath = f.Name()
+			}
+			return f, err
+		}
+		ops.write = func(*os.File, []byte) (int, error) { return 0, errInjected }
+		// Leave the temp file in place, as a real failing removal would.
+		ops.remove = func(string) error { return errRemove }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	if err == nil {
+		t.Fatalf("expected SaveSnapshot to fail, got nil")
+	}
+	if !errors.Is(err, errInjected) {
+		t.Errorf("expected the error to wrap the write failure, got %v", err)
+	}
+	if !errors.Is(err, errRemove) {
+		t.Errorf("expected the error to wrap the cleanup failure, got %v", err)
+	}
+	if !strings.Contains(err.Error(), tmpPath) {
+		t.Errorf("expected the error to name the abandoned temp file %s, got %v", tmpPath, err)
+	}
+
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("previous snapshot is no longer readable: %v", readErr)
+	}
+	if string(after) != string(before) {
+		t.Errorf("previous snapshot was modified.\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 // TestSaveSnapshot_WhenSettingModeFails_PreservesPreviousSnapshot keeps the
 // permission step inside the same all-or-nothing contract as the other stages.
 func TestSaveSnapshot_WhenSettingModeFails_PreservesPreviousSnapshot(t *testing.T) {
