@@ -3,7 +3,10 @@ package preprocess
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestValidateFabName_RejectsWindowsReservedDeviceNames covers the DOS device
@@ -184,6 +187,99 @@ func TestValidateFabName_AcceptsLeadingSpacesAndInteriorDots(t *testing.T) {
 				t.Errorf("ValidateFabName(%q) = %v, want nil: only trailing dots and spaces are stripped by Windows", name, err)
 			}
 		})
+	}
+}
+
+// TestValidateFabName_AcceptsValidNames is the other half of the contract: the
+// rules must not cost operators names Windows genuinely supports, including
+// non-ASCII ones and interior spaces.
+func TestValidateFabName_AcceptsValidNames(t *testing.T) {
+	allowed := []string{
+		"dc-east",
+		"fab_01",
+		"FAB-1",
+		"fab 12 東京",
+		"фабрика-1",
+		"planta-méxico",
+		"fab.v2",
+		"dc east 1",
+		"a",
+		"2026",
+		"fab(1)",
+		"fab#1&2",
+		"fab'name",
+		"fab~1",
+		"データセンター",
+	}
+
+	for _, name := range allowed {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateFabName(name); err != nil {
+				t.Errorf("ValidateFabName(%q) = %v, want nil: Windows supports this name", name, err)
+			}
+		})
+	}
+}
+
+// TestOutputPath_AcceptedFabNameStaysInsideBaseDir is the containment property:
+// for every fab name the validator accepts, the output path resolves inside the
+// base directory.
+//
+// It deliberately checks containment with filepath.Rel rather than by rebuilding
+// the expected path with filepath.Join — production uses Join, so a Join-based
+// expectation would agree with the code by construction and could never fail.
+// Rel answers a different question ("how do I walk from base to this path?"),
+// and any escape shows up as a leading "..".
+func TestOutputPath_AcceptedFabNameStaysInsideBaseDir(t *testing.T) {
+	ts := time.Date(2026, 4, 16, 15, 30, 0, 0, time.UTC)
+	base := filepath.Join(string(filepath.Separator)+"data", "out")
+
+	names := []string{"dc-east", "fab 12 東京", "fab.v2", "fab_01", "2026", "a"}
+
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateFabName(name); err != nil {
+				t.Fatalf("ValidateFabName(%q) = %v, want nil (fixture must be an accepted name)", name, err)
+			}
+
+			rel, err := filepath.Rel(base, OutputPath(base, name, ts))
+			if err != nil {
+				t.Fatalf("filepath.Rel: %v", err)
+			}
+			if filepath.IsAbs(rel) {
+				t.Fatalf("output path for fab %q is not relative to base %q (rel = %q)", name, base, rel)
+			}
+			for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+				if part == ".." {
+					t.Fatalf("output path for fab %q escapes base %q (rel = %q)", name, base, rel)
+				}
+			}
+		})
+	}
+}
+
+// TestOutputPath_TraversalFabNameEscapesWithoutValidation records why the
+// validator has to exist. OutputPath is a plain path join and offers no
+// containment of its own: handed "../escape" it happily produces a path outside
+// the base directory. The guarantee comes from ValidateFabName refusing that
+// name first, which this test also asserts.
+func TestOutputPath_TraversalFabNameEscapesWithoutValidation(t *testing.T) {
+	ts := time.Date(2026, 4, 16, 15, 30, 0, 0, time.UTC)
+	base := filepath.Join(string(filepath.Separator)+"data", "out")
+	const traversal = "../escape"
+
+	rel, err := filepath.Rel(base, OutputPath(base, traversal, ts))
+	if err != nil {
+		t.Fatalf("filepath.Rel: %v", err)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(rel), "../") {
+		t.Fatalf("OutputPath(%q, %q, ts) unexpectedly stayed inside the base dir (rel = %q); "+
+			"if OutputPath gained containment of its own, this test and its premise need revisiting",
+			base, traversal, rel)
+	}
+
+	if err := ValidateFabName(traversal); err == nil {
+		t.Fatalf("ValidateFabName(%q) = nil: nothing stops the escaping path above", traversal)
 	}
 }
 
