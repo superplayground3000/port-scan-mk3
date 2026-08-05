@@ -66,6 +66,7 @@ func TestRunMain_UnsafeFabName_RejectedBeforeWritingAnything(t *testing.T) {
 		{name: "nested traversal", fab: "sub/../../escape"},
 		{name: "reserved device", fab: "con"},
 		{name: "reserved device with extension", fab: "NUL.csv"},
+		{name: "reserved device with padded stem", fab: "con .txt"},
 		{name: "invalid character", fab: "fab?1"},
 		{name: "trailing dot", fab: "fab."},
 		{name: "trailing space", fab: "fab "},

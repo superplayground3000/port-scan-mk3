@@ -41,7 +41,9 @@ Rejected:
   directory.
 - Windows reserved device names, case-insensitively and including extension
   variants: `CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, so
-  `con.txt` is rejected as well as `con`.
+  `con.txt` is rejected as well as `con`. Windows trims trailing spaces and
+  dots off the stem before it matches a device, so padded forms such as
+  `con .txt` are rejected too.
 
 Accepted: letters (including non-ASCII, e.g. `fab 12 東京`), digits, interior
 spaces and dots, and the usual punctuation — `dc-east`, `fab_01`, `fab.v2`.

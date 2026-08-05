@@ -74,10 +74,15 @@ func ValidateFabName(name string) error {
 		return fmt.Errorf("%w %q: must not end with a dot or a space (Windows strips them, silently renaming the directory)", ErrInvalidFabName, name)
 	}
 
+	// Windows matches a device name against the component's stem -- the text
+	// before the first dot -- after trimming trailing spaces and dots from it.
+	// So "con .txt" resolves to CON just as "con.txt" does, and the trailing
+	// space is not caught by the rule above because the name ends in ".txt".
 	stem := name
 	if i := strings.IndexByte(stem, '.'); i >= 0 {
 		stem = stem[:i]
 	}
+	stem = strings.TrimRight(stem, " .")
 	if _, reserved := reservedDeviceNames[strings.ToLower(stem)]; reserved {
 		return fmt.Errorf("%w %q: %q is a name Windows reserves for a device", ErrInvalidFabName, name, stem)
 	}
