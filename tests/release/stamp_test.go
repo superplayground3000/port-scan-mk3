@@ -71,11 +71,22 @@ func TestReleaseLDFLAGS_StampVersionCommitAndBuildTimeIntoEveryCommand(t *testin
 						"the linker discarded that -X flag. Output:\n%s", cmd, label, want, out)
 				}
 			}
-			if strings.Contains(out, "dev") || strings.Contains(out, "unknown") {
-				t.Errorf("%s --version fell back to a placeholder despite being stamped:\n%s", cmd, out)
-			}
 			if !strings.HasPrefix(out, cmd+" version ") {
 				t.Errorf("%s --version does not start with %q:\n%s", cmd, cmd+" version ", out)
+			}
+			// Anchored to the field it is about. A bare Contains(out, "dev")
+			// would also fire on a toolchain named like "go1.27-devel", and a
+			// bare Contains(out, "unknown") on any field that merely happened to
+			// embed the word — neither of which says anything about the stamps.
+			for _, line := range []string{
+				cmd + " version dev",
+				"commit:  unknown",
+				"built:   unknown",
+			} {
+				if strings.Contains(out, line) {
+					t.Errorf("%s --version fell back to the placeholder line %q despite "+
+						"being stamped:\n%s", cmd, line, out)
+				}
 			}
 		})
 	}

@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -32,6 +31,22 @@ func runScript(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("bash", args...)
 	cmd.Dir = repoRoot(t)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// runScriptUnder runs a script with an extra environment and a specific umask.
+// The umask cannot be set through the environment — it is a process attribute —
+// so the call goes through `bash -c "umask N; exec bash ..."`.
+func runScriptUnder(t *testing.T, env []string, umask string, args ...string) (string, error) {
+	t.Helper()
+	quoted := make([]string, 0, len(args))
+	for _, a := range args {
+		quoted = append(quoted, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
+	}
+	cmd := exec.Command("bash", "-c", "umask "+umask+"; exec bash "+strings.Join(quoted, " "))
+	cmd.Dir = repoRoot(t)
+	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -128,29 +143,57 @@ func TestPackageRelease_ProducesAnArchiveWithEveryCommandAndAVerifiableChecksum(
 // A release archive that changes every time it is built cannot be traced to the
 // commit it claims, which is the whole point of issue #65/#73. Two packaging
 // runs over identical inputs must produce identical bytes.
+//
+// The two runs deliberately differ in TIMEZONE and UMASK, because those are the
+// two environment axes a zip archive actually leaks and neither is covered by
+// pinning --build-time:
+//
+//   - Info-ZIP stores each entry's DOS timestamp in LOCAL time, so the same
+//     normalized mtime encodes differently under TZ=UTC and TZ=Asia/Tokyo.
+//     `zip -X` does not strip that field; it only drops the extra fields.
+//   - zip records each entry's unix mode in the central directory, so any file
+//     the script creates without an explicit chmod carries the caller's umask
+//     into the archive bytes.
+//
+// A single-environment version of this test passes against a script with both
+// defects, which is what makes varying them here the point of the test rather
+// than incidental thoroughness.
 func TestPackageRelease_ArchiveIsReproducible(t *testing.T) {
 	requireBash(t)
 	requireTool(t, "zip")
 
 	dist := fakeDist(t, "windows", ".exe")
-	outA := filepath.Join(t.TempDir(), "a")
-	outB := filepath.Join(t.TempDir(), "b")
 
-	for _, out := range []string{outA, outB} {
-		stdout, err := runScript(t, "scripts/package_release.sh",
-			"--dist", dist, "--out", out, "--version", "v9.9.9-test",
+	runs := []struct {
+		name  string
+		out   string
+		tz    string
+		umask string
+	}{
+		{name: "utc/022", out: filepath.Join(t.TempDir(), "a"), tz: "UTC", umask: "022"},
+		{name: "tokyo/077", out: filepath.Join(t.TempDir(), "b"), tz: "Asia/Tokyo", umask: "077"},
+	}
+
+	for _, run := range runs {
+		stdout, err := runScriptUnder(t, []string{"TZ=" + run.tz}, run.umask,
+			"scripts/package_release.sh",
+			"--dist", dist, "--out", run.out, "--version", "v9.9.9-test",
 			"--build-time", "2001-02-03T04:05:06Z",
 			"--target", "windows", "--skip-build")
 		if err != nil {
-			t.Fatalf("package_release.sh failed: %v\n%s", err, stdout)
+			t.Fatalf("package_release.sh failed under %s: %v\n%s", run.name, err, stdout)
 		}
 	}
 
 	name := "port-scan-mk3_v9.9.9-test_windows_amd64.zip"
-	a := sha256File(t, filepath.Join(outA, name))
-	b := sha256File(t, filepath.Join(outB, name))
+	a := sha256File(t, filepath.Join(runs[0].out, name))
+	b := sha256File(t, filepath.Join(runs[1].out, name))
 	if a != b {
-		t.Errorf("archive is not reproducible: %s vs %s", a, b)
+		t.Errorf("the archive is not reproducible across timezone and umask:\n"+
+			"  %s -> %s\n  %s -> %s\n"+
+			"A published checksum is only meaningful if it depends on the commit "+
+			"alone, not on the machine that happened to package it.",
+			runs[0].name, a, runs[1].name, b)
 	}
 }
 
@@ -240,7 +283,6 @@ func buildAll(t *testing.T, root, outDir, ldflags string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
-	_ = runtime.GOOS
 }
 
 func containsString(haystack []string, needle string) bool {

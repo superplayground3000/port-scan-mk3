@@ -45,6 +45,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Info-ZIP stores every entry's timestamp as a DOS date/time in LOCAL time, and
+# `zip -X` does not strip it — it only drops the platform extra fields. So the
+# same normalized mtime encodes differently on a runner in UTC and one in
+# Asia/Tokyo, and the archive checksum would depend on the packaging machine
+# rather than on the commit. Pin the zone for the whole script.
+export TZ=UTC0
+
 DIST_DIR="dist"
 OUT_DIR=""
 TARGET="windows"
@@ -57,13 +64,20 @@ die() {
   exit 1
 }
 
+# require_value <flag> <remaining arg count>. Without this a trailing `--dist`
+# would leave the value empty and then fail on `shift 2` with nothing but a bare
+# `set -e` exit, which is indistinguishable from a real packaging failure.
+require_value() {
+  [ "$2" -ge 2 ] || die "option '$1' requires a value (try --help)"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --dist) DIST_DIR="${2:-}"; shift 2 ;;
-    --out) OUT_DIR="${2:-}"; shift 2 ;;
-    --target) TARGET="${2:-}"; shift 2 ;;
-    --version) VERSION="${2:-}"; shift 2 ;;
-    --build-time) BUILD_TIME="${2:-}"; shift 2 ;;
+    --dist) require_value "$1" "$#"; DIST_DIR="$2"; shift 2 ;;
+    --out) require_value "$1" "$#"; OUT_DIR="$2"; shift 2 ;;
+    --target) require_value "$1" "$#"; TARGET="$2"; shift 2 ;;
+    --version) require_value "$1" "$#"; VERSION="$2"; shift 2 ;;
+    --build-time) require_value "$1" "$#"; BUILD_TIME="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) die "unknown argument '$1' (try --help)" ;;
@@ -149,6 +163,10 @@ done
   for cmd in $(printf '%s\n' "${CMDS[@]}" | LC_ALL=C sort); do
     printf '%s  %s\n' "$(sha256_of "$cmd$SUFFIX")" "$cmd$SUFFIX" >> SHA256SUMS.txt
   done
+  # zip records each entry's unix mode in the central directory, so a file
+  # created by a plain redirect would carry the CALLER's umask into the archive
+  # bytes. The binaries are already pinned to 0755 above; pin this one too.
+  chmod 0644 SHA256SUMS.txt
 )
 
 # Normalize every entry's timestamp so the archive depends only on its contents.

@@ -63,6 +63,46 @@ func TestReleaseWorkflow_SmokeTestsOnWindowsBeforePublishing(t *testing.T) {
 	}
 }
 
+// A tag name reaches this workflow as data from outside. `${{ }}` inside a
+// `run:` body is spliced into the script TEXT before any shell parses it, so a
+// tag containing a quote, semicolon or backtick executes on the runner — and
+// the publish job holds `contents: write`. Values must arrive through `env:`,
+// where they are only ever data.
+func TestReleaseWorkflow_NeverInterpolatesRefDataIntoRunBodies(t *testing.T) {
+	wf := readWorkflow(t)
+
+	// A `run:` block owns every following line indented deeper than the `run:`
+	// key itself; the first line at or below that indentation ends it.
+	runIndent := -1
+	for i, line := range strings.Split(wf, "\n") {
+		trimmed := strings.TrimSpace(line)
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+
+		inBody := false
+		if strings.HasPrefix(trimmed, "run:") {
+			runIndent = indent
+			inBody = true // a one-line `run: cmd` interpolates on this very line
+		} else if runIndent >= 0 && trimmed != "" {
+			if indent > runIndent {
+				inBody = true
+			} else {
+				runIndent = -1
+			}
+		}
+
+		// Comments are not executed; the explanatory note above the fix quotes
+		// the very syntax being banned.
+		if !inBody || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(line, "${{") {
+			t.Errorf("release.yml:%d interpolates %s into a run body; pass it through "+
+				"env: instead, or a crafted tag name executes on the runner:\n  %s",
+				i+1, "${{ ... }}", trimmed)
+		}
+	}
+}
+
 func TestReleaseWorkflow_FetchesTagsAndBuildsFromSource(t *testing.T) {
 	wf := readWorkflow(t)
 

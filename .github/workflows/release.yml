@@ -82,12 +82,19 @@ jobs:
           echo "archive=port-scan-mk3_${described}_windows_amd64.zip" >> "$GITHUB_OUTPUT"
           echo "Releasing $described"
 
+      # Everything derived from the ref reaches the shell through `env:`, never
+      # through `${{ }}` inside a run body. A tag name is attacker-controllable
+      # in a fork/PR world, and interpolation splices it into the script text
+      # before bash ever sees it, so a quote or backtick in the tag would
+      # execute. As an environment variable it is only ever data.
       - name: Build and package release assets
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           bash scripts/package_release.sh \
             --out dist/release \
             --target windows \
-            --version '${{ steps.version.outputs.version }}'
+            --version "$RELEASE_VERSION"
 
       - name: Show what will be published
         run: |
@@ -123,8 +130,10 @@ jobs:
 
       - name: Extract the archive
         shell: pwsh
+        env:
+          RELEASE_ARCHIVE: ${{ needs.package.outputs.archive }}
         run: |
-          Expand-Archive -Path "assets/${{ needs.package.outputs.archive }}" `
+          Expand-Archive -Path "assets/$env:RELEASE_ARCHIVE" `
                          -DestinationPath extracted -Force
 
       - name: Verify the per-binary checksums
@@ -136,7 +145,9 @@ jobs:
 
       - name: Run every command (the gate before publication)
         shell: bash
-        run: bash scripts/smoke_release.sh extracted '${{ needs.package.outputs.version }}'
+        env:
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+        run: bash scripts/smoke_release.sh extracted "$RELEASE_VERSION"
 
   publish:
     name: Publish the GitHub Release

@@ -472,7 +472,14 @@ Rules that hold this together — do not weaken them without reading the issue:
   the published `.exe` assets would never have been run anywhere.
 - **`publish` is gated on `github.event_name == 'push'` as well as the ref**,
   because a `workflow_dispatch` run can be started on a tag ref.
-- **Archives are reproducible too.** `package_release.sh` normalizes entry
-  timestamps to the commit's timestamp and sorts entries, so the published
-  checksum of a given tag is stable — the same guarantee section 2 makes for the
-  binaries.
+- **Archives are reproducible too, and that costs three separate things.**
+  `package_release.sh` normalizes entry timestamps to the commit's timestamp,
+  sorts entries, **exports `TZ=UTC0`**, and **chmods every staged file
+  explicitly**. The last two are not optional polish: Info-ZIP stores each
+  entry's timestamp as a DOS date in *local* time (which `zip -X` does not
+  strip), and records each entry's unix mode in the central directory — so
+  without them the published checksum depends on the packaging runner's timezone
+  and umask rather than on the commit. `TestPackageRelease_ArchiveIsReproducible`
+  runs the two packaging invocations under different timezones AND different
+  umasks for exactly this reason; do not "simplify" it back to a single
+  environment, or it will pass against both defects.
