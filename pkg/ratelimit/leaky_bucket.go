@@ -29,6 +29,25 @@ import (
 	"time"
 )
 
+// MaxRate is the highest token-per-second rate a LeakyBucket will run at.
+//
+// The replenisher ticks once per time.Second/rate. Two things bound that from
+// above: the interval must stay >= 1ns or time.NewTicker panics (the hard
+// ceiling is 1e9), and Go's runtime timer cannot honour a period below roughly a
+// microsecond — past that the ticker only burns CPU without raising throughput.
+// MaxRate is therefore set at the microsecond mark, three orders of magnitude
+// below the panic threshold and four above the 100/s default.
+const MaxRate = 1_000_000
+
+// MaxCapacity is the largest burst a LeakyBucket will hold.
+//
+// Capacity is materialized at construction: the bucket allocates a channel of
+// that size and fills it one token at a time, so an unbounded capacity is an
+// unbounded construction-time loop. One bucket exists per CIDR chunk, so the
+// ceiling is kept at the same order as MaxRate — a burst of a million tokens is
+// already four orders of magnitude above the 100 default.
+const MaxCapacity = 1_000_000
+
 // LeakyBucket is a token-based rate limiter. It accumulates tokens up to capacity
 // and replenishes them at a fixed rate, allowing callers to throttle operations
 // to a target throughput. It is safe for concurrent use.
@@ -41,8 +60,17 @@ type LeakyBucket struct {
 // (tokens per second) and capacity (maximum burst size).
 //
 // Tokens are added at a rate of 1 per (1 second / rate). The bucket starts
-// full. A capacity of 0 or negative is set to 1; a rate of 0 or negative is
-// set to 1.
+// full.
+//
+// Both arguments are clamped into range rather than rejected, so the
+// constructor never panics and never allocates without bound for any caller
+// value: a capacity of 0 or negative is set to 1 and one above MaxCapacity is
+// set to MaxCapacity; a rate of 0 or negative is set to 1 and one above MaxRate
+// is set to MaxRate. Clamping keeps this the total function its callers already
+// rely on. Command-line input is a separate matter — config.ParseFor rejects
+// out-of-range -bucket-rate and -bucket-capacity values with an actionable
+// error instead of silently clamping, and these constants are the range it
+// enforces.
 //
 // # Parameters
 //
@@ -64,8 +92,14 @@ func NewLeakyBucket(rate, capacity int) *LeakyBucket {
 	if rate <= 0 {
 		rate = 1
 	}
+	if rate > MaxRate {
+		rate = MaxRate
+	}
 	if capacity <= 0 {
 		capacity = 1
+	}
+	if capacity > MaxCapacity {
+		capacity = MaxCapacity
 	}
 
 	b := &LeakyBucket{
