@@ -17,10 +17,15 @@ import (
 // pool. That makes the ceiling a claim about Windows specifically: it must be a
 // worker count Windows can actually run, not just a number that parses.
 //
-// This drives the real executor at config.MaxWorkers workers over a real
-// loopback listener with the production dialer — one task per worker, so every
-// worker both starts and completes a dial. Everything is in-process on
-// 127.0.0.1; no external host is contacted (constitution V).
+// This is the portable TestStartScanExecutor_StartsEveryRequestedWorkerConcurrently
+// assertion raised to config.MaxWorkers and pointed at a real loopback listener
+// with the production dialer. The poolWidthProbe is what carries the claim:
+// draining every task would also pass on a pool silently clamped to one worker,
+// so the test measures peak concurrent workers instead. One task per worker
+// makes the full-width barrier reachable exactly when the pool is full width.
+//
+// Everything is in-process on 127.0.0.1; no external host is contacted
+// (constitution V).
 func TestStartScanExecutor_AtMaxWorkers_ScansLoopbackOnWindows(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -41,10 +46,10 @@ func TestStartScanExecutor_AtMaxWorkers_ScansLoopbackOnWindows(t *testing.T) {
 	}()
 
 	addr := listener.Addr().(*net.TCPAddr)
-	tasks := config.MaxWorkers
+	workers := config.MaxWorkers
 
-	taskCh := make(chan scanTask, tasks)
-	for i := 0; i < tasks; i++ {
+	taskCh := make(chan scanTask, workers)
+	for i := 0; i < workers; i++ {
 		taskCh <- scanTask{
 			chunkIdx: 0,
 			ipCidr:   "127.0.0.0/8",
@@ -55,8 +60,13 @@ func TestStartScanExecutor_AtMaxWorkers_ScansLoopbackOnWindows(t *testing.T) {
 	}
 	close(taskCh)
 
+	// The barrier releases as soon as the last worker registers, so this
+	// deadline is only paid when the pool is too narrow -- and then the failure
+	// reports the width actually observed (flake history #59/#79).
+	probe := newPoolWidthProbe(workers, 60*time.Second)
 	dialer := &net.Dialer{LocalAddr: &net.TCPAddr{Port: 0}}
-	resultCh, errCh := startScanExecutor(config.MaxWorkers, 5*time.Second, dialer.DialContext,
+
+	resultCh, errCh := startScanExecutor(workers, 5*time.Minute, probe.wrap(dialer.DialContext),
 		newLogger("error", true, io.Discard), taskCh)
 
 	type outcome struct {
@@ -77,23 +87,29 @@ func TestStartScanExecutor_AtMaxWorkers_ScansLoopbackOnWindows(t *testing.T) {
 
 	select {
 	case got := <-collected:
-		if got.total != tasks {
+		if width := probe.observedWidth(); width != workers {
+			t.Fatalf("peak concurrent workers = %d, want %d: Windows did not run the pool at its full width",
+				width, workers)
+		}
+		if got.total != workers {
 			t.Fatalf("got %d results from %d tasks at %d workers: the pool did not run to completion",
-				got.total, tasks, config.MaxWorkers)
+				got.total, workers, workers)
 		}
 		// Windows can refuse a loopback connection under a burst this size
-		// (backlog, ephemeral port pressure). The bound being verified is that
-		// the workers all start and all report; requiring every dial to succeed
-		// would make this a test of the CI machine's socket capacity instead.
+		// (backlog, ephemeral port pressure). Pool width is asserted exactly
+		// above; requiring every dial to succeed as well would make this a test
+		// of the CI machine's socket capacity.
 		if got.open == 0 {
-			t.Fatalf("no dial succeeded across %d loopback tasks at %d workers", tasks, config.MaxWorkers)
+			t.Fatalf("no dial succeeded across %d loopback tasks at %d workers", workers, workers)
 		}
-		t.Logf("%d/%d loopback dials reported open at %d workers", got.open, got.total, config.MaxWorkers)
-	case <-time.After(120 * time.Second):
-		t.Fatalf("executor did not drain %d tasks at %d workers within 120s", tasks, config.MaxWorkers)
+		t.Logf("%d workers ran concurrently; %d/%d loopback dials reported open",
+			probe.observedWidth(), got.open, got.total)
+	case <-time.After(180 * time.Second):
+		t.Fatalf("executor did not drain %d tasks at %d workers within 180s (peak width observed: %d)",
+			workers, workers, probe.observedWidth())
 	}
 
 	if err := collectExecutorError(t, errCh); err != nil {
-		t.Fatalf("executor reported a fatal error at %d workers: %v", config.MaxWorkers, err)
+		t.Fatalf("executor reported a fatal error at %d workers: %v", workers, err)
 	}
 }
