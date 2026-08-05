@@ -23,8 +23,18 @@ func Save(path string, data interface{}) error
 - `data` - Struct to serialize
 
 **Behavior:**
-1. Write to temporary file first (`path + ".tmp"`)
-2. Rename temp to final path (atomic on POSIX)
+1. Create a uniquely named temp file in the destination's own directory
+   (`<destination>.tmp-<random>`) — same directory, because a rename is only
+   atomic within one filesystem
+2. Write the JSON, `Sync`, and close the temp file
+3. Rename the temp file over the final path (atomic on POSIX; on Windows
+   `os.Rename` replaces an existing file via `MoveFileEx`)
+
+Any failure before the rename removes the temp file and returns an error that
+names the failed stage (`create` / `mode` / `write` / `sync` / `close` /
+`replace`) and wraps the underlying cause, leaving an existing snapshot
+byte-for-byte intact — it is the only copy of the resume state. A replacement
+keeps the permissions of the file it replaced.
 
 ### Load Function
 
