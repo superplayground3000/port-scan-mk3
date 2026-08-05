@@ -119,19 +119,32 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomically(path, data, snapshotFileMode)
+	return writeFileViaTempRename(path, data, snapshotFileMode)
 }
 
 // snapshotFileMode is the permission the snapshot file ends up with, matching
 // the mode the previous direct-write implementation passed to os.WriteFile.
 const snapshotFileMode os.FileMode = 0o644
 
-// writeFileAtomically writes data to a temp file in the destination's own
-// directory and only then renames it over path, so that any failure before the
-// rename leaves an existing file at path byte-for-byte untouched. The temp file
-// must live in the same directory as the destination: a rename across
-// filesystems is not atomic (and may fail outright).
-func writeFileAtomically(path string, data []byte, perm os.FileMode) (err error) {
+// writeFileViaTempRename writes data to a temp file in the destination's own
+// directory and only then renames that file over path.
+//
+// The guarantee is deliberately narrower than "atomic write":
+//
+//   - the destination is never truncated or written in place;
+//   - any failure before the rename leaves an existing file at path
+//     byte-for-byte intact, and is reported with the stage that failed;
+//   - the rename either replaces the destination or fails loudly, with the
+//     previous file still in place.
+//
+// The rename step itself is atomic only on POSIX. Go explicitly does not
+// promise that on Windows — os.Rename's documentation says "even within the
+// same directory, on non-Unix platforms Rename is not an atomic operation" —
+// so a crash during the rename is out of scope there; what holds on every
+// platform is the three points above. The temp file must be a sibling of the
+// destination: a rename across filesystems is atomic nowhere and may fail
+// outright.
+func writeFileViaTempRename(path string, data []byte, perm os.FileMode) (err error) {
 	dir := filepath.Dir(path)
 	f, err := fileOps.createTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {

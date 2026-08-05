@@ -244,8 +244,9 @@ func TestSaveSnapshot_WhenDestinationIsNew_CreatesItWithNoTempFileLeftBehind(t *
 }
 
 // TestSaveSnapshot_CreatesTempFileInDestinationDirectory pins the property the
-// atomicity depends on: a rename is only atomic within one filesystem, so the
-// temp file must be a sibling of the destination, never in the system temp dir.
+// replacement depends on: a rename across filesystems is not atomic and may
+// fail outright, so the temp file must be a sibling of the destination, never
+// in the system temp dir.
 func TestSaveSnapshot_CreatesTempFileInDestinationDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "resume_state.json")
 

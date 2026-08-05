@@ -24,17 +24,29 @@ func Save(path string, data interface{}) error
 
 **Behavior:**
 1. Create a uniquely named temp file in the destination's own directory
-   (`<destination>.tmp-<random>`) — same directory, because a rename is only
-   atomic within one filesystem
+   (`<destination>.tmp-<random>`) — same directory, because a rename across
+   filesystems is atomic nowhere and may fail outright
 2. Write the JSON, `Sync`, and close the temp file
-3. Rename the temp file over the final path (atomic on POSIX; on Windows
-   `os.Rename` replaces an existing file via `MoveFileEx`)
+3. Replace the final path with the temp file via `os.Rename`
+   (`MoveFileEx` with `REPLACE_EXISTING` on Windows)
 
-Any failure before the rename removes the temp file and returns an error that
-names the failed stage (`create` / `mode` / `write` / `sync` / `close` /
-`replace`) and wraps the underlying cause, leaving an existing snapshot
-byte-for-byte intact — it is the only copy of the resume state. A replacement
-keeps the permissions of the file it replaced.
+**What this guarantees on every platform:**
+- The destination is never truncated or written in place.
+- Any failure before the rename removes the temp file and returns an error that
+  names the failed stage (`create` / `mode` / `write` / `sync` / `close` /
+  `replace`) and wraps the underlying cause, leaving an existing snapshot
+  byte-for-byte intact — it is the only copy of the resume state. If removing
+  the temp file also fails, that error is joined to the first one so the
+  abandoned file is named rather than left unexplained.
+- The rename either replaces the destination or fails loudly with the previous
+  snapshot still in place.
+- A replacement keeps the permissions of the file it replaced.
+
+**What it does not guarantee:** the rename step itself is atomic only on POSIX.
+Go's `os.Rename` documentation states that "even within the same directory, on
+non-Unix platforms Rename is not an atomic operation", so a crash *during* the
+rename is out of scope on Windows. Nothing here is durable against power loss
+either: the parent directory is not fsynced after the rename.
 
 ### Load Function
 
@@ -239,7 +251,7 @@ func resolveResumePath(cfg config.Config) string {
 
 | Decision | Rationale |
 |----------|-----------|
-| Atomic save | Prevents corruption on crash |
+| Temp-file + rename save | Never truncates the only copy of the resume state (§1) |
 | Save on error only | Avoid unnecessary I/O |
 | Don't save if complete | No point saving finished state |
 | Manual resume flag | User must explicitly opt-in to resume |
