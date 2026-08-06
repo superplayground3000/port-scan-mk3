@@ -1,6 +1,7 @@
 package input
 
-// Rich-mode column names, as they appear in CSV headers (case-insensitive).
+// Rich-mode column names, as they are in CSV headers. The header match is
+// case-insensitive.
 const (
 	RichFieldSrcIP             = "src_ip"
 	RichFieldSrcNetworkSegment = "src_network_segment"
@@ -28,7 +29,7 @@ var requiredRichFields = []string{
 }
 
 // RichParseSummary aggregates row-level parse outcomes for rich input mode.
-// It is returned by ParseRichRows and used to report diagnostics to callers.
+// ParseRichRows returns this summary, and the caller uses it for diagnostics.
 type RichParseSummary struct {
 	// TotalRows is the number of data rows processed (header row excluded).
 	TotalRows int

@@ -8,11 +8,11 @@ import (
 	"strings"
 )
 
-// LoadPorts reads line-based port specifications in `<port>/tcp` format and
+// LoadPorts reads line-based port specifications in `<port>/tcp` format. It
 // returns a slice of normalized PortSpec values.
 //
-// Each non-empty line must be in the format `<number>/tcp` where <number> is
-// a TCP port in the range 1–65535. Empty lines are skipped.
+// Each non-empty line must have the format `<number>/tcp`. The <number> must be
+// a TCP port in the range 1–65535. LoadPorts skips empty lines.
 //
 // # Parameters
 //
@@ -20,7 +20,8 @@ import (
 //
 // # Returns
 //
-//	[]PortSpec on success; error if any line is malformed or port is out of range.
+//	[]PortSpec on success. An error if a line is malformed, or if a port is
+//	outside the range.
 //
 // # Example
 //

@@ -1,6 +1,7 @@
-// Package validate provides input validation for the port scanner's validate command.
-// It checks that CIDR and port input files are readable, correctly formatted, and
-// that required fields are present. Rich-mode inputs do not require a port file.
+// Package validate provides input validation for the validate command of the
+// port scanner. It makes sure that the CIDR and port input files are readable,
+// that their format is correct, and that the required fields are present.
+// Rich-mode inputs do not require a port file.
 package validate
 
 import (
@@ -12,7 +13,8 @@ import (
 )
 
 // Result is the outcome of input validation. Valid is true when all inputs are
-// acceptable; Detail describes the outcome (an error message if Valid is false).
+// acceptable. Detail describes the outcome, and it holds an error message when
+// Valid is false.
 type Result struct {
 	// Valid is true when all input files pass validation.
 	Valid bool
@@ -20,8 +22,9 @@ type Result struct {
 	Detail string
 }
 
-// Inputs validates the CIDR and port input files referenced by a config.
-// It does not perform network scanning — only file accessibility and format checks.
+// Inputs validates the CIDR and port input files that a configuration names.
+// Inputs does not scan the network. It only makes sure that the files are
+// accessible and that their format is correct.
 //
 // # Parameters
 //
@@ -29,13 +32,16 @@ type Result struct {
 //
 // # Returns
 //
-//	Result indicating whether inputs are valid, with a detail message on failure.
+//	A Result that reports whether the inputs are valid. On failure the Result
+//	holds a detail message.
 //
 // # Validation Rules
 //
-//   - CIDR file must exist and be readable as CSV.
-//   - CIDR file must have the required columns (or be valid rich-mode format).
-//   - In basic mode (non-rich), a port file is required and must be readable.
+//   - The CIDR file must exist and must be readable as CSV.
+//   - The CIDR file must have the required columns, or it must be in valid
+//     rich-mode format.
+//   - In basic mode (not rich mode), a port file is required and must be
+//     readable.
 //
 // # Example
 //

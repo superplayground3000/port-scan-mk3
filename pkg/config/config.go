@@ -1,7 +1,7 @@
 // Package config parses CLI arguments and holds configuration for the port scanner.
 //
-// All configuration is provided via command-line flags. Flags and their defaults
-// are documented in the Parse function.
+// Command-line flags supply all configuration. The Parse function documents each
+// flag and its default value.
 //
 // # Example
 //
@@ -22,8 +22,8 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
-// Config holds all CLI configuration for the port scanner. Zero values are
-// valid for optional fields; required fields are enforced by Parse.
+// Config holds all CLI configuration for the port scanner. An optional field
+// accepts the zero value. Parse enforces the required fields.
 type Config struct {
 	// CIDRFile is the path to the CIDR input CSV (required).
 	CIDRFile string
@@ -33,7 +33,8 @@ type Config struct {
 	Output string
 	// Timeout is the per-scan TCP connection timeout.
 	Timeout time.Duration
-	// Delay is the pause between dispatching consecutive tasks.
+	// Delay is the pause between two consecutive tasks that the scanner
+	// dispatches.
 	Delay time.Duration
 	// BucketRate is the leaky-bucket token refill rate (tokens per second).
 	BucketRate int
@@ -43,23 +44,27 @@ type Config struct {
 	Workers int
 	// PressureAPI is the URL for the pressure API endpoint.
 	PressureAPI string
-	// PressureInterval is how often to poll the pressure API.
+	// PressureInterval is the time between two polls of the pressure API.
 	PressureInterval time.Duration
-	// DisableAPI disables pressure-based throttling when true.
+	// DisableAPI disables pressure-based throttling when it is true.
 	DisableAPI bool
 	// PressureAuthURL is the OAuth token endpoint URL.
 	PressureAuthURL string
-	// PressureDataURLs are the authenticated pressure data endpoint URLs (comma-separated on input).
+	// PressureDataURLs are the URLs of the authenticated endpoints for pressure
+	// data. The input flag takes them as one comma-separated value.
 	PressureDataURLs []string
-	// PressureClientID is the OAuth client ID for authenticated pressure fetching.
+	// PressureClientID is the OAuth client ID for the authenticated pressure
+	// fetcher.
 	PressureClientID string
 	// PressureClientSecret is the OAuth client secret.
 	PressureClientSecret string
-	// PressureUseAuth enables OAuth-authenticated pressure fetching.
+	// PressureUseAuth enables the OAuth-authenticated pressure fetcher.
 	PressureUseAuth bool
-	// DisablePreScanPing disables the pre-scan ping reachability filter when true.
+	// DisablePreScanPing disables the ping reachability filter of the pre-scan
+	// step when it is true.
 	DisablePreScanPing bool
-	// PreScanPingTimeout bounds each pre-scan ping reachability check.
+	// PreScanPingTimeout is the limit for each ping reachability check in the
+	// pre-scan step.
 	PreScanPingTimeout time.Duration
 	// Resume is the path to the resume state file.
 	Resume string
@@ -73,14 +78,15 @@ type Config struct {
 	CIDRIPCol string
 	// CIDRIPCidrCol is the column name for the boundary CIDR in the CIDR CSV.
 	CIDRIPCidrCol string
-	// BucketsOut is the output path for the generated bucket snapshot
-	// (generate-buckets command; required there).
+	// BucketsOut is the output path for the generated bucket snapshot. The
+	// generate-buckets command requires this value.
 	BucketsOut string
-	// UnreachableFile is the optional blocklist CSV consumed by generate-buckets
-	// to subtract unreachable IPs from the target set.
+	// UnreachableFile is an optional blocklist CSV. The generate-buckets command
+	// reads it and subtracts the unreachable IPs from the target set.
 	UnreachableFile string
-	// ProgressInterval is the count-based cadence for stderr progress lines.
-	// It matches the scanner's progressStep semantics and defaults to 100.
+	// ProgressInterval is the count of processed units between two progress lines
+	// on stderr. It matches the progressStep semantics of the scanner. The
+	// default value is 100.
 	ProgressInterval int
 }
 
@@ -89,18 +95,18 @@ type Config struct {
 // preping, generate-buckets, and scan share the same default.
 const defaultProgressInterval = 100
 
-// Parse processes CLI arguments and returns a validated Config. It follows the
-// convention that a non-nil error means the caller should exit without running
-// the scanner (e.g., -help was requested or a required flag was missing).
+// Parse processes CLI arguments and returns a validated Config. A non-nil error
+// means that the caller must exit and must not run the scanner. For example, the
+// caller requested -help, or a required flag was missing.
 //
 // # Parameters
 //
-//	args: CLI arguments (typically os.Args[1:]).
+//	args: CLI arguments, usually os.Args[1:].
 //
 // # Returns
 //
-//	A validated Config on success; an error if flag parsing fails or required
-//	flags are missing.
+//	A validated Config on success. An error if the flag parsing fails, or if a
+//	required flag is missing.
 //
 // # Required Flags
 //

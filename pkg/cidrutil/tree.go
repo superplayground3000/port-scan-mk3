@@ -1,5 +1,6 @@
-// Package cidrutil provides CIDR interval tree operations for containment queries.
-// It is used by the cidr-compare command to find deny CIDRs that cover given open CIDRs.
+// Package cidrutil answers CIDR containment queries with an interval tree.
+// The cidr-compare command uses this package to find the deny CIDRs that cover
+// a given open CIDR.
 //
 // # Function Flow
 //
@@ -18,13 +19,13 @@ import (
 )
 
 // IntervalTree holds a list of CIDREntry values for containment queries.
-// It is not a balanced tree — Query performs a linear scan over all entries.
-// It is suitable for small-to-medium sets of deny rules.
+// It is not a balanced tree. Query scans all entries in sequence, so this tree
+// is suitable for small or medium sets of deny rules.
 type IntervalTree struct {
 	entries []CIDREntry
 }
 
-// Insert adds a CIDREntry to the tree. Entries are not automatically sorted.
+// Insert adds a CIDREntry to the tree. Insert does not sort the entries.
 func (t *IntervalTree) Insert(e CIDREntry) {
 	t.entries = append(t.entries, e)
 }
@@ -38,7 +39,7 @@ func (t *IntervalTree) Insert(e CIDREntry) {
 //
 // # Returns
 //
-//	All tree entries that contain e; empty slice if none match.
+//	All tree entries that contain e. The result is empty when no entry matches.
 //
 // # Example
 //
@@ -64,11 +65,11 @@ func contains(deny, open CIDREntry) bool {
 //
 // # Parameters
 //
-//	cidr: A valid CIDR notation string (e.g., "10.0.0.0/8").
+//	cidr: A valid CIDR notation string, for example "10.0.0.0/8".
 //
 // # Returns
 //
-//	CIDREntry on success; error if cidr is malformed or IPv6.
+//	CIDREntry on success. An error when cidr is malformed or IPv6.
 func ParseCIDR(cidr string) (CIDREntry, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {

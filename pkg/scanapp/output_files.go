@@ -197,9 +197,10 @@ func openUnreachableOutput(finalPath string) (*unreachableOutput, error) {
 	}, nil
 }
 
-// Finalize closes the output file handles. Because scan/open results are
-// written directly to their final paths, there is no promotion step: whatever
-// rows were written are already durable at the final path (design §3.6).
+// Finalize closes the output file handles. The scan results and the open-only
+// results go directly to their final paths, so there is no promotion step.
+// Every row that the run already wrote is durable at the final path
+// (design §3.6).
 func (b *batchOutputs) Finalize() error {
 	if b == nil {
 		return nil

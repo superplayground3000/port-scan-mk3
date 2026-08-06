@@ -8,12 +8,13 @@ import (
 	"syscall"
 )
 
-// Outcome is the explicit classification of a single TCP dial attempt.
+// Outcome is the explicit classification of one TCP dial attempt.
 //
-// A port scanner is only allowed to claim "this port is closed" when the
-// *remote* end said so. Everything else — a timeout, a failure of the local
-// machine, an unrecognized transport error — is a different statement and gets
-// its own outcome so it can never be mistaken for a confirmed closed port.
+// A port scanner can claim "this port is closed" only when the *remote* end
+// said so. Each other condition is a different statement: a timeout, a failure
+// of the local machine, or an unrecognized transport error. Each of these
+// conditions gets its own outcome, so no condition can be mistaken for a
+// confirmed closed port.
 type Outcome string
 
 const (
@@ -36,10 +37,10 @@ const (
 	OutcomeIndeterminate Outcome = "indeterminate"
 )
 
-// Status strings written to the scan CSV. They are part of the output contract
-// (see docs/specs/SPEC-05-SCANNER-SYSTEM.md); downstream tooling filters on
-// StatusOpen and StatusClose, so the two non-probing outcomes deliberately use
-// distinct values that no "is it closed?" filter will match.
+// Status strings that the scan writes to the scan CSV. They are part of the
+// output contract (see docs/specs/SPEC-05-SCANNER-SYSTEM.md). Downstream tools
+// filter on StatusOpen and StatusClose. The two non-probing outcomes therefore
+// use different values on purpose, and no "is it closed?" filter matches them.
 const (
 	StatusOpen         = "open"
 	StatusClose        = "close"

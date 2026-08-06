@@ -1,7 +1,7 @@
 // Package logx provides structured JSON logging for the port scanner.
 //
-// All log output is emitted as newline-delimited JSON (NDJSON) when JSON mode is
-// enabled, with a consistent schema: {level, msg, fields, ts}.
+// In JSON mode, logx writes all log output as newline-delimited JSON (NDJSON).
+// Every entry has the same schema: {level, msg, fields, ts}.
 //
 // # Log Schema
 //
@@ -27,14 +27,14 @@ import (
 	"time"
 )
 
-// LogJSON writes a structured log entry as newline-delimited JSON to the
-// specified writer. The entry always includes: level, msg, fields, and ts (RFC3339).
+// LogJSON writes a structured log entry as newline-delimited JSON to the given
+// writer. The entry always includes level, msg, fields, and ts (RFC3339).
 //
 // # Parameters
 //
-//	out:     Output writer (e.g., os.Stdout or a file).
+//	out:     Output writer, for example os.Stdout or a file.
 //	level:   Log level string: "debug", "info", or "error".
-//	msg:     Human-readable message describing the event.
+//	msg:     Human-readable message that describes the event.
 //	fields:  Structured key-value pairs with event-specific data.
 //
 // # Example

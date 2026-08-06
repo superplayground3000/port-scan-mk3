@@ -7,19 +7,20 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
-// ValidateNoOverlap validates CIDR/IP selector rows and rejects conflicting ranges.
-// It is a convenience alias for ValidateIPRows; the two perform identical validation.
+// ValidateNoOverlap validates CIDR and IP selector rows, and rejects conflicting
+// ranges. It is an alias for ValidateIPRows. The two functions do the same
+// validation.
 func ValidateNoOverlap(networks []CIDRRecord) error {
 	return ValidateIPRows(networks)
 }
 
 // ValidateIPRows enforces fail-fast input rules on a slice of CIDR records:
 //
-//  1. Each IP selector is contained within its ip_cidr boundary.
-//  2. Duplicate (src, dst, ip_cidr, port) tuples are rejected.
+//  1. Each IP selector must be inside its ip_cidr boundary.
+//  2. A duplicate (src, dst, ip_cidr, port) tuple is an error.
 //
-// Callers should apply this after loading records via LoadCIDRs or
-// LoadCIDRsWithColumns. It does not mutate the records.
+// The caller must call ValidateIPRows after LoadCIDRs or LoadCIDRsWithColumns
+// loads the records. ValidateIPRows does not mutate the records.
 //
 // # Parameters
 //
@@ -27,8 +28,9 @@ func ValidateNoOverlap(networks []CIDRRecord) error {
 //
 // # Returns
 //
-//	nil on success; an error describing the first violation found.
-//	Errors include row numbers (1-indexed) for duplicate or containment failures.
+//	nil on success. An error that describes the first violation.
+//	An error for a duplicate or for a containment failure includes the row
+//	numbers, which are 1-indexed.
 //
 // # Example
 //

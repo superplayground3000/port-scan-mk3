@@ -128,7 +128,7 @@ func ParseOpenCSV(content string) ([]CIDREntry, error) {
 	return entries, nil
 }
 
-// DenyCSVReader provides streaming CSV parsing for deny entries using bufio.Scanner.
+// DenyCSVReader reads deny entries from a CSV stream with a bufio.Scanner.
 type DenyCSVReader struct {
 	scanner *bufio.Scanner
 }
@@ -195,7 +195,7 @@ func (dr *DenyCSVReader) ReadAll() ([]CIDREntry, error) {
 	return entries, dr.scanner.Err()
 }
 
-// OpenCSVReader provides streaming CSV parsing for open entries using bufio.Scanner.
+// OpenCSVReader reads open entries from a CSV stream with a bufio.Scanner.
 type OpenCSVReader struct {
 	scanner *bufio.Scanner
 }

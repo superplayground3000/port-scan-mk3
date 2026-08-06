@@ -2,22 +2,24 @@ package scanapp
 
 import "github.com/xuxiping/port-scan-mk3/pkg/writer"
 
-// RecordWriter abstracts writing scan records to output destinations.
-// This interface allows the scanapp domain to remain independent of
-// concrete writer implementations (e.g., CSVWriter, OpenOnlyWriter).
+// RecordWriter is the interface that writes scan records to output
+// destinations. With this interface, the scanapp domain stays independent of
+// the concrete writer implementations (for example, CSVWriter and
+// OpenOnlyWriter).
 type RecordWriter interface {
-	// Write appends a single record to the output.
+	// Write appends one record to the output.
 	Write(record writer.Record) error
-	// WriteHeader writes the output header if not already written.
+	// WriteHeader writes the output header. If the header is already
+	// written, WriteHeader writes nothing.
 	WriteHeader() error
 }
 
-// ScanRecord represents the data fields of a single scan result record.
-// This abstraction allows scanapp domain types to work with scan records
-// without depending on the concrete writer.Record type.
+// ScanRecord represents the data fields of one scan result record. With this
+// abstraction, scanapp domain types can use scan records and do not depend on
+// the concrete writer.Record type.
 type ScanRecord interface {
-	// AsWriterRecord returns the underlying writer.Record.
-	// This allows interoperability when concrete writer types are required.
+	// AsWriterRecord returns the underlying writer.Record. It gives
+	// interoperability when the caller needs a concrete writer type.
 	AsWriterRecord() writer.Record
 
 	IP() string
@@ -57,9 +59,9 @@ func (a *writerRecordAdapter) ExecutionKey() string          { return a.record.E
 func (a *writerRecordAdapter) SrcIP() string                 { return a.record.SrcIP }
 func (a *writerRecordAdapter) SrcNetworkSegment() string     { return a.record.SrcNetworkSegment }
 
-// AsScanRecord adapts a writer.Record to the ScanRecord interface.
-// This is used by the scan pipeline to bridge concrete writer types to
-// the domain's record abstraction.
+// AsScanRecord adapts a writer.Record to the ScanRecord interface. The scan
+// pipeline uses AsScanRecord to bridge concrete writer types to the record
+// abstraction of the domain.
 //
 // # Example
 //

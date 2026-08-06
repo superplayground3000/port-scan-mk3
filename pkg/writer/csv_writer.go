@@ -1,6 +1,6 @@
-// Package writer provides CSV output writers for scan results.
-// It defines the fixed output contract (Columns) used across the scanner pipeline
-// and supports filtering via OpenOnlyWriter to emit only open-port results.
+// Package writer provides CSV output writers for scan results. The package
+// defines the fixed output contract (Columns) that the scanner pipeline uses.
+// OpenOnlyWriter filters the records and writes only the open-port results.
 //
 // # Output Schema
 //
@@ -23,8 +23,8 @@ import (
 	"strings"
 )
 
-// Record is one scan result row written to the output CSV. All fields are
-// populated by the scan pipeline; empty fields produce empty CSV cells.
+// Record is one scan result row in the output CSV. The scan pipeline fills all
+// fields. An empty field produces an empty CSV cell.
 type Record struct {
 	IP                string
 	IPCidr            string
@@ -43,7 +43,8 @@ type Record struct {
 	SrcNetworkSegment string
 }
 
-// ColumnDef maps a header name to a Record field extractor function.
+// ColumnDef maps a header name to a function that extracts one field from a
+// Record.
 type ColumnDef struct {
 	// Name is the CSV column header string.
 	Name string
@@ -56,7 +57,8 @@ type ColumnDef struct {
 // cidr_name, service_label, decision, matched_policy_id, reason, execution_key,
 // src_ip, src_network_segment.
 //
-// Changing this slice changes the output contract and requires a MAJOR version bump.
+// If you change this slice, the output contract changes. Such a change requires
+// a MAJOR version bump.
 var Columns = []ColumnDef{
 	{"ip", func(r Record) string { return r.IP }},
 	{"ip_cidr", func(r Record) string {
@@ -79,14 +81,16 @@ var Columns = []ColumnDef{
 	{"src_network_segment", func(r Record) string { return r.SrcNetworkSegment }},
 }
 
-// CanonicalHeader returns the exact header line the CSV writers emit for the
-// Columns schema: the column names encoded exactly as csv.Writer would encode
-// them (comma-separated, quoted only where necessary), with no trailing
-// newline. Callers reopening a result file in append mode compare the file's
-// existing first line against this value to prove the file was written with the
-// current schema before appending to it (design §3.7). Because the value is
-// produced by the same csv encoder WriteHeader uses, it matches byte-for-byte
-// (minus the line terminator).
+// CanonicalHeader returns the exact header line that the CSV writers write for
+// the Columns schema. The line holds the column names with the same encoding
+// that csv.Writer produces: comma-separated, and quoted only where necessary.
+// The line has no trailing newline.
+//
+// A caller that reopens a result file in append mode compares the existing
+// first line of the file against this value. The comparison proves that the
+// file uses the current schema before the caller appends to it (design §3.7).
+// WriteHeader uses the same csv encoder, so the value matches byte-for-byte,
+// minus the line terminator.
 func CanonicalHeader() string {
 	names := make([]string, len(Columns))
 	for i, col := range Columns {
@@ -102,30 +106,32 @@ func CanonicalHeader() string {
 }
 
 // CSVWriter writes scan result rows to a CSV output with the fixed Columns
-// header. It is safe for concurrent use only if each Write call is externally
-// serialized (the scan pipeline serializes writes at the dispatcher level).
+// header. CSVWriter is safe for concurrent use only when the caller serializes
+// each Write call. The scan pipeline serializes the writes at the dispatcher
+// level.
 type CSVWriter struct {
 	w           *csv.Writer
 	wroteHeader bool
 }
 
-// NewCSVWriter creates a CSVWriter that writes to the provided io.Writer.
-// The writer does not take ownership; callers are responsible for closing
-// the underlying writer if needed.
+// NewCSVWriter creates a CSVWriter that writes to the io.Writer out. The
+// CSVWriter does not take ownership of out. If the underlying writer needs a
+// close, the caller must close it.
 func NewCSVWriter(out io.Writer) *CSVWriter {
 	return &CSVWriter{w: csv.NewWriter(out)}
 }
 
-// NewCSVWriterAppending creates a CSVWriter for appending to a destination that
-// already contains the canonical header. It starts with wroteHeader=true so the
-// first Write does NOT re-emit a header and WriteHeader is a no-op. Use this when
-// reopening an existing result file in append mode (design §3.7).
+// NewCSVWriterAppending creates a CSVWriter that appends to a destination that
+// already holds the canonical header. The CSVWriter starts with
+// wroteHeader=true. Therefore the first Write does NOT write a header again,
+// and WriteHeader does nothing. Use this constructor when you reopen an
+// existing result file in append mode (design §3.7).
 func NewCSVWriterAppending(out io.Writer) *CSVWriter {
 	return &CSVWriter{w: csv.NewWriter(out), wroteHeader: true}
 }
 
-// Write appends a single record to the CSV, writing the header on the first
-// call. It flushes after each write to ensure data is visible.
+// Write appends one record to the CSV. On the first call, Write also writes the
+// header. Write flushes after each write to make sure that the data is visible.
 //
 // # Parameters
 //
@@ -133,7 +139,7 @@ func NewCSVWriterAppending(out io.Writer) *CSVWriter {
 //
 // # Returns
 //
-//	nil on success; error if header write or CSV write fails.
+//	nil on success. An error if the header write or the CSV write fails.
 func (cw *CSVWriter) Write(r Record) error {
 	if err := cw.WriteHeader(); err != nil {
 		return err
@@ -149,7 +155,7 @@ func (cw *CSVWriter) Write(r Record) error {
 	return cw.w.Error()
 }
 
-// WriteHeader writes the fixed result header once. Subsequent calls are no-ops.
+// WriteHeader writes the fixed result header one time. Later calls do nothing.
 func (cw *CSVWriter) WriteHeader() error {
 	if !cw.wroteHeader {
 		header := make([]string, len(Columns))

@@ -13,19 +13,20 @@ import (
 	"time"
 )
 
-// PressureFetcher defines the interface for fetching router pressure data.
-// Implementations determine how pressure is retrieved (plain HTTP, OAuth, etc.).
-// The returned value is a percentage (e.g., 45.0 for 45%).
+// PressureFetcher is the interface that fetches router pressure data. Each
+// implementation decides how it gets the pressure: with plain HTTP, or with
+// OAuth. The returned value is a percentage (for example, 45.0 for 45%).
 type PressureFetcher interface {
-	// Fetch retrieves the current pressure value.
+	// Fetch gets the current pressure value.
 	//
 	// # Parameters
 	//
-	//	ctx: Context for the HTTP request with timeout/cancellation.
+	//	ctx: Context for the HTTP request, with a timeout and cancellation.
 	//
 	// # Returns
 	//
-	//	Pressure as a percentage (e.g., 45.0) on success; error on failure.
+	//	The pressure as a percentage (for example, 45.0) on success. Fetch
+	//	returns an error on failure.
 	Fetch(ctx context.Context) (float64, error)
 }
 
@@ -49,7 +50,8 @@ type SimplePressureFetcher struct {
 }
 
 // NewSimplePressureFetcher creates a SimplePressureFetcher for the given URL.
-// If client is nil, a default HTTP client with a 2-second timeout is used.
+// If client is nil, NewSimplePressureFetcher uses a default HTTP client with a
+// 2-second timeout.
 //
 // # Example
 //
@@ -61,7 +63,7 @@ func NewSimplePressureFetcher(url string, client *http.Client) PressureFetcher {
 	return &SimplePressureFetcher{url: url, client: client}
 }
 
-// Fetch performs an HTTP GET to the configured URL and returns the pressure value.
+// Fetch makes an HTTP GET to the configured URL and returns the pressure value.
 // It expects a JSON body: {"pressure": <number>}.
 func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
@@ -91,9 +93,10 @@ func (f *SimplePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	return pressure, nil
 }
 
-// AuthenticatedPressureFetcher is a PressureFetcher that first obtains an OAuth
-// bearer token from authURL, then uses it to fetch pressure data from dataURL.
-// It caches and automatically refreshes tokens before expiry.
+// AuthenticatedPressureFetcher is a PressureFetcher that first gets an OAuth
+// bearer token from authURL. It then uses this token to fetch pressure data
+// from dataURL. It caches each token and refreshes the token automatically
+// before the token expires.
 type AuthenticatedPressureFetcher struct {
 	authURL      string
 	dataURL      string
@@ -107,7 +110,8 @@ type AuthenticatedPressureFetcher struct {
 }
 
 // NewAuthenticatedPressureFetcher creates an AuthenticatedPressureFetcher.
-// If client is nil, a default HTTP client with a 2-second timeout is used.
+// If client is nil, NewAuthenticatedPressureFetcher uses a default HTTP client
+// with a 2-second timeout.
 //
 // # Example
 //
@@ -129,8 +133,8 @@ func NewAuthenticatedPressureFetcher(authURL, dataURL, clientID, clientSecret st
 	}
 }
 
-// Fetch retrieves pressure data using a cached bearer token. It automatically
-// refreshes the token when it is within 30 seconds of expiry.
+// Fetch gets pressure data with a cached bearer token. If the token expires in
+// 30 seconds or less, Fetch refreshes the token automatically.
 func (f *AuthenticatedPressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	// Get valid token (refresh if needed)
 	token, err := f.getToken(ctx)
@@ -222,18 +226,19 @@ func normalizePressure(v float64) float64 {
 	return math.Round(v*10) / 10
 }
 
-// MultiSourcePressureFetcher fetches pressure from multiple authenticated
-// endpoints that share the same OAuth credentials. It fans out concurrently
-// and returns the maximum pressure across all sources. Any source error
-// causes the entire Fetch to fail.
+// MultiSourcePressureFetcher fetches pressure from more than one authenticated
+// endpoint. These endpoints share the same OAuth credentials. It fans out
+// concurrently and returns the maximum pressure across all sources. If one
+// source returns an error, the whole Fetch fails.
 type MultiSourcePressureFetcher struct {
 	sources []PressureFetcher
 }
 
-// NewMultiSourcePressureFetcher creates a MultiSourcePressureFetcher that
-// polls each URL in dataURLs using shared OAuth credentials. A separate
-// AuthenticatedPressureFetcher (with its own token cache) is created per URL.
-// If client is nil, a default HTTP client with a 2-second timeout is used.
+// NewMultiSourcePressureFetcher creates a MultiSourcePressureFetcher that polls
+// each URL in dataURLs with shared OAuth credentials. It creates one separate
+// AuthenticatedPressureFetcher for each URL, and each one has its own token
+// cache. If client is nil, NewMultiSourcePressureFetcher uses a default HTTP
+// client with a 2-second timeout.
 func NewMultiSourcePressureFetcher(authURL string, dataURLs []string, clientID, clientSecret string, client *http.Client) *MultiSourcePressureFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
@@ -245,17 +250,18 @@ func NewMultiSourcePressureFetcher(authURL string, dataURLs []string, clientID, 
 	return &MultiSourcePressureFetcher{sources: sources}
 }
 
-// Fetch retrieves pressure from all configured sources concurrently and
-// waits for all to complete. If any source returns an error, Fetch returns
-// that error (wrapping it with the source label). Otherwise it returns the
-// maximum pressure value across all sources.
+// Fetch gets the pressure from all configured sources concurrently and waits
+// for all of them to complete. If a source returns an error, Fetch returns that
+// error and wraps it with the source label. If no source returns an error,
+// Fetch returns the maximum pressure value across all sources.
 func (f *MultiSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
 	pressure, _, err := f.FetchWithSourceStatuses(ctx)
 	return pressure, err
 }
 
-// FetchWithSourceStatuses retrieves pressure and returns per-source telemetry
-// for dashboard consumers while preserving Fetch's aggregate success/failure contract.
+// FetchWithSourceStatuses gets the pressure and returns telemetry for each
+// source, for dashboard consumers. It keeps the aggregate success and failure
+// contract of Fetch.
 func (f *MultiSourcePressureFetcher) FetchWithSourceStatuses(ctx context.Context) (float64, []PressureSourceResult, error) {
 	if len(f.sources) == 0 {
 		return 0, nil, fmt.Errorf("no pressure sources configured")

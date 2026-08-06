@@ -1,10 +1,12 @@
 // Package input parses and validates CSV inputs for the port scanner.
 //
-// It supports two input modes:
+// The package supports two input modes:
 //
-//   - Basic CIDR mode: CSV with ip and ip_cidr columns, loaded via LoadCIDRs or LoadCIDRsWithColumns.
-//   - Rich mode: CSV with structured firewall-policy columns (src_ip, dst_ip, port, decision, etc.).
-//     Rich mode is auto-detected by detectRichHeaderIndices and parsed via ParseRichRows.
+//   - Basic CIDR mode: a CSV with ip and ip_cidr columns. LoadCIDRs and
+//     LoadCIDRsWithColumns read this mode.
+//   - Rich mode: a CSV with structured firewall-policy columns, for example
+//     src_ip, dst_ip, port, and decision. The detectRichHeaderIndices function
+//     detects this mode from the header, and ParseRichRows parses it.
 //
 // # Function Flow
 //
@@ -48,21 +50,21 @@ import (
 
 // ParseRichRows parses and validates rich-mode CIDR input rows.
 //
-// It processes raw CSV rows (with header already stripped) using the column index map
-// returned by detectRichHeaderIndices. Each input row produces exactly one CIDRRecord
-// in the output slice — valid rows carry full parsed data, and invalid rows carry
-// a populated ValidationCode and ValidationError for diagnostics.
+// It processes raw CSV rows with the column index map that detectRichHeaderIndices
+// returns. Each input row produces exactly one CIDRRecord in the output slice. A
+// valid row carries full parsed data. An invalid row carries a ValidationCode and
+// a ValidationError for diagnostics.
 //
 // # Parameters
 //
-//	rows: Raw CSV rows with header at index 0 (skipped during parsing).
+//	rows: Raw CSV rows with the header at index 0. ParseRichRows skips the header.
 //	idx:  Map of canonicalized header names to column indices, from detectRichHeaderIndices.
 //
 // # Returns
 //
-//	[]CIDRRecord on success (including invalid rows with IsValid=false).
+//	[]CIDRRecord on success. The slice includes invalid rows with IsValid=false.
 //	RichParseSummary with row-level statistics.
-//	Error only when all rows are invalid or a structural failure occurs.
+//	An error only when all rows are invalid, or when a structural failure occurs.
 //
 // # Required Header Fields
 //

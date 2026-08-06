@@ -1,10 +1,10 @@
 package task
 
-// IndexToTarget maps a flat task index to an IP address and port number.
+// IndexToTarget maps a flat task index to an IP address and a port number.
 //
-// It treats the IP list and port list as a Cartesian product where the flat
-// index i corresponds to IP i/len(ports) and port i%len(ports). This is the
-// inverse of the indexing used by the task dispatcher when expanding groups.
+// It treats the IP list and the port list as a Cartesian product. The flat index
+// i maps to IP i/len(ports) and port i%len(ports). This mapping is the inverse of
+// the index that the task dispatcher builds when it expands groups.
 //
 // # Parameters
 //
@@ -14,8 +14,8 @@ package task
 //
 // # Returns
 //
-//	The IP address and port at the given index; ("", 0) if the index is
-//	out of range or inputs are empty.
+//	The IP address and the port at the given index. The values ("", 0) if the
+//	index is outside the range, or if an input is empty.
 //
 // # Example
 //

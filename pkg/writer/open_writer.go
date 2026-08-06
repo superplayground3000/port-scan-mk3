@@ -1,6 +1,6 @@
-// Package writer provides CSV output writers for scan results.
-// It defines the fixed output contract (Columns) used across the scanner pipeline
-// and supports filtering via OpenOnlyWriter to emit only open-port results.
+// Package writer provides CSV output writers for scan results. The package
+// defines the fixed output contract (Columns) that the scanner pipeline uses.
+// OpenOnlyWriter filters the records and writes only the open-port results.
 //
 // # Output Schema
 //
@@ -15,21 +15,21 @@
 //	_ = w.Write(writer.Record{IP: "192.168.1.1", Port: 80, Status: "open"})
 package writer
 
-// OpenOnlyWriter is a filter writer that forwards only records with Status
-// equal to "open". All other records are silently dropped. It wraps an inner
-// CSVWriter and delegates header writing to it.
+// OpenOnlyWriter is a filter writer that forwards only the records with Status
+// equal to "open". OpenOnlyWriter drops all other records without a message.
+// OpenOnlyWriter wraps an inner CSVWriter and delegates the header write to it.
 type OpenOnlyWriter struct {
 	inner *CSVWriter
 }
 
-// NewOpenOnlyWriter creates an OpenOnlyWriter that wraps the provided inner
-// CSVWriter. The inner writer must not be nil.
+// NewOpenOnlyWriter creates an OpenOnlyWriter that wraps the inner CSVWriter.
+// The inner writer must not be nil.
 func NewOpenOnlyWriter(inner *CSVWriter) *OpenOnlyWriter {
 	return &OpenOnlyWriter{inner: inner}
 }
 
-// Write forwards the record to the inner writer only if r.Status == "open".
-// Non-open records are silently discarded.
+// Write forwards the record to the inner writer only when r.Status == "open".
+// Write discards all other records without a message.
 func (w *OpenOnlyWriter) Write(r Record) error {
 	if w == nil || w.inner == nil {
 		return nil
@@ -40,7 +40,7 @@ func (w *OpenOnlyWriter) Write(r Record) error {
 	return w.inner.Write(r)
 }
 
-// WriteHeader delegates to the inner CSVWriter's WriteHeader.
+// WriteHeader delegates to the WriteHeader method of the inner CSVWriter.
 func (w *OpenOnlyWriter) WriteHeader() error {
 	if w == nil || w.inner == nil {
 		return nil

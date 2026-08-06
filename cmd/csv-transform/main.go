@@ -77,8 +77,8 @@ func runMain(args []string, stdout io.Writer, stderrOut io.Writer) int {
 func main() { os.Exit(runMain(os.Args, os.Stdout, os.Stderr)) }
 
 // ParseConfig parses CLI flags and environment variables into a TransformConfig.
-// It returns ErrMissingRequired if --input or --output are not provided.
-// Exit code 2 on missing required flags.
+// If --input or --output is not given, ParseConfig returns ErrMissingRequired.
+// A missing required flag gives exit code 2.
 func ParseConfig() (*TransformConfig, error) {
 	return ParseConfigFromArgs(os.Args[1:])
 }

@@ -1,6 +1,6 @@
-// Package netutil provides IPv4 networking utilities used across the port scanner.
-// It handles IP range computation, execution key generation, and IPv4-to-uint32
-// conversion for internal data structures.
+// Package netutil provides IPv4 networking utilities for the port scanner.
+// It computes IP ranges, builds execution keys, and converts IPv4 addresses to
+// uint32 values for internal data structures.
 //
 // # Example
 //
@@ -13,17 +13,18 @@ import "net"
 // IPRange computes the first and last IPv4 address in a CIDR network.
 //
 // It applies the CIDR mask to the network IP for the start address, and
-// sets host bits to 1 for the end address. Only IPv4 networks are supported.
+// sets host bits to 1 for the end address. IPRange supports only IPv4 networks.
 //
 // # Parameters
 //
-//	n: The network to expand. Must not be nil.
+//	n: The network to expand. It must not be nil.
 //
 // # Returns
 //
 //	start: First assignable IP in the network.
 //	end:   Last assignable IP in the network.
-//	ok:    true on success; false if n is nil, has a non-IPv4 IP, or has a non-4-byte mask.
+//	ok:    true on success. It is false when n is nil, when the IP of n is not
+//	       IPv4, or when the mask of n is not 4 bytes.
 //
 // # Example
 //

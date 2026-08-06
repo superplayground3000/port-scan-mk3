@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// ErrInvalidFabName is the sentinel wrapped by every ValidateFabName failure.
-// Callers classify rejections with errors.Is rather than by matching message
-// text.
+// ErrInvalidFabName is the sentinel error that every ValidateFabName failure
+// wraps. Callers classify a rejection with errors.Is, not with a match on the
+// message text.
 var ErrInvalidFabName = errors.New("invalid fab name")
 
 // windowsInvalidNameChars are the printable characters Windows forbids in a
@@ -32,20 +32,27 @@ var reservedDeviceNames = func() map[string]struct{} {
 	return names
 }()
 
-// ValidateFabName reports whether name is usable as a single directory
+// ValidateFabName returns nil when name is usable as a single directory
 // component of the output tree.
 //
-// Output produced on Linux is routinely consumed on Windows, so the rules are
-// the strictest of both platforms and are enforced on every GOOS. Rejection is
-// always explicit: nothing is silently sanitized, because a quietly rewritten
-// fab name would put results in a directory the operator did not ask for.
+// Linux output is routinely used on Windows, so the rules are the strictest of
+// both platforms, and ValidateFabName applies them on every GOOS. Rejection is
+// always explicit. ValidateFabName never sanitizes a name in silence, because a
+// rewritten fab name puts results in a directory that the operator did not ask
+// for.
 //
-// A name is rejected when it is empty, carries a path separator of either
-// platform (which also covers absolute, drive-relative and UNC paths), is "."
-// or "..", contains a control character or a character Windows forbids, ends
-// with a dot or a space, or is a Windows reserved device name — the latter
-// case-insensitively and including extension variants such as "con.txt", which
-// Windows resolves as a device too.
+// ValidateFabName rejects a name in these conditions:
+//
+//   - The name is empty.
+//   - The name contains a path separator of either platform. This condition also
+//     covers absolute paths, drive-relative paths, and UNC paths.
+//   - The name is "." or "..".
+//   - The name contains a control character, or a character that Windows
+//     forbids.
+//   - The name ends with a dot or a space.
+//   - The name is a Windows reserved device name. This test ignores case, and it
+//     also catches extension variants such as "con.txt", which Windows resolves
+//     as a device too.
 //
 // Every returned error wraps [ErrInvalidFabName].
 func ValidateFabName(name string) error {

@@ -11,24 +11,25 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
-// ParseFor processes CLI arguments for a single subcommand, registering only the
-// flags that subcommand owns and enforcing that subcommand's required flags.
+// ParseFor processes CLI arguments for one subcommand. It registers only the
+// flags that the subcommand owns, and it enforces only the required flags of
+// that subcommand.
 //
-// Registering a per-command flag surface is what makes the "scan never pings"
-// guarantee structural rather than cosmetic: because "scan" does not register
-// -disable-pre-scan-ping or -pre-scan-ping-timeout, passing either is an
-// unknown-flag error, not a silently ignored option.
+// A per-command flag surface makes the "scan never pings" guarantee structural,
+// not cosmetic. The "scan" command does not register -disable-pre-scan-ping or
+// -pre-scan-ping-timeout. Therefore either flag causes an unknown-flag error,
+// and the program does not ignore it in silence.
 //
 // # Parameters
 //
 //	command: one of "preping", "generate-buckets", "scan", or "validate".
-//	args:    CLI arguments for the subcommand (excluding the subcommand token).
+//	args:    CLI arguments for the subcommand, without the subcommand token.
 //
 // # Returns
 //
-//	A validated Config on success; an error if the command is unknown, flag
-//	parsing fails (including unknown flags and -help), or a required flag for the
-//	command is missing.
+//	A validated Config on success. An error if the command is unknown, if the
+//	flag parsing fails, or if a required flag for the command is missing. Flag
+//	parsing failures include an unknown flag and -help.
 //
 // # Required Flags (per command)
 //

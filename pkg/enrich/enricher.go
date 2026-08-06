@@ -1,5 +1,5 @@
 // Package enrich transforms minimal host,port pairs into full rich CSV rows
-// using a CIDR reference tree and a port-to-service-label map.
+// with a CIDR reference tree and a port-to-service-label map.
 package enrich
 
 import (
@@ -35,7 +35,7 @@ func (r RichRow) ToSlice() []string {
 	}
 }
 
-// Enricher transforms host,port pairs into full rich CSV rows using a CIDR
+// Enricher transforms host,port pairs into full rich CSV rows with a CIDR
 // reference tree and a port-to-service-label map.
 type Enricher struct {
 	cidrTree   *cidrutil.IntervalTree
@@ -43,7 +43,8 @@ type Enricher struct {
 }
 
 // NewEnricher creates an Enricher with the given CIDR tree and service map.
-// If cidrTree is nil, an empty tree is substituted to avoid nil-pointer panics.
+// If cidrTree is nil, NewEnricher substitutes an empty tree, which prevents a
+// nil-pointer panic.
 func NewEnricher(cidrTree *cidrutil.IntervalTree, serviceMap map[int]string) *Enricher {
 	if cidrTree == nil {
 		cidrTree = &cidrutil.IntervalTree{}
@@ -52,8 +53,9 @@ func NewEnricher(cidrTree *cidrutil.IntervalTree, serviceMap map[int]string) *En
 }
 
 // Enrich produces a RichRow from a host IP and port number.
-// It never skips rows — missing CIDR matches fall back to host/32, missing
-// service labels fall back to the configured fallback value.
+// Enrich never skips a row. If no CIDR matches the host, the row uses host/32.
+// If no service label matches the port, the row uses the configured fallback
+// value.
 func (e *Enricher) Enrich(host string, port int) (RichRow, error) {
 	ip := net.ParseIP(host)
 	if ip == nil {

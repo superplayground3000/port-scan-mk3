@@ -9,8 +9,8 @@ import (
 )
 
 // SplitPorts splits a "/"-separated port string into individual port integers.
-// Empty string returns nil (caller skips row).
-// Invalid ports are skipped silently (logged to stderr).
+// For an empty string, SplitPorts returns nil and the caller skips the row.
+// SplitPorts skips an invalid port in silence and logs it to stderr.
 func SplitPorts(portStr string) ([]int, error) {
 	if strings.TrimSpace(portStr) == "" {
 		return nil, nil
@@ -41,10 +41,10 @@ func SplitPorts(portStr string) ([]int, error) {
 // stderr is used for logging invalid port warnings.
 var stderr = os.Stderr
 
-// ResolveHost resolves a host (IP or hostname) to an IPv4 string.
-// IPv4 addresses are returned as-is.
-// Hostnames are resolved via net.LookupIP; on failure the original
-// hostname string is returned (downstream validation will catch it).
+// ResolveHost resolves a host (an IP address or a hostname) to an IPv4 string.
+// ResolveHost returns an IPv4 address unchanged. It resolves a hostname with
+// net.LookupIP. If the lookup fails, ResolveHost returns the original hostname
+// string, and the downstream validation catches it.
 func ResolveHost(host string) (string, error) {
 	// IPv4 passthrough
 	if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
@@ -69,7 +69,8 @@ func ResolveHost(host string) (string, error) {
 	return host, nil
 }
 
-// ShouldIncludeRow returns true only if passVal is "FALSE" (case-insensitive, trimmed).
+// ShouldIncludeRow returns true only when passVal is "FALSE". The comparison
+// ignores case, and it trims the spaces around the value.
 func ShouldIncludeRow(passVal string) bool {
 	return strings.EqualFold(strings.TrimSpace(passVal), "FALSE")
 }

@@ -1,5 +1,5 @@
-// Package task provides task indexing, IP selector expansion, and execution key
-// generation for the port scanner.
+// Package task indexes tasks, expands IP selectors, and generates execution keys
+// for the port scanner.
 //
 // # Function Flow
 //
@@ -26,18 +26,19 @@
 //	key, _ := task.BuildExecutionKey("192.168.1.1", 80, "tcp")
 package task
 
-// Chunk represents a resumable scan unit scoped to one CIDR and its port list.
-// It is serialized to JSON for resume state persistence.
+// Chunk represents a resumable scan unit for one CIDR and its port list. The
+// scanner serializes a Chunk to JSON to persist the resume state.
 type Chunk struct {
-	// CIDR is the boundary network (e.g., "10.0.0.0/8").
+	// CIDR is the boundary network, for example "10.0.0.0/8".
 	CIDR string `json:"cidr"`
 	// CIDRName is a human-readable name for this CIDR.
 	CIDRName string `json:"cidr_name"`
 	// Ports is the list of port specs in `<port>/tcp` format.
 	Ports []string `json:"ports"`
-	// NextIndex is the next task index to dispatch (used for resume).
+	// NextIndex is the index of the next task to dispatch. The resume logic uses
+	// it.
 	NextIndex int `json:"next_index"`
-	// ScannedCount is the number of tasks that have produced a result.
+	// ScannedCount is the number of tasks that produced a result.
 	ScannedCount int `json:"scanned_count"`
 	// TotalCount is the total number of scan tasks for this chunk (targets × ports).
 	TotalCount int `json:"total_count"`
@@ -45,7 +46,7 @@ type Chunk struct {
 	Status string `json:"status"`
 }
 
-// Task represents a single scan task targeting one IP and port combination.
+// Task represents a single scan task for one combination of an IP and a port.
 type Task struct {
 	ChunkCIDR string
 	IP        string
