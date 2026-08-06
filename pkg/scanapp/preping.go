@@ -12,16 +12,17 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
-// RunPreping executes the standalone pre-scan ping phase: it loads the target
-// inputs, pings every unique target IP concurrently (cfg.Workers,
-// cfg.PreScanPingTimeout), reports percentage progress over the unique-IP count
-// to stderr, writes the fixed-schema unreachable_results-<ts>.csv into the
-// -output directory, and prints the resolved output path to stdout so the file
-// can be chained into generate-buckets.
+// RunPreping runs the standalone pre-scan ping phase. It loads the target
+// inputs. It pings every unique target IP concurrently (cfg.Workers,
+// cfg.PreScanPingTimeout). It reports percentage progress over the unique-IP
+// count to stderr. It writes the fixed-schema unreachable_results-<ts>.csv into
+// the -output directory. It then prints the resolved output path to stdout, so
+// a caller can chain the file into generate-buckets.
 //
-// It performs no chunk building, snapshotting, or scanning. The signature
-// mirrors Run so CLI wiring can dispatch either entry point identically; tests
-// inject a ReachabilityChecker via opts.ReachabilityChecker.
+// RunPreping builds no chunk, writes no snapshot, and scans no port. Its
+// signature is the same as the signature of Run, so the CLI wiring can dispatch
+// either entry point in the same way. A test injects a ReachabilityChecker
+// through opts.ReachabilityChecker.
 func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
 	deps := defaultRunDependencies()
 	if strings.TrimSpace(cfg.CIDRIPCol) == "" {

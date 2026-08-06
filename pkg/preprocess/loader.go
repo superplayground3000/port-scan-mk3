@@ -10,9 +10,9 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/preprocesscfg"
 )
 
-// LoadCleanedCIDRs reads a cleaned CIDRs CSV, filters to rows matching fabName
-// with status "close", and returns an IntervalTree of the closed CIDRs.
-// Parse warnings are written to warn.
+// LoadCleanedCIDRs reads a cleaned CIDRs CSV file. It keeps only the rows that
+// match fabName and have the status "close". It returns an IntervalTree of these
+// closed CIDRs, and it writes each parse warning to warn.
 func LoadCleanedCIDRs(r io.Reader, fabName string, warn io.Writer) (*cidrutil.IntervalTree, error) {
 	if warn == nil {
 		warn = io.Discard

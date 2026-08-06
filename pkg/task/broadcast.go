@@ -7,15 +7,19 @@ import (
 )
 
 // FilterBoundaryBroadcast removes the broadcast address of the given boundary
-// subnet from ips, preserving order and all other addresses (including the
-// network address). The broadcast is a property of the network segment, so it
-// is defined by the boundary CIDR rather than by any selector sub-range: an
-// address is dropped only when it equals the boundary's broadcast, whether it
-// arrived via CIDR expansion or as an explicitly listed single IP.
+// subnet from ips. It keeps the order and every other address, including the
+// network address.
 //
-// Subnets with prefix /31 (RFC 3021 point-to-point) and /32 (single host) have
-// no broadcast address, so ips is returned unchanged. A nil boundary is treated
-// as "no subnet context" and ips is returned unchanged.
+// The broadcast address is a property of the network segment. The boundary CIDR
+// therefore defines it, and no selector sub-range defines it.
+// FilterBoundaryBroadcast removes an address only when that address equals the
+// broadcast of the boundary. The rule is the same for an address from a CIDR
+// expansion and for an address that the input lists as a single IP.
+//
+// A subnet with prefix /31 (RFC 3021 point-to-point) or /32 (single host) has no
+// broadcast address, so FilterBoundaryBroadcast returns ips unchanged. A nil
+// boundary means "no subnet context", so FilterBoundaryBroadcast also returns
+// ips unchanged.
 //
 // # Example
 //

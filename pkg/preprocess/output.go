@@ -12,7 +12,7 @@ import (
 )
 
 // OutputPath returns the canonical output file path for a given base directory,
-// fab name, and timestamp. The path follows the layout:
+// fab name, and timestamp. The path has this layout:
 //
 //	<baseDir>/<fabName>/<YYYYMMDDTHHMMSSz>/input.csv
 func OutputPath(baseDir, fabName string, ts time.Time) string {
@@ -33,8 +33,8 @@ func CreateOutputWriter(path string) (*csv.Writer, *os.File, error) {
 	return csv.NewWriter(f), f, nil
 }
 
-// WriteRichCSV writes a header and rows to a CSV writer using the canonical
-// rich column order.
+// WriteRichCSV writes a header and rows to a CSV writer in the canonical rich
+// column order.
 func WriteRichCSV(w *csv.Writer, rows [][]string) error {
 	if err := w.Write(preprocesscfg.RichHeader()); err != nil {
 		return fmt.Errorf("writing header: %w", err)

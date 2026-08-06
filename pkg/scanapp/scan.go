@@ -29,7 +29,7 @@ var errScanRequiresResume = errors.New("scan requires -resume <bucket file>; run
 // DialFunc abstracts TCP dialing for tests and runtime customization.
 type DialFunc func(context.Context, string, string) (net.Conn, error)
 
-// RunOptions customizes runtime behaviors that are not exposed as CLI flags.
+// RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
 	Dial                DialFunc
 	ResumeStatePath     string
@@ -58,8 +58,9 @@ type RunOptions struct {
 // RunOptions.batchOutputsOpener.
 type batchOutputsOpenFunc func(scanPath, openPath string, appendMode bool) (*batchOutputs, error)
 
-// Run executes a full scan flow: load inputs, dispatch scan tasks, write batch
-// outputs, and persist resume state on interruption/failure.
+// Run performs a full scan flow. It loads the inputs, dispatches the scan
+// tasks, and writes the batch outputs. If the run is interrupted or fails, Run
+// persists the resume state.
 func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
 	deps := defaultRunDependencies()
 	logger := newLoggerWithQuiet(cfg.LogLevel, cfg.Format == "json", stderr, cfg.Quiet)

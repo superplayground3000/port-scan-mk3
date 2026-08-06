@@ -19,23 +19,23 @@ var (
 	keyboardInput                      io.Reader = os.Stdin
 )
 
-// StartKeyboardLoop enables raw-mode keyboard handling on a terminal. When
-// running in a terminal, pressing the space bar toggles manual pause/resume
-// via the Controller. In non-terminal environments (piped stdin, CI), it
-// returns nil immediately without starting any goroutines.
+// StartKeyboardLoop enables raw-mode keyboard handling on a terminal. In a
+// terminal, the space bar toggles the manual pause and resume through the
+// Controller. In a non-terminal environment (piped stdin, CI), StartKeyboardLoop
+// returns nil immediately and starts no goroutines.
 //
-// The terminal is restored to its previous state when ctx is canceled or
-// StartKeyboardLoop returns.
+// StartKeyboardLoop restores the terminal to its previous state when ctx is
+// canceled or when StartKeyboardLoop returns.
 //
 // # Parameters
 //
 //	ctx: Context whose cancellation restores the terminal.
-//	c:   Controller whose manual pause state is toggled by the space bar.
+//	c:   Controller whose manual pause state the space bar toggles.
 //
 // # Returns
 //
-//	nil in terminal environments; nil immediately in non-terminal environments;
-//	error if terminal setup (MakeRaw) fails.
+//	nil in a terminal environment. nil immediately in a non-terminal
+//	environment. An error if the terminal setup (MakeRaw) fails.
 //
 // # Example
 //

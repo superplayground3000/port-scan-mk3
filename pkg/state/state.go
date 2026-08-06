@@ -1,8 +1,10 @@
-// Package state manages chunk resume state persistence for the port scanner.
+// Package state manages the persistence of the chunk resume state for the port
+// scanner.
 //
-// Resume state captures the progress of each CIDR chunk (scanned count, next index,
-// status) so that an interrupted scan can be restarted from where it left off.
-// State is stored as JSON and read/written via Save and Load.
+// The resume state holds the progress of each CIDR chunk: the scanned count,
+// the next index, and the status. Therefore an interrupted scan can start again
+// from the point where it stopped. The package stores the state as JSON. Save
+// writes the state and Load reads it.
 //
 // # Function Flow
 //
@@ -40,16 +42,17 @@ type PreScanPingState struct {
 	UnreachableIPv4U32 []uint32 `json:"unreachable_ipv4_u32,omitempty"`
 }
 
-// OutputState records the scan/open result files a run wrote so that a
-// subsequent -resume appends to the same files instead of minting new
-// timestamped paths (design §3.7). Snapshots written before this field existed
-// decode with a nil Output; callers treat that as "no recorded path".
+// OutputState records the scan result file and the open result file that a run
+// wrote. A later -resume then appends to the same files and does not create new
+// timestamped paths (design §3.7). A snapshot written before this field existed
+// decodes with a nil Output. A caller treats a nil Output as "no recorded
+// path".
 type OutputState struct {
 	ScanPath string `json:"scan_path"`
 	OpenPath string `json:"open_path"`
 }
 
-// Snapshot is the current resume envelope persisted by the state package.
+// Snapshot is the current resume envelope that the state package persists.
 type Snapshot struct {
 	Chunks      []task.Chunk     `json:"chunks"`
 	PreScanPing PreScanPingState `json:"pre_scan_ping,omitempty"`
@@ -201,7 +204,8 @@ func destinationMode(path string, fallback os.FileMode) os.FileMode {
 	return info.Mode().Perm()
 }
 
-// LoadSnapshot reads resume state from either the current envelope or legacy chunk array JSON.
+// LoadSnapshot reads the resume state from the current envelope or from the
+// legacy JSON array of chunks.
 func LoadSnapshot(path string) (Snapshot, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -271,9 +275,9 @@ func decodeStrictJSON(data []byte, target any) error {
 	return nil
 }
 
-// Save serializes chunk resume state to a JSON file at the given path via the
-// current snapshot envelope. The file is written with indentation for
-// readability.
+// Save serializes the chunk resume state to a JSON file at path. Save uses the
+// current snapshot envelope. Save writes the file with indentation, so a person
+// can read it.
 //
 // # Parameters
 //
@@ -282,21 +286,23 @@ func decodeStrictJSON(data []byte, target any) error {
 //
 // # Returns
 //
-//	nil on success; error if marshaling or file writing fails.
+//	nil on success. An error if the marshal step or the file write fails.
 func Save(path string, chunks []task.Chunk) error {
 	return SaveSnapshot(path, Snapshot{Chunks: chunks})
 }
 
-// Load reads and deserializes a resume-state JSON file into a slice of task.Chunk.
-// It accepts both the current snapshot envelope and the legacy chunk-array format.
+// Load reads a resume-state JSON file and deserializes it into a slice of
+// task.Chunk. Load accepts the current snapshot envelope and the legacy
+// chunk-array format.
 //
 // # Parameters
 //
-//	path: Source file path (written by Save).
+//	path: Source file path that Save wrote.
 //
 // # Returns
 //
-//	[]task.Chunk on success; error if the file cannot be read or the JSON is malformed.
+//	[]task.Chunk on success. An error if Load cannot read the file or the JSON
+//	is malformed.
 func Load(path string) ([]task.Chunk, error) {
 	snap, err := LoadSnapshot(path)
 	if err != nil {

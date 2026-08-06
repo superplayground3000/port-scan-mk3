@@ -46,25 +46,28 @@ func interruptSignals() []os.Signal {
 	return []os.Signal{os.Interrupt}
 }
 
-// WithSIGINTCancel returns a context that is canceled when the process receives
-// an OS interrupt: Ctrl+C on every platform, and equally Ctrl+Break on Windows,
-// which the Go runtime delivers as the same os.Interrupt signal. Both give the
-// same graceful shutdown -- resume snapshot written, output handles released,
-// exit code 130 -- so an operator who breaks out of a long scan never loses
-// progress regardless of which key combination they used. This is used to
-// gracefully shut down the scan pipeline on user request.
+// WithSIGINTCancel returns a context that cancels when the process receives an
+// OS interrupt. The interrupt is Ctrl+C on every platform, and equally
+// Ctrl+Break on Windows. The Go runtime delivers Ctrl+Break as the same
+// os.Interrupt signal.
 //
-// Events that do NOT cancel this context, and why, are listed in
-// docs/interrupt-handling.md.
+// Both key combinations give the same graceful shutdown: the run writes the
+// resume snapshot, releases the output handles, and exits with code 130. An
+// operator who stops a long scan therefore never loses progress, whichever key
+// combination they used. The scan pipeline uses this context for a graceful
+// shutdown on user request.
+//
+// The file docs/interrupt-handling.md lists the events that do NOT cancel this
+// context, and the reason for each one.
 //
 // # Parameters
 //
-//	parent: The parent context, used for cancellation propagation.
+//	parent: The parent context for cancellation propagation.
 //
 // # Returns
 //
 //	A new context that inherits from parent and cancels on any signal in
-//	interruptSignals; the associated cancel function.
+//	interruptSignals. The associated cancel function.
 //
 // # Example
 //

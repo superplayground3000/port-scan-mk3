@@ -1,23 +1,24 @@
 // Package buildinfo renders the build-metadata report that every port-scan-mk3
 // command prints for `<command> version`, `--version` or `-version`.
 //
-// The raw values are stamped into each binary at link time by the Makefile
+// The Makefile stamps the raw values into each binary at link time
 // (`-X main.version`, `-X main.buildTime`, `-X main.commit`). The linker can
-// only write to a variable in the binary's own `main` package, so the stamped
-// variables live there; everything that can be got wrong — fallbacks for an
-// unstamped build, the dirty-tree warning, the exact output layout — lives
-// here, in one place, under unit test (constitution I, library-first).
+// write only to a variable in the binary's own `main` package, so the stamped
+// variables live there. Everything that can go wrong lives here instead, in one
+// place and under unit test (constitution I, library-first). This package owns
+// the fallbacks for an unstamped build, the dirty-tree warning, and the exact
+// output layout.
 //
 // Policy encoded by this package:
 //
-//   - Version is `git describe --always --dirty`, so it is the nearest tag plus
-//     the distance and abbreviated commit, or the bare commit when no tag is
-//     reachable. A "-dirty" suffix means the working tree had uncommitted
-//     changes; such a build is not reproducible from a commit and must not be
-//     published, so String reports it explicitly.
-//   - Commit is the full `git rev-parse HEAD` of the build, stamped separately
-//     because a build made exactly on a tag describes as just "v2.2.0" and
-//     would otherwise carry no commit at all.
+//   - Version is `git describe --always --dirty`. It is the nearest tag plus the
+//     distance and the abbreviated commit, or the bare commit when no tag is
+//     reachable. A "-dirty" suffix means that the working tree had uncommitted
+//     changes. Such a build is not reproducible from a commit and must not be
+//     published, so String reports the suffix explicitly.
+//   - Commit is the full `git rev-parse HEAD` of the build. The Makefile stamps
+//     it separately because `git describe` on a tag-exact build gives only
+//     "v2.2.0", which holds no commit.
 //   - BuildTime is the COMMIT timestamp normalized to UTC, not the wall clock,
 //     so two builds of the same commit are byte-identical (issue #65/#73).
 //   - A binary built without ldflags (plain `go build`, or `go test`) reports
@@ -30,10 +31,10 @@ import (
 	"strings"
 )
 
-// Placeholders used when a value was not stamped at link time.
+// Placeholders for a value that the linker did not stamp at link time.
 const (
-	// UnstampedVersion is the version reported by a binary built without
-	// `-X main.version`.
+	// UnstampedVersion is the version that a binary reports when the build
+	// has no `-X main.version`.
 	UnstampedVersion = "dev"
 	// UnstampedValue is the placeholder for any other missing stamp.
 	UnstampedValue = "unknown"
@@ -52,10 +53,10 @@ type Info struct {
 	Platform  string // GOOS/GOARCH the binary was built for
 }
 
-// Resolve turns the raw link-time stamps into a reportable Info, substituting
-// the documented placeholders for values the linker never wrote. GoVersion and
-// Platform are taken from the running binary, so they describe the artifact
-// itself and cannot drift from it.
+// Resolve turns the raw link-time stamps into a reportable Info. It substitutes
+// the documented placeholders for the values that the linker never wrote.
+// Resolve reads GoVersion and Platform from the running binary, so these two
+// fields describe the artifact itself and cannot drift from it.
 func Resolve(name, version, buildTime, commit string) Info {
 	return Info{
 		Name:      orDefault(name, UnstampedValue),
@@ -67,15 +68,16 @@ func Resolve(name, version, buildTime, commit string) Info {
 	}
 }
 
-// IsDirty reports whether the binary was built from a modified working tree,
-// i.e. whether `git describe --dirty` appended its suffix.
+// IsDirty reports whether the binary comes from a modified working tree, that
+// is, whether `git describe --dirty` appended its suffix.
 func (i Info) IsDirty() bool {
 	return strings.HasSuffix(i.Version, dirtySuffix)
 }
 
-// String renders the version report, newline-terminated and ready to write to
-// stdout. The first line is `<name> version <version>`; the remaining lines are
-// `<label>:` fields. A dirty build gets an extra warning line.
+// String renders the version report. The report is newline-terminated and ready
+// to write to stdout. The first line is `<name> version <version>`. The
+// remaining lines are `<label>:` fields. For a dirty build, String adds one more
+// line with a warning.
 func (i Info) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s version %s\n", i.Name, i.Version)
@@ -89,10 +91,11 @@ func (i Info) String() string {
 	return b.String()
 }
 
-// IsVersionRequest reports whether args asks for the version report. The token
-// is honoured only in FIRST position — deliberately, so that it is one shared
-// rule across five commands whose flag parsing differs, and so it can never
-// shadow a future flag of the same name in a later position.
+// IsVersionRequest reports whether args asks for the version report. It accepts
+// the token only in FIRST position. This limit is deliberate. It gives one
+// shared rule across five commands with different flag parsing. It also makes
+// sure that the token can never shadow a future flag of the same name in a
+// later position.
 //
 // Accepted spellings: "version", "-version", "--version".
 func IsVersionRequest(args []string) bool {

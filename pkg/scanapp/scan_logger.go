@@ -9,8 +9,9 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/logx"
 )
 
-// Log event constants for structured logging. These ensure consistent event names
-// across the scanning pipeline and provide a single source of truth for log consumers.
+// Log event constants for structured logging. They keep the event names
+// consistent across the scanning pipeline. They are also the single source of
+// truth for log consumers.
 const (
 	// Scan result states
 	LogEventScanned    = "scanned"

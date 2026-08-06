@@ -6,9 +6,9 @@ import (
 )
 
 // RecordWriterAdapter wraps a writer.CSVWriter to implement scanapp.RecordWriter.
-// It lives in the CLI layer per SOLID: it bridges the domain's RecordWriter
-// interface to the concrete writer implementation without polluting domain code
-// with transport details.
+// It lives in the CLI layer because of SOLID. It bridges the domain RecordWriter
+// interface to the concrete writer implementation, and it keeps transport
+// details out of the domain code.
 type RecordWriterAdapter struct {
 	w *writer.CSVWriter
 }
@@ -33,8 +33,9 @@ func (a *RecordWriterAdapter) WriteHeader() error {
 var _ scanapp.RecordWriter = (*RecordWriterAdapter)(nil)
 
 // OpenOnlyRecordWriterAdapter wraps a writer.OpenOnlyWriter to implement
-// scanapp.RecordWriter. The OpenOnlyWriter filters records to include only those
-// with Status equal to "open", enabling separate all-results and open-only outputs.
+// scanapp.RecordWriter. The OpenOnlyWriter keeps only the records with Status
+// equal to "open". With this adapter, a scan can write separate all-results and
+// open-only outputs.
 type OpenOnlyRecordWriterAdapter struct {
 	w *writer.OpenOnlyWriter
 }

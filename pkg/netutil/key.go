@@ -1,6 +1,6 @@
-// Package netutil provides IPv4 networking utilities used across the port scanner.
-// It handles IP range computation, execution key generation, and IPv4-to-uint32
-// conversion for internal data structures.
+// Package netutil provides IPv4 networking utilities for the port scanner.
+// It computes IP ranges, builds execution keys, and converts IPv4 addresses to
+// uint32 values for internal data structures.
 //
 // # Example
 //
@@ -15,19 +15,19 @@ import (
 )
 
 // BuildExecutionKey creates a standardized execution key in the format
-// `dst_ip:port/protocol`. The key is used for deduplication at the execution
-// layer and must be unique per scan target.
+// `dst_ip:port/protocol`. The execution layer uses this key to remove duplicate
+// targets, so the key must be unique for each scan target.
 //
 // # Parameters
 //
 //	dstIP:    Destination IPv4 address string.
 //	port:     TCP port number (1–65535).
-//	protocol: Protocol string (only "tcp" is accepted).
+//	protocol: Protocol string. BuildExecutionKey accepts only "tcp".
 //
 // # Returns
 //
-//	A canonical key string on success; an error if dstIP is not an IPv4 address,
-//	port is out of range, or protocol is not "tcp".
+//	A canonical key string on success. An error when dstIP is not an IPv4
+//	address, when port is out of range, or when protocol is not "tcp".
 //
 // # Example
 //

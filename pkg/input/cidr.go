@@ -1,10 +1,12 @@
 // Package input parses and validates CSV inputs for the port scanner.
 //
-// It supports two input modes:
+// The package supports two input modes:
 //
-//   - Basic CIDR mode: CSV with ip and ip_cidr columns, loaded via LoadCIDRs or LoadCIDRsWithColumns.
-//   - Rich mode: CSV with structured firewall-policy columns (src_ip, dst_ip, port, decision, etc.),
-//     detected by header inspection and parsed via ParseRichRows.
+//   - Basic CIDR mode: a CSV with ip and ip_cidr columns. LoadCIDRs and
+//     LoadCIDRsWithColumns read this mode.
+//   - Rich mode: a CSV with structured firewall-policy columns, for example
+//     src_ip, dst_ip, port, and decision. The package reads the header to detect
+//     this mode, and ParseRichRows parses it.
 //
 // # Function Flow
 //
@@ -46,12 +48,12 @@ import (
 	"strings"
 )
 
-// LoadCIDRs loads CIDR records from a CSV reader using the default required
+// LoadCIDRs loads CIDR records from a CSV reader. It uses the default required
 // column names "ip" and "ip_cidr".
 //
-// It auto-detects rich-mode input by inspecting the header. When rich mode
-// is detected, records are parsed using the full firewall-policy schema.
-// Otherwise, records are parsed as basic CIDR rows.
+// LoadCIDRs reads the header to detect rich-mode input. For a rich-mode header,
+// it parses the records with the full firewall-policy schema. For any other
+// header, it parses the records as basic CIDR rows.
 //
 // # Parameters
 //
@@ -59,7 +61,8 @@ import (
 //
 // # Returns
 //
-//	Slice of CIDRRecord on success; error on parse or validation failure.
+//	A slice of CIDRRecord on success. An error when the parse or the validation
+//	fails.
 //
 // # Example
 //
@@ -70,22 +73,25 @@ func LoadCIDRs(r io.Reader) ([]CIDRRecord, error) {
 	return LoadCIDRsWithColumns(r, "ip", "ip_cidr")
 }
 
-// LoadCIDRsWithColumns loads CIDR records from a CSV reader with caller-specified
-// column names for the IP selector and its boundary CIDR.
+// LoadCIDRsWithColumns loads CIDR records from a CSV reader. The caller gives the
+// column names for the IP selector and for its boundary CIDR.
 //
-// It auto-detects rich-mode input by header inspection. When rich mode is detected,
-// records are parsed using the full firewall-policy schema and the ipCol/ipCidrCol
-// parameters are ignored.
+// LoadCIDRsWithColumns reads the header to detect rich-mode input. For a
+// rich-mode header, it parses the records with the full firewall-policy schema,
+// and it ignores the ipCol and ipCidrCol parameters.
 //
 // # Parameters
 //
 //	r:        io.Reader positioned at CSV data.
-//	ipCol:    Case-sensitive name of the column containing the IP selector (e.g., "ip").
-//	ipCidrCol: Case-sensitive name of the column containing the boundary CIDR (e.g., "ip_cidr").
+//	ipCol:    Case-sensitive name of the column that holds the IP selector, for
+//	          example "ip".
+//	ipCidrCol: Case-sensitive name of the column that holds the boundary CIDR, for
+//	          example "ip_cidr".
 //
 // # Returns
 //
-//	Slice of CIDRRecord on success; error on parse or validation failure.
+//	A slice of CIDRRecord on success. An error when the parse or the validation
+//	fails.
 //
 // # Example
 //
@@ -171,11 +177,12 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 	return out, nil
 }
 
-// Parse validates and normalizes a CIDRRecord by parsing the IPRaw selector and
-// IPCidrRaw boundary into net.IPNet forms.
+// Parse validates and normalizes a CIDRRecord. It parses the IPRaw selector and
+// the IPCidrRaw boundary into net.IPNet forms.
 //
-// It accepts both individual IPv4 addresses (stored as /32 CIDRs) and CIDR ranges.
-// Only IPv4 is supported; IPv6 inputs return an error.
+// Parse accepts an individual IPv4 address and a CIDR range. It stores an
+// individual address as a /32 CIDR. Parse supports IPv4 only, and it returns an
+// error for an IPv6 input.
 //
 // # Parameters
 //
@@ -183,8 +190,8 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 //
 // # Returns
 //
-//	nil on success; descriptive error if IPRaw or IPCidrRaw is empty, malformed,
-//	or not an IPv4 address.
+//	nil on success. A descriptive error if IPRaw or IPCidrRaw is empty, is
+//	malformed, or is not an IPv4 address.
 //
 // # Example
 //

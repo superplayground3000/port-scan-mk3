@@ -1,7 +1,7 @@
-// Package spreadsheet provides a common interface for reading spreadsheet data.
-// Currently it supports CSV files; the sheetName parameter on OpenSheet allows
-// future extension to Excel (.xlsx) or Google Sheets backends without changing
-// call sites.
+// Package spreadsheet provides a common interface to read spreadsheet data.
+// It supports CSV files today. The sheetName parameter of OpenSheet makes a
+// future extension possible. A future backend for Excel (.xlsx) or Google Sheets
+// needs no change at the call sites.
 //
 // # Example
 //
@@ -17,11 +17,13 @@ import (
 	"strings"
 )
 
-// ErrNotCSV is returned by OpenSheet when the file extension is not .csv.
+// ErrNotCSV is the error that OpenSheet returns when the file extension is
+// not .csv.
 var ErrNotCSV = errors.New("file is not a valid csv file")
 
-// Reader opens a spreadsheet file and returns rows. For CSV files, the sheetName
-// parameter is ignored; for future backends (e.g., Excel), it selects a sheet.
+// Reader opens a spreadsheet file and returns rows. For a CSV file, OpenSheet
+// ignores the sheetName parameter. For a future backend, for example Excel, the
+// parameter selects a sheet.
 type Reader struct {
 	path string
 }
@@ -35,13 +37,14 @@ func NewReader(path string) *Reader {
 //
 // # Parameters
 //
-//	sheetName: Target sheet name. For CSV files this parameter is ignored
-//	           and the entire file is returned.
+//	sheetName: Target sheet name. For a CSV file, OpenSheet ignores this
+//	           parameter and returns the whole file.
 //
 // # Returns
 //
 //	[][]string where each slice is one row (header at index 0).
-//	Error if the file cannot be opened, is not a CSV, or has parse errors.
+//	An error when OpenSheet cannot open the file, when the file is not a CSV,
+//	or when the file has parse errors.
 //
 // # Example
 //

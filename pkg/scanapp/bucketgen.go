@@ -20,33 +20,38 @@ import (
 
 // GenerateBucketsOptions customizes bucket generation. All fields are optional.
 type GenerateBucketsOptions struct {
-	// Reporter receives one tick per completed CIDR group and a final Done()
-	// summary. When nil, a stderr reporter over the group count is used.
+	// Reporter receives one tick for each completed CIDR group, and a final
+	// Done() summary. If Reporter is nil, GenerateBuckets uses a stderr
+	// reporter over the group count.
 	Reporter progress.Reporter
 }
 
 // GenerateBuckets builds a resume Snapshot for the "generate-buckets" step.
 //
-// It reads targets from cfg.CIDRFile (and ports from cfg.PortFile in basic
-// mode), subtracts the optional blocklist at cfg.UnreachableFile, builds one
-// task.Chunk per CIDR group over the reachable target set (targets − blocklist),
-// stamps pre_scan_ping.enabled=true, and writes the snapshot JSON to
-// cfg.BucketsOut via state.SaveSnapshot.
+// GenerateBuckets reads targets from cfg.CIDRFile. In basic mode it also reads
+// ports from cfg.PortFile. It subtracts the optional blocklist at
+// cfg.UnreachableFile. It
+// builds one task.Chunk for each CIDR group over the reachable target set
+// (targets − blocklist). It stamps pre_scan_ping.enabled=true. It then writes
+// the snapshot JSON to cfg.BucketsOut with state.SaveSnapshot.
 //
-// The per-group → chunk conversion fans out across cfg.Workers goroutines, each
-// writing into its own pre-indexed result slot (race-free). Chunks are then
-// sorted by CIDR before serialization, so the output is byte-identical
-// regardless of worker count. CSV parsing is sequential (not parallelized).
+// The conversion from group to chunk fans out across cfg.Workers goroutines.
+// Each goroutine writes into its own pre-indexed result slot, so the writes are
+// race-free. GenerateBuckets then sorts the chunks by CIDR before
+// serialization, so the output is byte-identical for every worker count. CSV
+// parsing is sequential and not parallel.
 //
-// The chunk TotalCount is computed through the same builders scan uses
+// The chunk TotalCount comes from the same builders that scan uses
 // (buildRichGroupsWithPredicate / buildCIDRGroupsWithPredicate plus
-// richChunkFromGroup / basicChunkFromGroup), so the resulting snapshot is
-// accepted unchanged by scan's buildRuntimeWithPredicate total_count assertion.
+// richChunkFromGroup / basicChunkFromGroup). The total_count assertion in the
+// buildRuntimeWithPredicate function of scan therefore accepts the snapshot
+// unchanged.
 //
 // # Returns
 //
-//	nil on success; error if inputs cannot be loaded, the blocklist is malformed,
-//	grouping fails, ctx is cancelled, or the snapshot cannot be written.
+//	nil on success. GenerateBuckets returns an error if it cannot load the
+//	inputs, or if the blocklist is malformed. It also returns an error if
+//	grouping fails, if ctx is canceled, or if it cannot write the snapshot.
 func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, opts GenerateBucketsOptions) error {
 	if strings.TrimSpace(cfg.BucketsOut) == "" {
 		return fmt.Errorf("generate-buckets requires -buckets-out")

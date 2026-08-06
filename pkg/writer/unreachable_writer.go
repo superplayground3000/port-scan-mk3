@@ -5,7 +5,7 @@ import (
 	"io"
 )
 
-// UnreachableRecord is one pre-scan unreachable output row written to CSV.
+// UnreachableRecord is one row in the pre-scan unreachable CSV output.
 type UnreachableRecord struct {
 	IP                string
 	IPCidr            string
@@ -52,7 +52,8 @@ func NewUnreachableWriter(out io.Writer) *UnreachableWriter {
 	return &UnreachableWriter{w: csv.NewWriter(out)}
 }
 
-// Write appends a single unreachable record and writes header first if needed.
+// Write appends one unreachable record. If the header is not yet written, Write
+// writes the header first.
 func (uw *UnreachableWriter) Write(r UnreachableRecord) error {
 	if err := uw.WriteHeader(); err != nil {
 		return err

@@ -11,9 +11,9 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/preprocesscfg"
 )
 
-// LoadServiceMap reads a CSV with port and service_label columns and returns
-// a map from port number to service label. Rows with invalid port numbers are
-// skipped with a warning written to warn.
+// LoadServiceMap reads a CSV file with port and service_label columns. It
+// returns a map from port number to service label. If a row has an invalid port
+// number, LoadServiceMap skips the row and writes a warning to warn.
 func LoadServiceMap(r io.Reader, warn io.Writer) (map[int]string, error) {
 	if warn == nil {
 		warn = io.Discard
@@ -59,10 +59,10 @@ func LoadServiceMap(r io.Reader, warn io.Writer) (map[int]string, error) {
 	return m, nil
 }
 
-// LoadCIDRList reads a CSV listing CIDRs and returns them as an IntervalTree.
-// The first column is used as the CIDR value. If the first row is not a valid
-// CIDR it is treated as a header and skipped. Malformed CIDRs are skipped with
-// a warning written to warn.
+// LoadCIDRList reads a CSV file of CIDRs and returns them as an IntervalTree.
+// LoadCIDRList reads the CIDR value from the first column. If the first row is
+// not a valid CIDR, LoadCIDRList treats the row as a header and skips it. If a
+// CIDR is malformed, LoadCIDRList skips it and writes a warning to warn.
 func LoadCIDRList(r io.Reader, warn io.Writer) (*cidrutil.IntervalTree, error) {
 	if warn == nil {
 		warn = io.Discard

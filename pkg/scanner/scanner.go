@@ -1,4 +1,4 @@
-// Package scanner provides TCP port scanning functionality for network diagnostics.
+// Package scanner provides TCP port scanning for network diagnostics.
 //
 // # Function Overview
 //
@@ -39,12 +39,12 @@ import (
 	"time"
 )
 
-// Result holds the outcome of a TCP port scan operation.
+// Result holds the outcome of one TCP port scan operation.
 //
-// Outcome is the machine-readable classification; Status is the string written
-// to the scan CSV and is derived from Outcome. Callers that need to reason
-// about *why* a target was not reported open must switch on Outcome rather than
-// parse Status.
+// Outcome is the machine-readable classification. Status is the string that the
+// scan writes to the scan CSV, and it comes from Outcome. A caller that must
+// know *why* a target was not reported open must switch on Outcome. Such a
+// caller must not parse Status.
 type Result struct {
 	IP             string
 	Port           int
@@ -54,19 +54,22 @@ type Result struct {
 	Error          string
 }
 
-// ScanTCP attempts to establish a TCP connection to the specified IP and port.
+// ScanTCP tries to establish a TCP connection to the given IP and port.
 //
-// It uses a dial function to perform the connection, allowing callers to provide
-// custom dialers (e.g., with specific local addresses or network interfaces).
-// A timeout is applied via context to prevent indefinite waiting.
+// ScanTCP uses a dial function to make the connection. A caller can therefore
+// supply a custom dialer, for example one with a specific local address or
+// network interface. A context applies the timeout and prevents an unlimited
+// wait.
 //
 // # Parameters
 //
-//   - dial: A function that performs the actual TCP connection (e.g., net.Dialer.DialContext).
-//     The function must accept a context, network type ("tcp"), and target address.
+//   - dial: A function that makes the TCP connection (for example, net.Dialer.DialContext).
+//     The function must accept a context, a network type ("tcp"), and a target address.
 //   - ip: The target IP address (IPv4 or IPv6) to scan.
-//   - port: The TCP port number to attempt connection on (1-65535).
-//   - timeout: The maximum duration to wait for a connection. If zero, no timeout is applied.
+//   - port: The TCP port number to connect to (1-65535).
+//   - timeout: The maximum time to wait for a connection. ScanTCP always applies
+//     it with context.WithTimeout, so a zero timeout expires immediately and the
+//     dial fails at once.
 //
 // # Returns
 //
@@ -80,32 +83,34 @@ type Result struct {
 //
 // # Status Values
 //
-//   - "open" (OutcomeOpen): Connection established successfully within the timeout.
-//   - "close(timeout)" (OutcomeTimeout): Connection attempt timed out or context
-//     deadline exceeded.
+//   - "open" (OutcomeOpen): the connection was established within the timeout.
+//   - "close(timeout)" (OutcomeTimeout): the connection attempt timed out, or the
+//     context deadline expired.
 //   - "close" (OutcomeRefused): the remote end actively refused or reset the
 //     connection. This is the ONLY status that asserts the port is closed.
 //   - "error(local)" (OutcomeLocalResource): the dial failed on the scanning host
-//     (address/buffer exhaustion, handle limits, permission denied — on Windows
+//     (address or buffer exhaustion, handle limits, permission denied — on Windows
 //     WSAEADDRNOTAVAIL, WSAENOBUFS, WSAEACCES). The target was never characterized.
 //   - "unknown" (OutcomeIndeterminate): any other transport error. Port state unknown.
 //
 // # Failure policy for "error(local)" and "unknown"
 //
-// Both are INDETERMINATE and NON-FATAL: ScanTCP returns a normal Result, the row
-// is written with its own status, and the scan continues. That choice keeps the
-// dispatch cursor honest — every dispatched target still produces exactly one
-// persisted row, which is the invariant resume durability depends on (see the
-// issue #51 entry in .claude/rules/50-lessons.md; a cursor that advances at
-// dispatch time is only trustworthy while "dispatched => persisted" holds).
+// Both outcomes are INDETERMINATE and NON-FATAL. ScanTCP returns a normal
+// Result, the scan writes the row with its own status, and the scan continues.
+// This choice keeps the dispatch cursor honest. Every dispatched target still
+// produces exactly one persisted row, and resume durability depends on that
+// invariant (see the issue #51 entry in .claude/rules/50-lessons.md: a cursor
+// that advances at dispatch time is only trustworthy while "dispatched =>
+// persisted" holds).
 //
-// The alternative — treating a local resource failure as fatal for the whole run
-// — was rejected: Winsock ephemeral-port/buffer exhaustion is transient and
-// load-dependent, so aborting would throw away a long scan (and, under the #51
-// rule, the resume snapshot with it) for a condition the operator can simply
-// re-scan. Retrying inside the dial path was also rejected as out of scope: it
-// would add unbounded latency to a hot path. Operators see the affected targets
-// as "error(local)" rows and can re-scan exactly those.
+// The alternative was to treat a local resource failure as fatal for the whole
+// run, and this project rejected it. Winsock ephemeral-port and buffer
+// exhaustion is transient and load-dependent. An abort therefore throws away a
+// long scan for a condition that the operator can scan again. Under the #51
+// rule, the abort also throws away the resume snapshot. A retry inside the dial
+// path is also out of scope, because it adds unbounded latency to a hot path. The
+// operator sees the affected targets as "error(local)" rows and can scan
+// exactly those targets again.
 //
 // # Example
 //

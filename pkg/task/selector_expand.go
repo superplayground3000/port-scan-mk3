@@ -10,26 +10,27 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
-// ExpandIPSelectors expands a list of IP selectors (individual IPs or CIDR ranges)
-// into a deduplicated, sorted slice of individual IPv4 address strings.
+// ExpandIPSelectors expands a list of IP selectors into a sorted slice of
+// individual IPv4 address strings. A selector is an individual IP or a CIDR
+// range. The slice contains no duplicates.
 //
-// Each selector may be a single IPv4 address (e.g., "192.168.1.1") or a CIDR
-// range (e.g., "10.0.0.0/8"). IPv6 inputs are rejected. The output is sorted
-// in ascending numeric order and contains no duplicates.
+// Each selector can be a single IPv4 address, for example "192.168.1.1", or a
+// CIDR range, for example "10.0.0.0/8". ExpandIPSelectors returns an error for an
+// IPv6 input. The output is in ascending numeric order.
 //
-// Expansion is inclusive of every address in the range. Broadcast-address
-// exclusion is applied separately against the boundary subnet by the caller
-// (see FilterBoundaryBroadcast), because the broadcast is a property of the
-// network segment, not of an arbitrary selector sub-range.
+// ExpandIPSelectors includes every address in the range. The caller removes the
+// broadcast address separately, against the boundary subnet, with
+// FilterBoundaryBroadcast. The broadcast address is a property of the network
+// segment, and not of an arbitrary selector sub-range.
 //
 // # Parameters
 //
-//	selectors: Slice of IP selector strings (IP or CIDR notation).
+//	selectors: Slice of IP selector strings, in IP or CIDR notation.
 //
 // # Returns
 //
-//	Sorted slice of individual IPv4 strings on success; error if any selector
-//	is invalid or IPv6.
+//	A sorted slice of individual IPv4 strings on success. An error if a selector
+//	is invalid or is IPv6.
 //
 // # Example
 //

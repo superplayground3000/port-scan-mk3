@@ -1,11 +1,13 @@
-// Package progress provides a small, dependency-free progress reporter that
-// emits periodic percentage lines to an io.Writer (stderr in production).
+// Package progress provides a small progress reporter with no dependencies.
+// The reporter writes periodic percentage lines to an io.Writer, which is
+// stderr in production.
 //
-// It is used by long-running pre-scan phases (preping, generate-buckets) to
-// give an operator visible feedback over otherwise-silent stretches. A line is
-// emitted every configurable number of progress units and a final 100% summary
-// line is always emitted by Done. All methods are safe for concurrent use, so a
-// single Reporter can be shared across worker goroutines that fan out work.
+// The long-running pre-scan phases (preping, generate-buckets) use this package
+// to give an operator visible feedback over otherwise silent periods. The
+// reporter writes one line each time progress advances by a configurable number
+// of units. Done always writes a final 100% summary line. All methods are safe
+// for concurrent use, so worker goroutines that fan out work can share one
+// Reporter.
 package progress
 
 import (
@@ -19,11 +21,11 @@ import (
 // pkg/scanapp/scan.go so callers see the same cadence they did before.
 const defaultInterval = 100
 
-// Reporter advances a counter toward a known total and emits progress lines.
+// Reporter advances a counter toward a known total and writes progress lines.
 //
-// Inc advances the counter by one; Add advances it by n; Done emits the final
-// "<label>: <total>/<total> (100.0%)" summary. Implementations must be safe for
-// concurrent Inc/Add calls.
+// Inc advances the counter by one. Add advances the counter by n. Done writes
+// the final "<label>: <total>/<total> (100.0%)" summary. An implementation must
+// be safe for concurrent Inc and Add calls.
 type Reporter interface {
 	Inc()      // advance by 1
 	Add(n int) // advance by n
@@ -44,10 +46,11 @@ type reporter struct {
 	w        io.Writer
 }
 
-// New returns a Reporter that writes progress lines for label toward total,
-// emitting a line each time progress advances by interval units. An interval
-// of zero or less is treated as defaultInterval. Writes go to w (stderr in
-// production). The returned Reporter is safe for concurrent use.
+// New returns a Reporter that writes progress lines for label toward total.
+// The Reporter writes one line each time progress advances by interval units.
+// If interval is zero or less, New uses defaultInterval. The Reporter writes to
+// w, which is stderr in production. The returned Reporter is safe for
+// concurrent use.
 func New(label string, total int, interval int, w io.Writer) Reporter {
 	if interval <= 0 {
 		interval = defaultInterval
@@ -60,12 +63,12 @@ func New(label string, total int, interval int, w io.Writer) Reporter {
 	}
 }
 
-// Inc advances progress by one unit and may emit an interval line.
+// Inc advances progress by one unit and can write an interval line.
 func (r *reporter) Inc() { r.Add(1) }
 
-// Add advances progress by n units and emits a single interval line if the
-// counter has advanced at least interval units since the last emitted line.
-// n <= 0 is a no-op.
+// Add advances progress by n units. If the counter advanced at least interval
+// units since the last line, Add writes one interval line. If n is zero or
+// less, Add does nothing.
 func (r *reporter) Add(n int) {
 	if n <= 0 {
 		return
@@ -79,8 +82,9 @@ func (r *reporter) Add(n int) {
 	}
 }
 
-// Done emits the final summary line at 100%, regardless of whether the last
-// increment aligned to the interval. It is safe to call once at completion.
+// Done writes the final summary line at 100%. Done writes this line even when
+// the last increment did not align to the interval. It is safe to call Done one
+// time at completion.
 func (r *reporter) Done() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
