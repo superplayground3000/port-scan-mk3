@@ -1,62 +1,62 @@
 # Speed Control Explanation
 
-本文件說明 `port-scan-mk3` 的兩層速度控制：
+This document explains the two layers of speed control in `port-scan-mk3`:
 
-- `Global speed control`：全域暫停/恢復 gate
-- `CIDR scan speed control`：每個 CIDR chunk 自己的 leaky bucket
+- `Global speed control`: a global pause/resume gate
+- `CIDR scan speed control`: one leaky bucket for each CIDR chunk
 
-對應圖檔：
+Related diagrams:
 
-- Mermaid 圖：本文件內文
-- draw.io 圖：[speed-control-sequence.drawio](./speed-control-sequence.drawio)
+- Mermaid diagram: in this document
+- draw.io diagram: [speed-control-sequence.drawio](./speed-control-sequence.drawio)
 
-## 1. 核心概念
+## 1. Core Concepts
 
-目前實作把「控制速度」拆成兩層：
+The current implementation divides speed control into two layers:
 
-1. 全域層只決定 `dispatcher` 現在可不可以繼續送出新任務。
-2. CIDR 層只決定某一個 CIDR chunk 送任務的節奏。
+1. The global layer decides only if the `dispatcher` can send new tasks now.
+2. The CIDR layer decides only the send rate of one CIDR chunk.
 
-這兩層都發生在 task dispatch 階段，不會主動中止已經送進 worker 或已經開始做 TCP dial 的任務。
+Both layers act in the task dispatch stage. They do not themselves stop a task that is already in a worker or already in a TCP dial.
 
 ## 2. Global Speed Control
 
-全域控制的核心在 `pkg/speedctrl/controller.go`。
+The core of global control is `pkg/speedctrl/controller.go`.
 
-- `Controller` 維護兩個 pause flag：
+- `Controller` keeps two pause flags:
   - `apiPaused`
   - `manualPaused`
-- 只要其中一個是 `true`，`Gate()` 就會阻塞。
-- 兩個都為 `false` 時，`Gate()` 才會放行。
+- If one flag is `true`, `Gate()` blocks.
+- `Gate()` lets tasks through only when both flags are `false`.
 
-### 2.1 誰會改變 global gate
+### 2.1 What changes the global gate
 
 #### Manual pause
 
-`pkg/speedctrl/keyboard.go` 會在 terminal raw mode 下讀鍵盤輸入。
+`pkg/speedctrl/keyboard.go` reads the keyboard in terminal raw mode.
 
-- 按空白鍵一次：`manualPaused = true`
-- 再按一次：`manualPaused = false`
+- Press the space key one time: `manualPaused = true`
+- Press it again: `manualPaused = false`
 
-`pkg/scanapp/pressure_monitor.go` 的 `startManualPauseMonitor` 只負責把狀態變化寫成 log。
+The `startManualPauseMonitor` function in `pkg/scanapp/pressure_monitor.go` only writes the state change to the log.
 
 #### API pause
 
-`pkg/scanapp/pressure_monitor.go` 會定期 call `-pressure-api`。
+`pkg/scanapp/pressure_monitor.go` calls `-pressure-api` at a regular interval.
 
-- `pressure >= threshold` 時：`apiPaused = true`
-- `pressure < threshold` 時：`apiPaused = false`
+- When `pressure >= threshold`: `apiPaused = true`
+- When `pressure < threshold`: `apiPaused = false`
 
-補充：
+More information:
 
-- CLI 可控制 polling 週期：`-pressure-interval`
-- CLI 可完全關閉這層：`-disable-api=true`
-- threshold 目前不是 CLI flag，runtime 預設值是 `90`
-- API 若連續失敗 3 次，掃描會 fail fast 結束
+- The CLI can control the polling interval: `-pressure-interval`
+- The CLI can disable this layer completely: `-disable-api=true`
+- The threshold is not a CLI flag now. The runtime default value is `60`
+- If the API fails 3 times in sequence, the scan fails fast and stops
 
-### 2.2 Global gate 實際擋的是什麼
+### 2.2 What the global gate actually blocks
 
-`pkg/scanapp/task_dispatcher.go` 在每次送 `scanTask` 前都會先等：
+Before each `scanTask`, `pkg/scanapp/task_dispatcher.go` waits:
 
 ```go
 select {
@@ -66,65 +66,65 @@ case <-ctrl.Gate():
 }
 ```
 
-因此 global control 的效果是：
+The effects of global control are therefore:
 
-- 會停止送出新的 `scanTask`
-- 不會取消已經在 worker 執行中的 task
-- 不會回收已經進入 `taskCh` 的 task
+- It stops the dispatch of new `scanTask` items
+- It does not cancel a task that a worker already runs
+- It does not take back a task that is already in `taskCh`
 
-所以它比較像「總閘門」，不是「每秒固定速率器」。
+The gate is thus more like a master valve than a fixed rate limiter for each second.
 
 ## 3. CIDR Scan Speed Control
 
-CIDR 速度控制的核心在：
+The core of CIDR speed control is in:
 
 - `pkg/scanapp/scan.go`
 - `pkg/ratelimit/leaky_bucket.go`
 
-### 3.1 每個 CIDR chunk 都有自己的 bucket
+### 3.1 Each CIDR chunk has its own bucket
 
-建立 runtime 時，每個 `chunkRuntime` 都會建立一個自己的 bucket：
+At runtime construction, each `chunkRuntime` builds its own bucket:
 
 ```go
 bkt: ratelimit.NewLeakyBucket(cfg.BucketRate, cfg.BucketCapacity)
 ```
 
-也就是說：
+This design means that:
 
-- `CIDR-A` 有自己的 bucket
-- `CIDR-B` 有自己的 bucket
+- `CIDR-A` has its own bucket
+- `CIDR-B` has its own bucket
 
-它們不是共用同一個 token pool。
+They do not share one token pool.
 
-### 3.2 bucket 怎麼運作
+### 3.2 How the bucket operates
 
-`LeakyBucket` 的規則如下：
+The rules of `LeakyBucket` are:
 
-- 啟動時先塞滿 `capacity` 個 token
-- 每隔 `1/rate` 秒補 1 個 token
-- `Acquire()` 成功拿到 token 才能送下一個 task
+- At start, the bucket holds `capacity` tokens
+- The bucket adds 1 token every `1/rate` seconds
+- `Acquire()` must get a token before the dispatcher sends the next task
 
-因此：
+Therefore:
 
-- `-bucket-capacity` 決定一開始能 burst 多大
-- `-bucket-rate` 決定 burst 用完後，穩態每秒補幾個 task 配額
+- `-bucket-capacity` sets the size of the initial burst
+- `-bucket-rate` sets the steady-state task quota for each second after the burst
 
-### 3.3 bucket 限制的是什麼單位
+### 3.3 What unit the bucket limits
 
-這裡限制的不是 IP 數，也不是 CIDR 數，而是：
+The bucket does not limit the number of IPs or the number of CIDRs. It limits this unit:
 
-- 一個 `target x port` = 一個 dispatch task
+- one `target x port` = one dispatch task
 
-例如：
+For example:
 
-- 3 個 IP
-- 2 個 port
+- 3 IPs
+- 2 ports
 
-總共就是 `3 x 2 = 6 tasks`。
+The total is `3 x 2 = 6 tasks`.
 
-bucket 限的是這 6 個 task 的送出節奏。
+The bucket limits the dispatch rate of these 6 tasks.
 
-## 4. 簡單時序圖
+## 4. Simple Sequence Diagram
 
 ```mermaid
 sequenceDiagram
@@ -135,139 +135,139 @@ sequenceDiagram
     participant BKT as CIDR Bucket
     participant W as Workers
 
-    CLI->>CTRL: 建立 controller
-    CLI->>API: 定期輪詢 pressure
+    CLI->>CTRL: build the controller
+    CLI->>API: poll pressure at an interval
     API-->>CTRL: SetAPIPaused(true/false)
-    CLI->>CTRL: 空白鍵切換 SetManualPaused(true/false)
+    CLI->>CTRL: space key toggles SetManualPaused(true/false)
 
-    loop 每個 target x port task
-        DISP->>CTRL: 等待 Gate()
+    loop each target x port task
+        DISP->>CTRL: wait for Gate()
         alt Global paused
-            CTRL-->>DISP: 阻塞，不放行
+            CTRL-->>DISP: blocked, no pass
         else Global resumed
-            CTRL-->>DISP: 放行
+            CTRL-->>DISP: pass
             DISP->>BKT: Acquire()
-            alt 尚有 token
-                BKT-->>DISP: 立即通過
-            else token 用完
-                BKT-->>DISP: 等待 refill
+            alt tokens available
+                BKT-->>DISP: pass immediately
+            else no tokens
+                BKT-->>DISP: wait for refill
             end
-            DISP->>W: 送出 scan task
-            W-->>CLI: 回報結果
+            DISP->>W: send the scan task
+            W-->>CLI: report the result
         end
     end
 ```
 
-## 5. 實際案例
+## 5. Examples
 
-### Case 1: 單一 CIDR，固定慢速
+### Case 1: one CIDR, constant low speed
 
-條件：
+Conditions:
 
-- 1 個 CIDR
-- 2 個 IP
-- 2 個 ports
-- 共 4 tasks
+- 1 CIDR
+- 2 IPs
+- 2 ports
+- 4 tasks in total
 - `-bucket-rate=2`
 - `-bucket-capacity=1`
 - `-delay=0`
 - `-workers=10`
 
-推導：
+Derivation:
 
-- 啟動時只有 1 個 token，所以第 1 個 task 立即送出
-- 之後每 `0.5s` 才補 1 個 token
-- 第 2、3、4 個 task 約在 `0.5s`、`1.0s`、`1.5s` 送出
+- At start there is 1 token only, so the dispatcher sends task 1 immediately
+- After that, the bucket adds 1 token every `0.5s`
+- The dispatcher sends tasks 2, 3, and 4 at approximately `0.5s`, `1.0s`, and `1.5s`
 
-結果：
+Result:
 
-- 這個 CIDR 的 dispatch 速度大致是 `2 tasks/sec`
-- 幾乎沒有 burst
+- The dispatch speed of this CIDR is approximately `2 tasks/sec`
+- There is almost no burst
 
-### Case 2: 單一 CIDR，先 burst 再回穩
+### Case 2: one CIDR, a burst and then a steady state
 
-條件：
+Conditions:
 
-- 1 個 CIDR
-- 共 20 tasks
+- 1 CIDR
+- 20 tasks in total
 - `-bucket-rate=10`
 - `-bucket-capacity=20`
 - `-delay=0`
 - `-workers=20`
 
-推導：
+Derivation:
 
-- bucket 啟動時先有 20 個 token
-- 20 個 task 幾乎都可以立刻 dispatch
+- At start the bucket holds 20 tokens
+- The dispatcher can send almost all 20 tasks immediately
 
-結果：
+Result:
 
-- 一開始可以快速衝出 20 個 task
-- burst 用完後，新的 dispatch 速度回到 `10 tasks/sec`
+- At the start, 20 tasks go out quickly
+- After the burst, the dispatch speed returns to `10 tasks/sec`
 
-### Case 3: Global pause 介入
+### Case 3: a global pause occurs
 
-條件：
+Conditions:
 
 - `-pressure-interval=5s`
-- pressure threshold 使用 runtime 預設 `90`
-- API 某次回傳 `{"pressure":95}`
+- The pressure threshold uses the runtime default `60`
+- One API response is `{"pressure":95}`
 
-推導：
+Derivation:
 
-- 下一次 poll 時，controller 進入 paused
-- dispatcher 卡在 `Gate()`
-- 新 task 不再送出
-- 但已在 worker 裡的 probe 繼續做完
+- At the next poll, the controller enters the paused state
+- The dispatcher waits at `Gate()`
+- The dispatcher sends no new tasks
+- Probes already in a worker continue to completion
 
-若之後 API 回傳 `{"pressure":40}`：
+If a later API response is `{"pressure":40}`:
 
-- controller 恢復 open
-- dispatcher 繼續送 task
+- The controller returns to the open state
+- The dispatcher continues to send tasks
 
-### Case 4: 兩個 CIDR，不是 round-robin 公平分速
+### Case 4: two CIDRs, no fair round-robin rate
 
-目前 `dispatchTasks()` 是照 `runtimes` 順序逐個 chunk dispatch。
+Now `dispatchTasks()` dispatches one chunk at a time, in `runtimes` order.
 
-如果：
+If:
 
-- `CIDR-A` 有 100 tasks
-- `CIDR-B` 有 100 tasks
+- `CIDR-A` has 100 tasks
+- `CIDR-B` has 100 tasks
 
-目前比較接近：
+the behavior is closer to this sequence:
 
-1. 先 dispatch `CIDR-A`
-2. `CIDR-A` 跑完或 dispatch 完
-3. 再換 `CIDR-B`
+1. Dispatch `CIDR-A` first
+2. `CIDR-A` completes, or its dispatch completes
+3. Then change to `CIDR-B`
 
-因此目前設計的重點是：
+The important point of the current design is therefore:
 
-- 每個 CIDR 有自己的 bucket
+- Each CIDR has its own bucket
 
-不是：
+The design is not:
 
-- 多個 CIDR 同時 round-robin 公平共享同一條全域速率
+- Several CIDRs that share one global rate fairly, in round-robin order
 
-### Case 5: `-delay` 也會成為限速因子
+### Case 5: `-delay` is also a speed factor
 
-條件：
+Conditions:
 
 - `-bucket-rate=100`
 - `-bucket-capacity=100`
 - `-delay=50ms`
 
-推導：
+Derivation:
 
-- 就算 bucket 幾乎不構成限制
-- dispatcher 每送 1 個 task 還是會固定 sleep `50ms`
+- The bucket is almost no limit here
+- But the dispatcher still sleeps `50ms` after each task
 
-結果：
+Result:
 
-- 單看 dispatcher，理論上最多約 `20 tasks/sec`
+- For the dispatcher alone, the theoretical maximum is approximately `20 tasks/sec`
 
-## 6. 精準推演版本
+## 6. Detailed Derivation
 
-以下用這組參數做較精確的推導：
+The derivation below uses this parameter set:
 
 ```bash
 go run ./cmd/port-scan scan \
@@ -279,66 +279,66 @@ go run ./cmd/port-scan scan \
   -delay 10ms
 ```
 
-### 6.1 先列出所有控制因子
+### 6.1 The control factors
 
-這組參數代表：
+This parameter set means:
 
-- bucket 穩態補 token 速度：`10 tasks/sec`
-- bucket 初始 burst 容量：`20 tasks`
-- dispatcher 固定送出間隔下限：`10ms/task`
-- worker 數：`5`
-- task channel 大小：`workers * 2 = 10`
+- Steady-state bucket refill speed: `10 tasks/sec`
+- Initial bucket burst capacity: `20 tasks`
+- Minimum dispatcher interval between tasks: `10ms/task`
+- Worker count: `5`
+- Task channel size: `workers * 2 = 10`
 
-### 6.2 若只看 dispatcher 本身
+### 6.2 The dispatcher alone
 
-因為 `-delay=10ms`，dispatcher 即使完全不被別的因素卡住，理論上上限是：
+Because `-delay=10ms`, the theoretical dispatcher maximum is this value, even when nothing else blocks it:
 
 - `1 / 0.01s = 100 tasks/sec`
 
-所以 `delay` 本身不是這組參數的主要瓶頸。
+`delay` is therefore not the main bottleneck of this parameter set.
 
-### 6.3 若只看 bucket
+### 6.3 The bucket alone
 
-bucket 啟動時有 20 個 token。
+At start the bucket holds 20 tokens.
 
-因此：
+Therefore:
 
-- 前 20 個 task 有資格立即通過 bucket
-- 第 21 個 task 開始，要等 refill
-- refill 速度是每 `100ms` 補 1 個 token
+- The first 20 tasks can pass the bucket immediately
+- Task 21 and the tasks after it wait for a refill
+- The refill speed is 1 token every `100ms`
 
-所以 bucket 的穩態上限是：
+The steady-state bucket maximum is therefore:
 
 - `10 tasks/sec`
 
-### 6.4 加入 workers 與 queue backpressure
+### 6.4 Workers and queue backpressure
 
-實際 dispatch 還會受這兩個條件影響：
+Two more conditions have an effect on the actual dispatch:
 
-- 同時執行中的 worker 最多 `5`
-- `taskCh` buffer 最多 `10`
+- A maximum of `5` workers run at the same time
+- The `taskCh` buffer holds a maximum of `10` tasks
 
-因此在 target 反應偏慢時，系統最多大約只容納：
+When the targets are slow, the system therefore holds a maximum of approximately:
 
-- `5` 個 in-flight
-- `10` 個 queued
-- 合計約 `15` 個已送出但尚未消化的 task
+- `5` in-flight tasks
+- `10` queued tasks
+- approximately `15` tasks in total that are sent but not yet processed
 
-這表示：
+This limit means that:
 
-- 雖然 bucket 有 `20` 個初始 token
-- 但實際第一波可快速推出去的 task，常常會先被 worker + queue 容量卡在約 `15` 個左右
-- 剩下 token 可能暫時留在 bucket，等 queue 騰出空位再繼續用
+- The bucket holds `20` initial tokens
+- But the worker and queue capacity often stops the first wave at approximately `15` tasks
+- The remaining tokens can stay in the bucket until the queue has free space again
 
-### 6.5 穩態速度公式
+### 6.5 The steady-state speed formula
 
-穩態吞吐量實際上接近下面幾個上限的最小值：
+The steady-state throughput is close to the minimum of these limits:
 
-- bucket：`10 tasks/sec`
-- delay：`100 tasks/sec`
-- workers：`workers / 平均單個 task 完成秒數`
+- bucket: `10 tasks/sec`
+- delay: `100 tasks/sec`
+- workers: `workers / average seconds for one task`
 
-也就是：
+That is:
 
 ```text
 steady_state_tps ~= min(
@@ -348,122 +348,114 @@ steady_state_tps ~= min(
 )
 ```
 
-### 6.6 兩個具體情境
+### 6.6 Two specific situations
 
-#### 情境 A：目標很快
+#### Situation A: the targets are fast
 
-假設平均一個 probe `200ms` 完成。
+Assume that one probe completes in `200ms` on average.
 
-worker 可提供的吞吐上限約為：
+The maximum throughput from the workers is approximately:
 
 - `5 / 0.2 = 25 tasks/sec`
 
-三者比較：
+A comparison of the three limits:
 
-- bucket：`10/sec`
-- delay：`100/sec`
-- workers：`25/sec`
+- bucket: `10/sec`
+- delay: `100/sec`
+- workers: `25/sec`
 
-結果：
+Result:
 
-- 穩態瓶頸是 bucket
-- 長時間平均速度約 `10 tasks/sec`
+- The steady-state bottleneck is the bucket
+- The long-term average speed is approximately `10 tasks/sec`
 
-#### 情境 B：目標很慢
+#### Situation B: the targets are slow
 
-假設平均一個 probe `2s` 完成。
+Assume that one probe completes in `2s` on average.
 
-worker 可提供的吞吐上限約為：
+The maximum throughput from the workers is approximately:
 
 - `5 / 2 = 2.5 tasks/sec`
 
-三者比較：
+A comparison of the three limits:
 
-- bucket：`10/sec`
-- delay：`100/sec`
-- workers：`2.5/sec`
+- bucket: `10/sec`
+- delay: `100/sec`
+- workers: `2.5/sec`
 
-結果：
+Result:
 
-- 穩態瓶頸改成 workers
-- 長時間平均速度約 `2.5 tasks/sec`
+- The steady-state bottleneck changes to the workers
+- The long-term average speed is approximately `2.5 tasks/sec`
 
-### 6.7 這組參數的直觀結論
+### 6.7 Conclusion for this parameter set
 
-這組參數不是單純等於「每秒 10 個」；比較準確的說法是：
+This parameter set does not mean "10 for each second". A more exact description is:
 
-- bucket 允許一開始有最多 20 個 task 的 burst 配額
-- 但實際第一波 burst 常先被 `5 workers + 10 queue` 卡住
-- 之後長時間穩態速度，取決於 bucket、delay、workers/target latency 中最慢的那個
+- The bucket permits an initial burst quota of a maximum of 20 tasks
+- But `5 workers + 10 queue` often stops the first burst first
+- The long-term steady-state speed after that depends on the slowest of the bucket, the delay, and the workers/target latency
 
-如果 target 普遍不慢，這組參數通常會表現成：
+If the targets are generally not slow, this parameter set commonly behaves as follows:
 
-- 開頭一小段快速推進
-- 然後落到約 `10 tasks/sec`
+- A short fast period at the start
+- Then a fall to approximately `10 tasks/sec`
 
-## 7. Workers × Timeout × Rate（實測關係）
+## 7. Workers × Timeout × Rate (measured relation)
 
-§6.5 給了穩態公式，本節用 e2e mock 實測把「`-workers` 到底怎麼影響速度」講清楚。
+Section 6.5 gives the steady-state formula. This section uses e2e mock measurements to explain how `-workers` changes the speed.
 
-### 7.1 關鍵直覺
+### 7.1 The key idea
 
-`-workers` 決定的是「同時進行中的 TCP dial 上限」（見 `pkg/scanapp/executor.go`
-的 worker pool，以及 `taskCh` buffer = `workers * 2`）。因此它是否成為瓶頸，
-完全取決於單一 dial 有多慢：
+`-workers` sets the maximum number of TCP dials that run at the same time (see the worker pool in `pkg/scanapp/executor.go`, and the `taskCh` buffer of `workers * 2`). Whether it becomes the bottleneck depends completely on the speed of one dial:
 
-- **反應快的 target（closed/RST，延遲約 1ms）**：`workers / latency` 極大，
-  瓶頸永遠是 dispatcher（`-bucket-rate` 或 `-delay`），加 worker 沒有幫助。
-- **反應慢的 target（被 drop、走到 `-timeout`）**：每個 dial 卡滿 `-timeout`，
-  吞吐量 ≈ `workers / timeout`，此時 worker 數會線性放大速度。
+- **Fast targets (closed/RST, latency of approximately 1ms)**: `workers / latency` is very large. The bottleneck is always the dispatcher (`-bucket-rate` or `-delay`), and more workers give no help.
+- **Slow targets (dropped packets, which reach `-timeout`)**: each dial takes the full `-timeout`. The throughput is approximately `workers / timeout`, and the worker count increases the speed linearly.
 
-### 7.2 實測數據
+### 7.2 Measured data
 
-條件：單一 host（一個 chunk = 一個 bucket）、64 個 target、`-timeout 200ms`、
-`-disable-api`、`-bucket-rate` 拉高到不構成限制、`-delay 0`。扣掉容器啟動
-baseline（約 `0.25s`）後的 dispatch 時間：
+Conditions: one host (one chunk = one bucket), 64 targets, `-timeout 200ms`, `-disable-api`, a `-bucket-rate` high enough to be no limit, and `-delay 0`. The dispatch time excludes the container startup baseline (approximately `0.25s`):
 
-**慢速（timeout dials）— 受 worker 限制，線性擴展：**
+**Slow (timeout dials) — limited by the workers, with linear scaling:**
 
-| workers | dispatch 時間 | 實測 eff | 預測 `workers/timeout` |
+| workers | dispatch time | measured eff | predicted `workers/timeout` |
 |---|---|---|---|
 | 1  | 12.85s | ~5/s    | 5/s   |
 | 4  | 3.25s  | 19.7/s  | 20/s  |
 | 16 | 0.80s  | 79.8/s  | 80/s  |
 | 64 | 0.21s  | 304.8/s | 320/s |
 
-**快速（RST dials）— worker 數幾乎無影響：**
+**Fast (RST dials) — the worker count has almost no effect:**
 
-| workers | wall 時間 |
+| workers | wall time |
 |---|---|
 | 1  | 0.255s |
 | 8  | 0.245s |
 | 64 | 0.230s |
 
-快速情境下 1 到 64 個 worker 幾乎沒差，瓶頸在 dispatcher，不在 worker。
+In the fast situation, 1 worker and 64 workers give almost the same result. The bottleneck is the dispatcher, not the workers.
 
-### 7.3 Sizing 規則（Little's law）
+### 7.3 Sizing rule (Little's law)
 
-要在 dial 最慢耗時 `T`（通常等於 `-timeout`）下穩定達到目標速率 `R`：
+To hold a target rate `R` when the slowest dial takes `T` (usually equal to `-timeout`):
 
 ```text
 workers >= R * T
 ```
 
-例如目標 `256 targets/sec`、`-timeout 200ms`：
+For example, for a target of `256 targets/sec` and `-timeout 200ms`:
 
-- 需要 `workers >= 256 * 0.2 ≈ 52`
-- 只給 `-workers 32`，在 timeout-heavy 網路上會被卡在約 `160/s`，
-  低於 `-bucket-rate 256` 卻不會報錯（靜默降速）
+- You need `workers >= 256 * 0.2 ≈ 52`
+- With `-workers 32` only, a timeout-heavy network holds the scan at approximately `160/s`. That rate is less than `-bucket-rate 256`, and the scan reports no error (a silent speed decrease)
 
-反之，`-workers` 再多也不會超過 `-bucket-rate`；一旦
-`workers / latency >= bucket_rate`，多出來的 worker 只會閒置。
+In the opposite direction, more `-workers` never gives a rate higher than `-bucket-rate`. When `workers / latency >= bucket_rate`, the extra workers stay idle.
 
-### 7.4 兩個旋鈕的分工
+### 7.4 The task of each control
 
-- `-bucket-rate`：設定速度的「上限」。
-- `-workers`：決定在給定 dial 延遲下「能不能達到」那個上限。
+- `-bucket-rate`: sets the maximum speed.
+- `-workers`: decides if the scan can reach that maximum at the given dial latency.
 
-因此針對「部分 target 會 timeout」的網路，要真正跑到 256/s 的建議組合是：
+For a network in which some targets reach the timeout, the recommended parameter set for a real 256/s is therefore:
 
 ```bash
 port-scan scan -cidr-file rich.csv \
@@ -472,18 +464,15 @@ port-scan scan -cidr-file rich.csv \
   -output scan_results.csv
 ```
 
-`-workers 64`（≥ `256 × 0.2`）確保即使 dial 卡在 timeout，worker 吞吐量也能餵滿
-256/s 的 bucket 配額。
+`-workers 64` (which is `>= 256 × 0.2`) makes sure that the worker throughput fills the 256/s bucket quota, even when each dial reaches the timeout.
 
-> 數據來源：對 `e2e/docker-compose.yml` 的 `mock-target-open` 實測；快速情境打
-> closed port（RST），慢速情境打子網未指派的 IP 並加 `-disable-pre-scan-ping`
-> 強制 TCP dial 走到 timeout。
+> Data source: measurements against `mock-target-open` in `e2e/docker-compose.yml`. The fast situation dials a closed port (RST). The slow situation dials an unassigned IP in the subnet and adds `-disable-pre-scan-ping` to force the TCP dial to the timeout.
 
-## 8. 程式碼對照
+## 8. Code References
 
 - Global controller: `pkg/speedctrl/controller.go`
 - Keyboard manual pause: `pkg/speedctrl/keyboard.go`
 - Pressure API pause: `pkg/scanapp/pressure_monitor.go`
 - Dispatch gate + bucket acquire: `pkg/scanapp/task_dispatcher.go`
-- Per-CIDR bucket 建立：`pkg/scanapp/scan.go`
-- Bucket 實作：`pkg/ratelimit/leaky_bucket.go`
+- Per-CIDR bucket construction: `pkg/scanapp/scan.go`
+- Bucket implementation: `pkg/ratelimit/leaky_bucket.go`

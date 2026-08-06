@@ -1,8 +1,9 @@
 # Examples
 
 Ready-to-run example inputs for every CLI tool under [`cmd/`](../cmd). Each tool has its
-own folder with sample input files; every command below can be **copy-pasted into a terminal
-from the repository root** and run as-is. Generated output lands in [`out/`](out) (git-ignored).
+own folder with sample input files. You can **copy each command below into a terminal at
+the repository root** and run it without a change. The generated output goes to
+[`out/`](out) (git-ignored).
 
 ```
 example/
@@ -14,7 +15,7 @@ example/
 └── out/             # generated output (git-ignored)
 ```
 
-Prerequisite: Go `1.24.x` installed (`go version`). No Docker or network access is required —
+Prerequisite: Go `1.24.x` installed (`go version`). You do not need Docker or network access —
 the only command that touches the network (`port-scan scan`) targets `127.0.0.1` by default.
 
 ---
@@ -31,10 +32,10 @@ the only command that touches the network (`port-scan scan`) targets `127.0.0.1`
 ```
 
 - **`csv-transform`** and **`enrich-targets`** both produce the canonical **rich CSV** that the
-  scanner consumes. Use whichever matches your source data.
-- **`preprocess`** filters a rich CSV, dropping any target whose `dst_network_segment` falls
+  scanner consumes. Use the tool that matches your source data.
+- **`preprocess`** filters a rich CSV. It removes each target whose `dst_network_segment` is
   inside a *closed* CIDR.
-- **`port-scan`** validates inputs and runs the actual TCP scan.
+- **`port-scan`** validates the inputs and runs the TCP scan.
 - **`cidr-compare`** is a standalone utility that reports which *open* CIDRs overlap a *deny* list.
 
 ---
@@ -87,8 +88,8 @@ go run ./cmd/port-scan validate \
 
 ### Run a scan against localhost
 
-`-disable-api` skips the pressure-control API, `-disable-pre-scan-ping` skips the reachability
-pre-check, and `-output` directs the timestamped result files into `example/out/`:
+`-disable-api` skips the pressure-control API. `-disable-pre-scan-ping` skips the reachability
+pre-check. `-output` sends the timestamped result files to `example/out/`:
 
 ```bash
 go run ./cmd/port-scan scan \
@@ -100,13 +101,13 @@ go run ./cmd/port-scan scan \
   -output example/out/scan.csv
 ```
 
-Structured progress logs stream to stderr, ending with a summary line:
+Structured progress logs stream to stderr. The last line is a summary:
 
 ```
 [INFO] scan_completion fields=map[close_count:4 ... open_count:2 ... total_tasks:6]
 ```
 
-Three timestamped CSVs are written to `example/out/`:
+`port-scan` writes three timestamped CSVs to `example/out/`:
 `scan_results-<ts>.csv` (all probes), `opened_results-<ts>.csv` (open ports only), and
 `unreachable_results-<ts>.csv`. Example `opened_results`:
 
@@ -116,17 +117,17 @@ ip,ip_cidr,port,status,response_time_ms,fab_name,cidr_name,service_label,decisio
 127.0.0.2,127.0.0.2/32,22,open,0,,,,,,,,,
 ```
 
-> Open/closed results depend on what is actually listening on `127.0.0.1`. Add `-quiet=true`
-> to silence the per-probe logs.
+> The open and closed results depend on the services that listen on `127.0.0.1`. To stop the
+> per-probe logs, add `-quiet=true`.
 
 ---
 
 ## 2. `csv-transform` — spreadsheet results → rich CSV
 
-Converts a human spreadsheet export (columns `Host`, `Port`, `Pass the test`) into a rich CSV.
-Only rows where **`Pass the test` is `FALSE`** are kept (i.e. the targets that failed and need
-re-scanning). The `Port` column may hold multiple ports separated by `/` (e.g. `443/8443`),
-each of which becomes its own output row.
+`csv-transform` converts a human spreadsheet export (columns `Host`, `Port`, `Pass the test`)
+into a rich CSV. It keeps only the rows where **`Pass the test` is `FALSE`** (that is, the
+targets that failed and need a new scan). The `Port` column can hold several ports separated
+by `/` (for example, `443/8443`). Each of these ports becomes its own output row.
 
 Input file: [`csv-transform/scan-results.csv`](csv-transform/scan-results.csv)
 
@@ -144,7 +145,7 @@ go run ./cmd/csv-transform \
   --output example/out/csv-transform.rich.csv
 ```
 
-The `TRUE` row is skipped (logged to stderr) and `443/8443` expands to two rows:
+`csv-transform` skips the `TRUE` row and writes a message to stderr. `443/8443` expands to two rows:
 
 ```csv
 src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason
@@ -154,14 +155,14 @@ src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,por
 10.0.0.1,10.0.0.0/24,10.20.0.9,10.0.0.0/24,unknown,tcp,53,accept,transformed,MATCH_POLICY_ACCEPT
 ```
 
-Column names can be overridden with `--host-col`, `--port-col`, and `--pass-col`.
+You can override the column names with `--host-col`, `--port-col`, and `--pass-col`.
 
 ---
 
 ## 3. `enrich-targets` — minimal `host,port` → rich CSV
 
-Enriches a minimal `host,port` list into a rich CSV by looking up each host's network segment
-from a **CIDR reference list** and mapping each port to a **service label**.
+`enrich-targets` makes a rich CSV from a minimal `host,port` list. It reads the network segment
+of each host from a **CIDR reference list**. It also maps each port to a **service label**.
 
 Input files:
 [`enrich-targets/opened-targets.csv`](enrich-targets/opened-targets.csv),
@@ -183,9 +184,9 @@ go run ./cmd/enrich-targets \
   --output example/out/enrich-targets.rich.csv
 ```
 
-Each host's `dst_network_segment` is filled from the matching CIDR and each port gets its
-service label. `src_ip`/`src_network_segment` are fixed placeholder defaults
-(`10.59.42.39`, from `pkg/preprocesscfg`), so the output is deterministic across runs:
+`enrich-targets` fills the `dst_network_segment` of each host from the matching CIDR, and each
+port gets its service label. `src_ip` and `src_network_segment` are fixed placeholder defaults
+(`10.59.42.39`, from `pkg/preprocesscfg`). Thus the output is the same on every run:
 
 ```csv
 src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason
@@ -198,8 +199,8 @@ src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,por
 
 ## 4. `preprocess` — filter out targets in closed CIDRs
 
-Filters a rich CSV, dropping any row whose `dst_network_segment` falls inside a CIDR marked
-`close` for the given fab. Output is written to
+`preprocess` filters a rich CSV. It removes each row whose `dst_network_segment` is inside a
+CIDR marked `close` for the given fab. `preprocess` writes the output to
 `<output-dir>/<fab-name>/<timestamp>/input.csv` (a scan-ready rich CSV).
 
 Input files:
@@ -221,7 +222,7 @@ go run ./cmd/preprocess \
   --output-dir example/out/preprocess
 ```
 
-The target on the closed `172.30.0.12/32` segment is dropped; the other two are kept:
+`preprocess` removes the target on the closed `172.30.0.12/32` segment. It keeps the other two:
 
 ```
 Filter summary:
@@ -231,9 +232,9 @@ Filter summary:
 Output written to: example/out/preprocess/fab-east/<timestamp>/input.csv
 ```
 
-Feed that `input.csv` straight into the scanner. A rich CSV has no `ip`/`ip_cidr` columns —
-instead `port-scan` auto-detects the rich header (`src_ip`, `dst_ip`, `dst_network_segment`,
-…) and reads the target IPs from it, so no `-cidr-ip-col` flags are needed:
+Feed that `input.csv` directly into the scanner. A rich CSV has no `ip` or `ip_cidr` columns.
+Instead, `port-scan` detects the rich header (`src_ip`, `dst_ip`, `dst_network_segment`,
+…) and reads the target IPs from it. Thus you do not need the `-cidr-ip-col` flags:
 
 ```bash
 # Replace <timestamp> with the directory printed above
@@ -249,8 +250,9 @@ go run ./cmd/port-scan scan \
 
 ## 5. `cidr-compare` — find open CIDRs that overlap a deny list
 
-A standalone utility: given a **deny list** (`dst_network_segment`, `decision`) and an
-**open list** (`segment`, `status`), it prints every open CIDR that overlaps a denied CIDR.
+`cidr-compare` is a standalone utility. It takes a **deny list** (`dst_network_segment`,
+`decision`) and an **open list** (`segment`, `status`). It prints every open CIDR that
+overlaps a denied CIDR.
 
 Input files:
 [`cidr-compare/deny.csv`](cidr-compare/deny.csv),
@@ -270,8 +272,8 @@ go run ./cmd/cidr-compare \
   --open-file example/cidr-compare/open.csv
 ```
 
-Each open CIDR contained in a denied CIDR is reported on stdout (`8.8.8.0/24` matches nothing
-and is omitted):
+`cidr-compare` reports on stdout each open CIDR that a denied CIDR contains. It omits
+`8.8.8.0/24`, because that CIDR matches nothing:
 
 ```csv
 deny_cidr,open_cidr

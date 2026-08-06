@@ -1,15 +1,15 @@
 # cidr-compare
 
-Compare open CIDR ranges against deny CIDR ranges to detect network policy violations. The tool finds all open CIDRs that fall within any deny CIDR block.
+Compare open CIDR ranges against deny CIDR ranges to detect network policy violations. The tool finds all the open CIDRs that are inside any deny CIDR block.
 
 ## Overview
 
-`cidr-compare` loads deny and open CIDR sets from CSV files and reports pairs where an open CIDR is contained within a deny CIDR range. It is used in the port-scan-mk3 pipeline to cross-reference scan results against network policy rules.
+`cidr-compare` loads the deny and open CIDR sets from CSV files. It then reports each pair where a deny CIDR range contains an open CIDR. The port-scan-mk3 pipeline uses it to cross-reference the scan results against the network policy rules.
 
 **Use cases:**
 - Identify open scan results that landed in policy-blocked address space.
 - Audit firewall or network policy rule coverage.
-- Validate that scan output doesn't include addresses that should have been filtered.
+- Make sure that the scan output has no addresses that the filter must remove.
 
 ## Architecture
 
@@ -38,9 +38,9 @@ Compare open CIDR ranges against deny CIDR ranges to detect network policy viola
 **Components:**
 - `DenyCSVReader` — streams deny CSV rows, filters `decision=deny` rows, parses CIDR to `CIDREntry`
 - `OpenCSVReader` — streams open CSV rows, filters `status=open` rows, parses CIDR to `CIDREntry`
-- `IntervalTree` — holds deny CIDRs as interval bounds (uint32 StartIP/EndIP); `Query` performs linear containment scan
+- `IntervalTree` — holds deny CIDRs as interval bounds (uint32 StartIP/EndIP). `Query` performs a linear containment scan
 
-The interval tree uses a **linear O(n) scan over all entries** on each query. For large deny sets, a balanced tree structure would improve performance. The current implementation is suitable for small-to-medium policy rule sets.
+The interval tree uses a **linear O(n) scan over all entries** on each query. For large deny sets, a balanced tree structure gives better performance. The current implementation is suitable for small-to-medium policy rule sets.
 
 ## CLI Flags
 
@@ -49,18 +49,18 @@ The interval tree uses a **linear O(n) scan over all entries** on each query. Fo
 | `-deny-file` | string | Path to deny CSV file | `CIDR_COMPARE_DENY_FILE` |
 | `-open-file` | string | Path to open CSV file | `CIDR_COMPARE_OPEN_FILE` |
 
-Both flags are required. Either pass them as CLI flags or set the corresponding environment variables.
+Both flags are required. Pass them as CLI flags, or set the equivalent environment variables.
 
 ## Input/Output Formats
 
 ### Deny CSV
 
-Expects a CSV with a header row. Columns are matched by name with fallback to column index:
+`cidr-compare` expects a CSV with a header row. It matches the columns by name. If the name is absent, it uses the column index:
 
 | Column | Required | Description |
 |--------|----------|-------------|
-| `dst_network_segment` | Yes (or col 0) | CIDR notation, e.g. `10.0.0.0/8` |
-| `decision` | Yes (or col 1) | Policy decision; only rows with `decision=deny` are processed |
+| `dst_network_segment` | Yes (or col 0) | CIDR notation, for example `10.0.0.0/8` |
+| `decision` | Yes (or col 1) | Policy decision. The tool processes only rows with `decision=deny` |
 
 **Example:**
 ```csv
@@ -69,16 +69,16 @@ dst_network_segment,decision
 192.168.0.0/16,deny
 ```
 
-Rows where `decision` is not `deny` (case-insensitive) are skipped silently.
+`cidr-compare` skips the rows where `decision` is not `deny` (case-insensitive). It gives no message for these rows.
 
 ### Open CSV
 
-Expects a CSV with a header row. Columns are matched by name with fallback to column index:
+`cidr-compare` expects a CSV with a header row. It matches the columns by name. If the name is absent, it uses the column index:
 
 | Column | Required | Description |
 |--------|----------|-------------|
-| `segment` | Yes (or col 0) | CIDR notation, e.g. `10.1.2.3/32` |
-| `status` | Yes (or col 1) | Status; only rows with `status=open` are processed |
+| `segment` | Yes (or col 0) | CIDR notation, for example `10.1.2.3/32` |
+| `status` | Yes (or col 1) | Status. The tool processes only rows with `status=open` |
 
 **Example:**
 ```csv
@@ -87,11 +87,11 @@ segment,status
 192.168.1.1/32,open
 ```
 
-Rows where `status` is not `open` (case-insensitive) are skipped silently.
+`cidr-compare` skips the rows where `status` is not `open` (case-insensitive). It gives no message for these rows.
 
 ### Output
 
-CSV written to stdout with the header `deny_cidr,open_cidr`. Each row represents a containment relationship where the deny CIDR fully contains the open CIDR.
+`cidr-compare` writes a CSV to stdout with the header `deny_cidr,open_cidr`. Each row shows a containment relationship where the deny CIDR fully contains the open CIDR.
 
 ```
 deny_cidr,open_cidr
@@ -99,7 +99,7 @@ deny_cidr,open_cidr
 192.168.0.0/16,192.168.1.1/32
 ```
 
-An open CIDR that falls within multiple deny CIDRs will produce multiple output rows (one per matching deny). If no containment relationships exist, only the header is printed.
+An open CIDR that is inside several deny CIDRs produces several output rows (one row per matching deny). If no containment relationship exists, `cidr-compare` prints only the header.
 
 ## Usage Examples
 
@@ -154,8 +154,8 @@ cidr-compare -deny-file policy_deny.csv -open-file open_results.csv
 - Missing `-deny-file` or `-open-file` (flags or env vars not set): prints usage to stderr, exits 1
 - Deny file does not exist or cannot be opened: exits 1 with message
 - Open file does not exist or cannot be opened: exits 1 with message
-- Malformed CSV rows are skipped with a warning; they do not cause exit 1
-- Invalid CIDR values are skipped with a warning; they do not cause exit 1
+- `cidr-compare` skips malformed CSV rows with a warning. They do not cause exit 1
+- `cidr-compare` skips invalid CIDR values with a warning. They do not cause exit 1
 
 ## Building
 
@@ -180,4 +180,4 @@ The implementation lives in two packages:
   - `tree.go` — `IntervalTree` (linear scan containment), `ParseCIDR`
   - `parser.go` — `DenyCSVReader`, `OpenCSVReader` with header-aware column mapping
 
-`cidr-compare` respects the library-first design principle: domain logic lives in `pkg/cidrutil/` and is composed in `cmd/cidr-compare/`.
+`cidr-compare` obeys the library-first design principle. The domain logic lives in `pkg/cidrutil/`, and `cmd/cidr-compare/` composes it.
