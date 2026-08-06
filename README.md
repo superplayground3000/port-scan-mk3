@@ -1,6 +1,6 @@
 # Port Scan MK3
 
-Developer-first TCP port scanner CLI in Go with fail-fast input validation, pressure-aware pacing, resumable scanning, and e2e verification.
+Port Scan MK3 is a developer-first TCP port scanner CLI in Go. It has fail-fast input validation, pressure-aware pacing, resumable scanning, and e2e verification.
 
 ## Prerequisites
 
@@ -19,9 +19,9 @@ go run ./cmd/port-scan validate \
 ```
 
 Run a real scan — `port-scan` is a **three-step pipeline** (`preping` ->
-`generate-buckets` -> `scan`). `scan` requires a bucket snapshot via `-resume`;
-it never pings and no longer accepts ping flags (this changed in 2.0.0 — see
-[release notes](docs/release-notes/2.0.0.md)):
+`generate-buckets` -> `scan`). `scan` requires a bucket snapshot through
+`-resume`. It never pings and no longer accepts ping flags (this behavior
+changed in 2.0.0 — see the [release notes](docs/release-notes/2.0.0.md)):
 
 ```bash
 # 1. Ping unique targets; capture the printed unreachable CSV path (stdout)
@@ -47,10 +47,10 @@ go run ./cmd/port-scan scan \
   -output e2e/out/scan_results.csv
 ```
 
-Skip the pre-scan reachability check (the old `-disable-pre-scan-ping=true`):
+To skip the pre-scan reachability check (the old `-disable-pre-scan-ping=true`),
 omit the `preping` step and run `generate-buckets` without `-unreachable-file`.
 The snapshot then covers all targets and still stamps
-`pre_scan_ping.enabled=true`, so `scan` never pings:
+`pre_scan_ping.enabled=true`. As a result, `scan` never pings:
 
 ```bash
 go run ./cmd/port-scan generate-buckets \
@@ -68,14 +68,14 @@ go run ./cmd/port-scan scan \
 
 ## Pre-processing Workflows
 
-Two tools prepare input files for `port-scan`. Both output a port-scan-ready rich CSV at
+Two tools prepare input files for `port-scan`. Both write a port-scan-ready rich CSV to
 `<output-dir>/<fab_name>/<timestamp>/input.csv`.
 
 ### From-Scratch Flow
 
-Use when scanning a data center for the first time or starting fresh.
-`preprocess` filters a firewall-policy rich CSV, removing any target whose
-`dst_network_segment` falls inside a closed CIDR.
+Use this flow when you scan a data center for the first time or start fresh.
+`preprocess` filters a firewall-policy rich CSV. It removes each target whose
+`dst_network_segment` is inside a closed CIDR.
 
 ```bash
 # Step 1 — filter targets
@@ -94,9 +94,9 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 
 ### Re-scan Flow
 
-Use when re-scanning previously discovered open targets from a `host,port` CSV.
-`enrich-targets` promotes it to rich format; `preprocess` then applies the same
-CIDR filter.
+Use this flow to re-scan open targets that an earlier scan discovered, supplied
+as a `host,port` CSV. `enrich-targets` promotes the CSV to rich format.
+`preprocess` then applies the same CIDR filter.
 
 ```bash
 # Step 1 — enrich minimal CSV to rich format
@@ -126,7 +126,7 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
   - Required columns: `ip`, `ip_cidr`
   - Optional columns: `fab_name`, `cidr_name`
   - Column mapping flags are case-sensitive: `-cidr-ip-col`, `-cidr-ip-cidr-col`
-- Rich CSV mode is auto-detected when all rich fields exist:
+- `port-scan` selects rich CSV mode automatically when all rich fields exist:
   - `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`
   - `service_label`, `protocol`, `port`, `decision`, `policy_id`, `reason`
 - Port file format: one line per port in `<port>/tcp` (for example `443/tcp`)
@@ -137,7 +137,7 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 
 - `preping`: ping unique target IPs, write `unreachable_results-<ts>.csv`, print its path
 - `generate-buckets`: build the resume bucket snapshot from targets minus an optional blocklist (`-buckets-out` required)
-- `scan`: pure TCP scan of a bucket snapshot (`-resume` required; dispatch, probe, output, in-place resume persistence)
+- `scan`: pure TCP scan of a bucket snapshot (`-resume` required. It dispatches, probes, writes output, and persists resume state in place)
 - `validate`: parse and validate input files only
 
 Exit code behavior:
@@ -151,7 +151,7 @@ Exit code behavior:
 
 All five commands — `port-scan`, `preprocess`, `enrich-targets`, `cidr-compare`,
 `csv-transform` — answer the same version request. The token must be the **first
-argument**; all three spellings are equivalent:
+argument**. All three spellings are equivalent:
 
 ```
 port-scan version
@@ -159,7 +159,7 @@ port-scan --version
 port-scan -version
 ```
 
-The report goes to stdout and exits `0`:
+The report goes to stdout, and the command exits `0`:
 
 ```
 port-scan version v2.2.0
@@ -171,7 +171,7 @@ go:      go1.24.0 windows/amd64
 | Field | Source | Policy |
 |-------|--------|--------|
 | version | `git describe --always --dirty` at build time | The nearest annotated tag plus distance and abbreviated commit, or a bare commit when no tag is reachable |
-| commit | `git rev-parse HEAD` at build time | Stamped separately from the version, because a build made exactly on a tag describes as just `v2.2.0` and would carry no commit at all |
+| commit | `git rev-parse HEAD` at build time | Stamped separately from the version, because a build made exactly on a tag describes as `v2.2.0` alone and carries no commit at all |
 | built | The **commit** timestamp, normalized to UTC | Never the wall clock: two builds of one commit must be byte-identical, which is what makes a published checksum meaningful |
 | go | The running binary's toolchain and `GOOS/GOARCH` | Describes the artifact itself, so it cannot drift from it |
 
@@ -187,8 +187,8 @@ The release workflow refuses to package such a build, and
 
 **Unstamped builds.** A binary built without the release ldflags — `go build
 ./cmd/...`, `go run`, or `go test` — reports `dev` for the version and `unknown`
-for the commit and build time. That is the documented fallback, not a failure;
-only artifacts produced by `make build` or the release workflow carry real
+for the commit and build time. That report is the documented fallback, not an
+error. Only artifacts from `make build` or the release workflow carry real
 values.
 
 ## Architecture and Data Flow
@@ -266,73 +266,75 @@ Input CSV ──> spreadsheet.Reader ──> Column index ──> Filter rows �
 ## How the Pipeline Works
 
 The pipeline is three separately-runnable steps with durable file hand-offs.
-`rich.csv` (`-cidr-file`) is threaded into all three as the single source of
+`rich.csv` (`-cidr-file`) feeds all three steps as the single source of
 truth for target metadata.
 
-**Step 1 — `preping`** (optional; skip it to skip reachability filtering):
+**Step 1 — `preping`** (optional: skip it to skip reachability filtering):
 1. Load the CIDR/rich CSV and collect unique IPv4 targets.
-2. Ping each unique target (`-pre-scan-ping-timeout`, default `100ms`), emitting
+2. Ping each unique target (`-pre-scan-ping-timeout`, default `100ms`) and write
    percentage progress to stderr every `-progress-interval` units.
 3. Finalize `unreachable_results-YYYYMMDDTHHMMSSZ[-n].csv` and print its path to
    stdout for chaining.
 
 **Step 2 — `generate-buckets`** (no network I/O):
-1. Load targets and ports; parse the optional `-unreachable-file` blocklist.
+1. Load targets and ports. Parse the optional `-unreachable-file` blocklist.
 2. Subtract the blocklist, group by CIDR, and build one chunk per group in
-   parallel over `-workers` (deterministic, CIDR-sorted). The broadcast address
-   of each row's boundary subnet (`ip_cidr` / `dst_network_segment`, prefix /30
-   or larger) is never included — whether it came from CIDR expansion or an
-   explicitly listed IP — while the network address is kept.
-3. Write the resume bucket snapshot to `-buckets-out`, stamping
-   `pre_scan_ping.enabled=true` so `scan` never pings.
+   parallel over `-workers` (deterministic, CIDR-sorted). The chunk never
+   includes the broadcast address of each row's boundary subnet (`ip_cidr` /
+   `dst_network_segment`, prefix /30 or larger). This exclusion applies to
+   addresses from CIDR expansion and to explicitly listed IPs. The chunk keeps
+   the network address.
+3. Write the resume bucket snapshot to `-buckets-out` and stamp
+   `pre_scan_ping.enabled=true`. As a result, `scan` never pings.
 
 **Step 3 — `scan`** (requires `-resume <bucket file>`):
-1. Load the bucket snapshot; derive the reachable set from its embedded blocklist
-   (no reachability checker is constructed — pinging is impossible here).
+1. Load the bucket snapshot. Derive the reachable set from its embedded blocklist
+   (the command constructs no reachability checker — a ping is impossible here).
 2. Dispatch tasks with rate control and optional pressure-based pause.
 3. Run TCP probes in a worker pool and stream progress events.
 4. Write timestamped batch output files:
    - `scan_results-YYYYMMDDTHHMMSSZ[-n].csv`
    - `opened_results-YYYYMMDDTHHMMSSZ[-n].csv`
-5. On cancel/error, save progress **in place at the `-resume` path** (the bucket
-   file is overwritten with updated progress; re-running the same command
-   continues from there). The one exception is a **failure to write the output
-   CSV**: progress is then deliberately NOT saved (the bucket file is left
-   untouched) and the command exits with an error explaining your recovery
-   options — see "Output and Resume Behavior" below.
+5. On cancel or error, save progress **in place at the `-resume` path** (the
+   command overwrites the bucket file with updated progress, and a re-run of
+   the same command continues from there). The one exception is a **failure to
+   write the output CSV**. In that case the command deliberately does NOT save
+   progress (the bucket file stays untouched). The command then exits with an
+   error that explains your recovery options — see "Output and Resume
+   Behavior" below.
 
-The "unreachable results are finalized before any TCP dial" guarantee is
-enforced by this **step sequencing** — `preping` completes before `scan` runs.
+This **step sequencing** enforces the "unreachable results are finalized before
+any TCP dial" guarantee — `preping` completes before `scan` runs.
 
 ## Output and Resume Behavior
 
-- `-output` controls output directory; result files are always timestamped batches.
+- `-output` controls the output directory. Result files are always timestamped batches.
 - Default batch naming is collision-safe within the same second (`-1`, `-2`, ... suffix).
-- `preping` writes `unreachable_results-*` even when all targets are reachable; in that case it contains the header only. `scan` no longer writes this file.
+- `preping` writes `unreachable_results-*` even when all targets are reachable. In that case the file contains the header only. `scan` no longer writes this file.
 - To skip the reachability gate, skip the `preping` step and run `generate-buckets` without `-unreachable-file`.
-- The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel/error saves progress back to that exact path (in place). Re-running the same `scan` command continues from there.
-- The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist so `scan` reuses the same filtering decision without pinging.
-- **If writing the output CSV fails, no resume progress is saved.** The dispatch cursor advances when a task is enqueued, so after a write failure it covers rows that never reached the file; saving it would make the next `-resume` skip those rows silently. `scan` therefore leaves the bucket file unchanged, logs `resume_state_not_saved`, and exits with an error. Every other failure (Ctrl+C, pressure-API error, worker panic) saves progress as usual.
+- The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel or error saves progress back to that exact path (in place). A re-run of the same `scan` command continues from there.
+- The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist, so `scan` reuses the same filtering decision without a ping.
+- **If a write to the output CSV fails, the command saves no resume progress.** The dispatch cursor advances when a task enters the queue. After a write failure, the cursor covers rows that never reached the file. A saved cursor makes the next `-resume` skip those rows silently. `scan` therefore leaves the bucket file unchanged, logs `resume_state_not_saved`, and exits with an error. Every other failure (Ctrl+C, pressure-API error, worker panic) saves progress as usual.
 
-  Recovering from it: the bucket file still holds the cursor from **before** this run, so re-running the same `scan -resume` command **covers every target** — this is verified by a test, not just asserted. What it does not do is clean up after the failed run: those already-written rows stay on disk, either appended again into the same output files (when the bucket recorded them) or left behind as separate partial files (when it did not). This applies to **both** result files — `scan_results-*.csv` and `opened_results-*.csv` are opened together, so they leave the same leftover shape. Reconcile both before consuming; a glob over either would otherwise double-count. For a clean single output instead, re-run `generate-buckets` to mint a fresh bucket file and scan into a new output path. (Note that "just don't resume" is not an option: `scan` requires `-resume <bucket file>`.)
+  Recovery: the bucket file still holds the cursor from **before** this run. A re-run of the same `scan -resume` command therefore **covers every target** — a test verifies this claim. The re-run does not clean up after the failed run. Those already-written rows stay on disk: the re-run either appends them again into the same output files (when the bucket recorded them) or leaves them behind as separate partial files (when it did not). This applies to **both** result files — `scan_results-*.csv` and `opened_results-*.csv` open together, so they leave the same leftover shape. Reconcile both files before you consume them, because a glob over either file otherwise counts rows twice. For a clean single output instead, re-run `generate-buckets` to mint a fresh bucket file and scan into a new output path. (A "just do not resume" option does not exist: `scan` requires `-resume <bucket file>`.)
 
 ## Dashboard and Logging
 
-- `scan` enables the rich dashboard by default when `stderr` is attached to a TTY and `-format human` is used.
-- Rich dashboard output is written to `stderr`.
-- If `stderr` is not a TTY, or if `-format json` is selected, `scan` falls back to non-rich output.
-- No new CLI flags are added for the UI in this version.
+- `scan` enables the rich dashboard by default when `stderr` is a TTY and you use `-format human`.
+- `scan` writes rich dashboard output to `stderr`.
+- If `stderr` is not a TTY, or if you select `-format json`, `scan` uses non-rich output instead.
+- This version adds no new CLI flags for the UI.
 
 ## Tools Reference
 
 ### port-scan
 
-TCP port scanner with pressure-aware pacing and resume support.
+`port-scan` is a TCP port scanner with pressure-aware pacing and resume support.
 
 **Commands** (each parses only its own flag surface):
-- `port-scan preping [flags]` - Ping unique target IPs; write `unreachable_results-<ts>.csv` and print its path
-- `port-scan generate-buckets [flags]` - Build the resume bucket snapshot (`-buckets-out` required); no network I/O
-- `port-scan scan [flags]` - Pure TCP scan of a bucket snapshot (`-resume` required); no ping flags
+- `port-scan preping [flags]` - Ping unique target IPs. Write `unreachable_results-<ts>.csv` and print its path
+- `port-scan generate-buckets [flags]` - Build the resume bucket snapshot (`-buckets-out` required). No network I/O
+- `port-scan scan [flags]` - Pure TCP scan of a bucket snapshot (`-resume` required). No ping flags
 - `port-scan validate [flags]` - Validate input files only (no network scan)
 
 **Flags** (which flag lives on which subcommand). Full per-command tables and
@@ -340,23 +342,23 @@ defaults are in [All flags](docs/cli/flags.md).
 
 | Flag | Subcommand(s) | Notes |
 |------|---------------|-------|
-| `-cidr-file` (required) | all | Rich/basic CSV; source of truth for target metadata |
+| `-cidr-file` (required) | all | Rich/basic CSV. The source of truth for target metadata |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | all | Case-sensitive column mapping (defaults `ip` / `ip_cidr`) |
 | `-workers` | `preping`, `generate-buckets`, `scan` | Also parallelizes bucket generation (default `10`, accepted range `1`-`1024`) |
 | `-progress-interval` | `preping`, `generate-buckets`, `scan` | Progress line cadence, count-based (default `100`) — **NEW** |
 | `-log-level` / `-format` / `-quiet` | all | Shared observability flags |
-| `-pre-scan-ping-timeout` | `preping` | Ping reply-wait (default `100ms`); removed from `scan` |
+| `-pre-scan-ping-timeout` | `preping` | Ping reply-wait (default `100ms`). Removed from `scan` |
 | `-output` | `preping`, `scan` | Output anchor: unreachable CSV (`preping`), scan/opened CSVs (`scan`) |
-| `-port-file` | `generate-buckets` (primary), `scan` (fallback) | Required in basic mode; ignored in rich mode |
+| `-port-file` | `generate-buckets` (primary), `scan` (fallback) | Required in basic mode. Ignored in rich mode |
 | `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `preping` output) — **NEW** |
 | `-buckets-out` (required) | `generate-buckets` | Bucket snapshot output path — **NEW** |
-| `-resume` (required) | `scan` | Bucket snapshot to scan; updated in place on cancel/error |
+| `-resume` (required) | `scan` | Bucket snapshot to scan. Updated in place on cancel or error |
 | `-timeout` / `-delay` / `-bucket-rate` / `-bucket-capacity` | `scan` | Dial/dispatch tuning (`-bucket-rate` and `-bucket-capacity` accept `1`-`1000000`) |
 | `-disable-api`, `-pressure-*` | `scan` | Pressure-API control (auth flags required with `-pressure-use-auth`) |
 
 ### enrich-targets
 
-Enriches a minimal `host,port` CSV into rich CSV format required by `port-scan` rich mode and `preprocess`.
+`enrich-targets` enriches a minimal `host,port` CSV into the rich CSV format that `port-scan` rich mode and `preprocess` require.
 
 **Usage:**
 ```bash
@@ -376,7 +378,7 @@ enrich-targets --input <file> --cidr-list <file> --service-map <file> --output <
 
 ### preprocess
 
-Filters a rich CSV by removing targets whose `dst_network_segment` is contained within a closed CIDR, then writes a port-scan-ready input file.
+`preprocess` filters a rich CSV: it removes targets whose `dst_network_segment` is inside a closed CIDR. Then it writes a port-scan-ready input file.
 
 **Usage:**
 ```bash
@@ -390,20 +392,20 @@ preprocess --input <file> --cleaned-cidrs <file> --fab-name <name> --output-dir 
 | `--input` | string | required | Path to rich CSV (from `enrich-targets` or filtered targets) |
 | `--cleaned-cidrs` | string | required | Path to cleaned CIDRs CSV (`fab`, `segment`, `status`) |
 | `--fab-name` | string | required | Data center / fabric name (filters CIDRs for this fabric) |
-| `--output-dir` | string | required | Base output directory; writes to `<output-dir>/<fab-name>/<timestamp>/input.csv` |
+| `--output-dir` | string | required | Base output directory. The tool writes to `<output-dir>/<fab-name>/<timestamp>/input.csv` |
 
 **Output:** Timestamped CSV at `<output-dir>/<fab-name>/<timestamp>/input.csv` plus a summary (total / kept / dropped) on stderr.
 
-`--fab-name` must be a single safe directory name and is validated before any
-input is read: path separators, `.`/`..`, absolute paths, the characters
-`< > : " | ? *`, control characters, a trailing dot or space, and Windows
-reserved device names (`CON`, `NUL`, `COM1`, … — including `con.txt`) are
-rejected rather than sanitized. See
+`--fab-name` must be a single safe directory name. The tool validates it before
+it reads any input. The tool rejects (and does not sanitize): path separators,
+`.`/`..`, absolute paths, the characters `< > : " | ? *`, control characters, a
+trailing dot or space, and Windows reserved device names (`CON`, `NUL`, `COM1`,
+… — including `con.txt`). See
 [docs/apps/preprocess/SPEC.md](docs/apps/preprocess/SPEC.md) for the full list.
 
 ### cidr-compare
 
-Compare open CIDRs against deny CIDRs using an interval tree for efficient lookup.
+`cidr-compare` compares open CIDRs against deny CIDRs with an interval tree for efficient lookup.
 
 **Usage:**
 ```bash
@@ -421,15 +423,15 @@ cidr-compare -deny-file <file> -open-file <file>
 | `-deny-file` | string | required | Path to deny CSV file (or CIDR_COMPARE_DENY_FILE env var) |
 | `-open-file` | string | required | Path to open CSV file (or CIDR_COMPARE_OPEN_FILE env var) |
 
-**Input format (deny CSV):** CSV with columns `dst_network_segment` (CIDR notation, e.g., `10.0.0.0/24`) and `decision`. Falls back to columns 0 and 1 if headers are missing.
+**Input format (deny CSV):** CSV with columns `dst_network_segment` (CIDR notation, for example `10.0.0.0/24`) and `decision`. If headers are missing, the tool reads columns 0 and 1.
 
-**Input format (open CSV):** CSV with columns `segment` (CIDR notation) and `status`. Falls back to columns 0 and 1 if headers are missing.
+**Input format (open CSV):** CSV with columns `segment` (CIDR notation) and `status`. If headers are missing, the tool reads columns 0 and 1.
 
 **Output format:** CSV with header `deny_cidr,open_cidr` followed by matching pairs where the deny CIDR contains the open CIDR.
 
 ### csv-transform
 
-Transforms a spreadsheet-style CSV (e.g. an Excel export with `Host`, `Port`, `Pass the test` columns) into rich CSV format via host resolution and port expansion. This is a separate preparation path for spreadsheet-sourced inputs and is not part of the `enrich-targets`/`preprocess` workflow.
+`csv-transform` transforms a spreadsheet-style CSV (for example an Excel export with `Host`, `Port`, `Pass the test` columns) into rich CSV format through host resolution and port expansion. This tool is a separate preparation path for spreadsheet-sourced inputs. It is not part of the `enrich-targets`/`preprocess` workflow.
 
 **Usage:**
 ```bash
@@ -464,11 +466,11 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 | Flag | Typical Use |
 |------|-------------|
 | `-cidr-file` | CIDR/rich input CSV path (required on every subcommand) |
-| `-port-file` | Port list path — `generate-buckets` in basic mode; `scan` fallback |
+| `-port-file` | Port list path — `generate-buckets` in basic mode, `scan` fallback |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | Map custom CSV column names |
 | `-unreachable-file` | `generate-buckets`: blocklist to subtract (a `preping` output) |
 | `-buckets-out` | `generate-buckets`: bucket snapshot output (required) |
-| `-resume` | `scan`: bucket snapshot to scan (required; updated in place) |
+| `-resume` | `scan`: bucket snapshot to scan (required, updated in place) |
 | `-output` | `preping` / `scan`: output directory anchor |
 | `-pre-scan-ping-timeout` | `preping`: reachability timeout (default `100ms`) |
 | `-progress-interval` | Pipeline steps: progress line cadence (default `100`) |
@@ -510,18 +512,19 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - IPv4 only (selectors, CIDR parsing, and expansion paths).
 - Port input accepts `<port>/tcp` only.
 - Pressure API polling fails hard after 3 consecutive failures.
-- Pressure threshold defaults to `60` and is not exposed as CLI flag.
-- Pause gate blocks new dispatch only; in-flight worker probes continue.
+- The pressure threshold defaults to `60`. No CLI flag exposes it.
+- The pause gate blocks new dispatch only. In-flight worker probes continue.
 - Dispatch order is chunk-serial (not cross-CIDR fair round-robin).
-- E2E requires Docker runtime and `docker compose`.
+- E2E requires the Docker runtime and `docker compose`.
 
 ## Windows Install, Upgrade and Rollback (PowerShell)
 
 Release assets are Windows x64 (`amd64`) only — Windows ARM64 is deliberately
-out of scope. They are built from the tagged source by
-[`.github/workflows/release.yml`](.github/workflows/release.yml) on a clean
-runner and every `.exe` is executed on a native Windows runner before the
-release is published; no binary is ever committed to this repository.
+out of scope. The workflow
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds them
+from the tagged source on a clean runner. It runs every `.exe` on a native
+Windows runner before it publishes the release. No binary is ever committed to
+this repository.
 
 All commands below are PowerShell 5.1 or 7+. Set `$Version` once:
 
@@ -532,8 +535,8 @@ $Archive = "port-scan-mk3_${Version}_windows_amd64.zip"
 
 ### 1. Download and verify the checksum
 
-Download `$Archive` and `SHA256SUMS.txt` from the release page, then verify
-before extracting anything:
+Download `$Archive` and `SHA256SUMS.txt` from the release page. Then verify the
+checksum before you extract anything:
 
 ```powershell
 $expected = (Select-String -Path SHA256SUMS.txt -Pattern $Archive).Line.Split(' ')[0]
@@ -542,12 +545,12 @@ if ($actual -ne $expected) { throw "checksum mismatch: $actual != $expected" }
 'checksum ok'
 ```
 
-The archive contains a second `SHA256SUMS.txt` covering the individual `.exe`
-files, so you can re-verify them after extraction.
+The archive contains a second `SHA256SUMS.txt` for the individual `.exe`
+files, so you can verify them again after extraction.
 
 ### 2. Install
 
-Per-user, no administrator rights needed (recommended):
+A per-user install needs no administrator rights (recommended):
 
 ```powershell
 $Install = "$env:LOCALAPPDATA\Programs\port-scan-mk3"
@@ -555,9 +558,9 @@ New-Item -ItemType Directory -Force -Path $Install | Out-Null
 Expand-Archive -Path $Archive -DestinationPath $Install -Force
 ```
 
-For a machine-wide install use `"$env:ProgramFiles\port-scan-mk3"` instead and
+For a machine-wide install, use `"$env:ProgramFiles\port-scan-mk3"` instead and
 run PowerShell as Administrator. Do not install into a directory that a scan
-writes output to; keep binaries and scan output separate.
+writes output to. Keep binaries and scan output separate.
 
 ### 3. Add it to PATH
 
@@ -568,20 +571,20 @@ if ($userPath -notlike "*$Install*") {
 }
 ```
 
-This affects **new** shells only. Open a new PowerShell window, then confirm the
-installed build is the one you verified:
+This change affects **new** shells only. Open a new PowerShell window. Then make
+sure that the installed build is the one that you verified:
 
 ```powershell
 port-scan --version
 ```
 
-The first line must read `port-scan version v2.2.0`. If it says `dev`, you are
-running a locally built binary rather than a release asset.
+The first line must read `port-scan version v2.2.0`. If it says `dev`, the
+binary is a local build, not a release asset.
 
 ### 4. Upgrade (snapshot backup first)
 
-Always snapshot the current install before overwriting it — this is what makes
-the rollback in step 5 possible:
+Always make a snapshot of the current install before you overwrite it. This
+snapshot makes the rollback in step 5 possible:
 
 ```powershell
 $Stamp    = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -592,10 +595,10 @@ Expand-Archive -Path $Archive -DestinationPath $Install -Force
 port-scan --version
 ```
 
-Stop any running scan before upgrading: Windows keeps the `.exe` locked while it
-executes, and `Expand-Archive` will fail rather than replace it. A scan
-interrupted with `Ctrl+C` writes its resume snapshot, so it can be continued
-with `-resume` after the upgrade (see [Output and Resume
+Stop any running scan before you upgrade. Windows keeps the `.exe` locked while
+it runs, and `Expand-Archive` fails — it does not replace the locked file. A
+scan that you stop with `Ctrl+C` writes its resume snapshot. You can continue
+that scan with `-resume` after the upgrade (see [Output and Resume
 Behavior](#output-and-resume-behavior)).
 
 ### 5. Rollback
@@ -606,31 +609,31 @@ Copy-Item -Recurse -Force $Snapshot $Install
 port-scan --version   # must report the version you rolled back to
 ```
 
-Verify the version after rolling back; that is the only check that proves which
-build you are actually running. Scan output written by the newer version is not
-modified by a rollback — check the release notes for that version for any output
-schema change before reusing those files.
+Verify the version after the rollback. That check is the only proof of which
+build you run. A rollback does not change scan output that the newer version
+wrote. Before you reuse those files, read the release notes of that version for
+output schema changes.
 
 ### What Windows validation does and does not cover
 
 The isolated Docker e2e suite (`make verify-e2e`) runs **Linux** containers, so
-it validates Linux behavior only — it says nothing about the Windows binaries.
-Windows is covered by two separate gates: the native Windows job in
+it validates Linux behavior only. It says nothing about the Windows binaries.
+Two separate gates cover Windows: the native Windows job in
 `.github/workflows/ci.yml` (build and `go test` on `windows-latest`), and the
-release workflow's smoke job, which executes every published `.exe` on a
-`windows-latest` runner and checks it reports the release version before
-anything is published.
+release workflow's smoke job. The smoke job runs every published `.exe` on a
+`windows-latest` runner. It makes sure that each `.exe` reports the release
+version before anything is published.
 
 ## Testing and Verification
 
 - **Full quality gate (run before every "done"): `make verify`** — gofmt, `go vet`,
-  build, `go test -race -shuffle=on`, and the 85% coverage gate. Mirrors CI.
+  build, `go test -race -shuffle=on`, and the 85% coverage gate. It mirrors CI.
 - Full gate **plus** isolated Docker e2e: `make verify-e2e`
 - Individual steps: `make test` · `make cover` · `make e2e` · `make fmt` (`make help` lists all)
 - Speed-control verification report: `bash e2e/speedcontrol/run_speedcontrol_e2e.sh`
 - CI runs these gates on every push and PR (`.github/workflows/ci.yml`).
-- Release assets are built, checksummed and smoke-tested by
-  `.github/workflows/release.yml` on a `v*` tag push; see
+- On a `v*` tag push, `.github/workflows/release.yml` builds, checksums, and
+  smoke-tests the release assets. See
   [Release evidence](docs/MAINTENANCE.md#7-release-evidence).
 - See [Maintainability Baseline](docs/MAINTENANCE.md) for the full contract, cross-platform
   notes, and a complete runnable example.
@@ -640,7 +643,7 @@ anything is published.
 - Install gitleaks (example on macOS): `brew install gitleaks`
 - Enable pre-commit hook (one-time): `bash scripts/setup-githooks.sh`
 - Manual staged scan (same as hook): `gitleaks git --staged --redact --config=.gitleaks.toml .`
-- CI scan is enforced on every `push` and `pull_request` by `.github/workflows/gitleaks.yml`.
+- `.github/workflows/gitleaks.yml` enforces the CI scan on every `push` and `pull_request`.
 
 ## Docs
 

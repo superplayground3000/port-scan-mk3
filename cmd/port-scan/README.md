@@ -1,21 +1,21 @@
 # port-scan
 
-TCP port scanner for IPv4 with pressure-aware pacing, rate control, and resume support. Scans a set of targets and ports, writing results to CSV output files.
+TCP port scanner for IPv4 with pressure-aware pacing, rate control, and resume support. It scans a set of targets and ports. It writes the results to CSV output files.
 
 ## Overview
 
 `port-scan` is the main scanner binary for the port-scan-mk3 project. It supports two input modes:
 
-- **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs, paired with a port file listing TCP ports to test.
-- **Rich mode** — A single CSV file with full firewall-policy rows (src_ip, dst_ip, port, decision, etc.). In rich mode, no separate port file is required.
+- **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs. A port file gives the TCP ports to test.
+- **Rich mode** — A single CSV file with full firewall-policy rows (for example, src_ip, dst_ip, port, and decision). In rich mode, you do not need a separate port file.
 
-The scanner dispatches tasks to a configurable worker pool, writes results in real time, and can be paused/resumed via SIGINT or a pressure API.
+The scanner dispatches tasks to a worker pool that you configure. It writes the results in real time. SIGINT or a pressure API can pause the scan and resume it.
 
 ## Commands
 
 ### validate
 
-Parse and validate input files without running a network scan. Runs in O(n) time over the input rows.
+This command parses and validates the input files. It does not run a network scan. It runs in O(n) time over the input rows.
 
 ```bash
 port-scan validate -cidr-file targets.csv -port-file ports.csv
@@ -24,7 +24,7 @@ port-scan validate -cidr-file targets.csv -port-file ports.csv -format json
 
 ### scan
 
-Run the full scan pipeline. Outputs are written to `scan_results-<timestamp>.csv` (all results) and `opened_results-<timestamp>.csv` (open ports only).
+Run the full scan pipeline. The command writes the output to `scan_results-<timestamp>.csv` (all results) and `opened_results-<timestamp>.csv` (open ports only).
 
 ```bash
 port-scan scan -cidr-file targets.csv -port-file ports.csv
@@ -74,11 +74,11 @@ CLI entry point (main.go)
 |---------|----------------|
 | `pkg/config` | Flag parsing and Config struct |
 | `pkg/validate` | Input file validation (exists, parseable, correct schema) |
-| `pkg/input` | CIDR CSV and port file loading; auto-detects basic vs rich mode |
+| `pkg/input` | CIDR CSV and port file loading. It detects basic or rich mode automatically |
 | `pkg/scanapp` | Full scan orchestration: task dispatch, executor, pressure monitor, dashboard, result writer |
-| `pkg/speedctrl` | Rate control via leaky-bucket controller; keyboard pause support |
+| `pkg/speedctrl` | Rate control through a leaky-bucket controller, plus keyboard pause support |
 | `pkg/scanner` | Low-level TCP scanning via `net.DialTimeout` |
-| `pkg/writer` | CSV output with fixed 14-column schema; OpenOnlyWriter filter |
+| `pkg/writer` | CSV output with a fixed 14-column schema, plus the OpenOnlyWriter filter |
 | `pkg/cli` | CLI formatting (human vs JSON output for validate command) |
 | `pkg/state` | SIGINT cancel context for graceful interruption |
 
@@ -99,16 +99,16 @@ All flags apply to both `validate` and `scan` commands unless noted.
 | `-workers` | `10` | Number of concurrent scan goroutines |
 | `-pressure-api` | `http://localhost:8080/api/pressure` | URL of the pressure API endpoint |
 | `-pressure-interval` | `5s` | How often to poll the pressure API (duration or integer seconds) |
-| `-disable-api` | `false` | Disable pressure API polling; use only local rate control |
+| `-disable-api` | `false` | Disable pressure API polling. Use local rate control only |
 | `-pressure-auth-url` | (empty) | OAuth token endpoint URL (required with `-pressure-use-auth`) |
-| `-pressure-data-url` | (empty) | Comma-separated list of pressure data endpoint URLs (required with `-pressure-use-auth`; all sources must succeed; maximum value is used) |
+| `-pressure-data-url` | (empty) | Comma-separated list of pressure data endpoint URLs. Required with `-pressure-use-auth`. All sources must succeed, and the command uses the maximum value |
 | `-pressure-client-id` | (empty) | OAuth client ID (required with `-pressure-use-auth`) |
 | `-pressure-client-secret` | (empty) | OAuth client secret (required with `-pressure-use-auth`) |
 | `-pressure-use-auth` | `false` | Use OAuth-authenticated pressure fetcher |
 | `-resume` | (empty) | Path to a resume state JSON file to continue an interrupted scan |
 | `-log-level` | `info` | Log verbosity: `debug`, `info`, or `error` |
 | `-format` | `human` | Output format: `human` (line-oriented) or `json` (structured). Applies to `validate` output only. |
-| `-quiet` | `false` | Suppress console logs; keep pressure API logs |
+| `-quiet` | `false` | Suppress the console logs. Keep the pressure API logs |
 | `-cidr-ip-col` | `ip` | Column name for the IP selector in the CIDR CSV |
 | `-cidr-ip-cidr-col` | `ip_cidr` | Column name for the boundary CIDR in the CIDR CSV |
 
@@ -116,7 +116,7 @@ All flags apply to both `validate` and `scan` commands unless noted.
 
 ### Basic Mode: CIDR CSV
 
-One row per IP selector. Columns are matched by header name with fallback to position.
+One row per IP selector. `port-scan` matches the columns by header name. If the header name is absent, `port-scan` uses the column position.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -146,7 +146,7 @@ One specification per line in `port/tcp` format.
 
 ### Rich Mode: Firewall-Policy CSV
 
-Auto-detected by the presence of all required columns. No port file is needed — each row specifies its own dst_ip, dst_network_segment, port, and decision. Rows with `decision=accept` become scan targets; `decision=deny` rows are skipped.
+`port-scan` detects this mode when all the required columns are present. You do not need a port file, because each row gives its own dst_ip, dst_network_segment, port, and decision. Rows with `decision=accept` become scan targets. `port-scan` skips the rows with `decision=deny`.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -196,7 +196,7 @@ ip,ip_cidr,port,status,response_time_ms,fab_name,cidr_name,service_label,decisio
 | `src_ip` | Source IP from rich input (rich mode only) |
 | `src_network_segment` | Source network boundary (rich mode only) |
 
-Basic mode rows carry `ip`, `ip_cidr`, `port`, `status`, `response_time_ms`, `fab_name`, `cidr_name`; all other columns are empty.
+Basic mode rows carry `ip`, `ip_cidr`, `port`, `status`, `response_time_ms`, `fab_name`, and `cidr_name`. All the other columns are empty.
 
 **Example row (basic mode):**
 ```
@@ -205,11 +205,11 @@ Basic mode rows carry `ip`, `ip_cidr`, `port`, `status`, `response_time_ms`, `fa
 
 ### opened_results-*.csv
 
-Same schema as `scan_results-*.csv`, but contains only rows where `status=open`.
+This file has the same schema as `scan_results-*.csv`. It contains only the rows where `status=open`.
 
 ### resume_state.json
 
-Written on SIGINT or scan failure. Contains completed task keys so the scan can be resumed from where it left off.
+`port-scan` writes this file on SIGINT or on a scan failure. It contains the completed task keys. Thus you can continue the scan at the point where it stopped.
 
 ## Usage Examples
 
@@ -280,7 +280,7 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv \
 
 ### Scan with multiple authenticated pressure API sources
 
-All sources share the same OAuth credentials. The scanner polls each URL concurrently and pauses when any source reports pressure at or above the threshold.
+All the sources share the same OAuth credentials. The scanner polls each URL concurrently. When the pressure from any source is at the threshold or higher, the scanner pauses.
 
 ```bash
 port-scan scan -cidr-file targets.csv -port-file ports.csv \
@@ -319,10 +319,10 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv -quiet
 
 | Code | Meaning | Details |
 |------|---------|---------|
-| `0` | Success | Scan completed; result CSVs written |
+| `0` | Success | The scan completed, and the command wrote the result CSVs |
 | `1` | Runtime error | File write failure, config error during run, or validation failure |
 | `2` | CLI or config error | Missing required flags, invalid flag values, parse failure |
-| `130` | Scan canceled | SIGINT received during scan; `resume_state.json` written |
+| `130` | Scan canceled | The scan received SIGINT, and the command wrote `resume_state.json` |
 
 **Validation exit codes:**
 - `validate` with `0` — all inputs valid
@@ -352,8 +352,8 @@ go test ./...
 
 ## Implementation Notes
 
-The scanner uses Go standard library `net.DialTimeout` for TCP connections. Workers are goroutines sharing a bounded task channel; results are serialized at write time by a single writer goroutine.
+The scanner uses the Go standard library `net.DialTimeout` for TCP connections. The workers are goroutines that share a bounded task channel. A single writer goroutine serializes the results at write time.
 
-Pressure control works by having the task dispatcher consult a `speedctrl.Controller` before releasing each task. The controller accumulates tokens from the leaky-bucket scheduler and the pressure API (when enabled). Keyboard input (`p` to pause, `r` to resume) updates the controller directly.
+For pressure control, the task dispatcher consults a `speedctrl.Controller` before it releases each task. The controller accumulates tokens from the leaky-bucket scheduler and from the pressure API (when it is enabled). Keyboard input (`p` to pause, `r` to resume) updates the controller directly.
 
-The output schema (14 columns) is defined as a single source of truth in `pkg/writer/csv_writer.go`. Changing the schema is a MAJOR version change per the product constitution.
+`pkg/writer/csv_writer.go` defines the output schema (14 columns) as a single source of truth. A change to the schema is a MAJOR version change, per the product constitution.

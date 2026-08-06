@@ -4,8 +4,8 @@ Copy-paste scenarios for developers and contributors. Run from repo root unless
 noted.
 
 `port-scan` is a **three-step pipeline**: `preping` -> `generate-buckets` ->
-`scan`. `scan` requires a bucket snapshot via `-resume`; it never pings and no
-longer accepts ping flags. See [All flags](flags.md) and the
+`scan`. `scan` requires a bucket snapshot from `-resume`. It never pings, and it
+no longer accepts the ping flags. See [All flags](flags.md) and the
 [2.0.0 release notes](../release-notes/2.0.0.md) for the migration.
 
 ## Scenario 0: Full three-step pipeline (basic mode)
@@ -78,8 +78,8 @@ Expected:
 
 ## Scenario 2: Rich mode (no port file)
 
-Goal: Use rich CSV input (`src_ip`/`dst_ip`/.../`port`) — ports come from the CSV,
-so `-port-file` is not needed at any step.
+Goal: Use rich CSV input (`src_ip`/`dst_ip`/.../`port`) — the ports come from the
+CSV, so you do not need `-port-file` at any step.
 
 Commands:
 ```bash
@@ -94,14 +94,14 @@ go run ./cmd/port-scan scan \
 ```
 
 Expected:
-- Rich mode is auto-detected by header; each chunk carries its per-target port.
+- `port-scan` detects rich mode from the header. Each chunk carries its per-target port.
 - Output includes rich context columns such as `policy_id` and `execution_key`.
 
 ## Scenario 3: Custom CIDR column mapping
 
-Goal: Use non-default CIDR CSV column names (applied consistently to every step).
+Goal: Use non-default CIDR CSV column names (apply the same names to every step).
 
-Command (preping shown; pass the same flags to generate-buckets and scan):
+Command (preping shown — pass the same flags to generate-buckets and scan):
 ```bash
 go run ./cmd/port-scan preping \
   -cidr-file e2e/inputs/cidr_normal.csv \
@@ -111,14 +111,14 @@ go run ./cmd/port-scan preping \
 ```
 
 Troubleshooting:
-- Column names are case-sensitive; verify header spelling exactly, and use the
-  same mapping flags on `preping`, `generate-buckets`, and `scan`.
+- Column names are case-sensitive. Make sure that the header spelling is exact.
+  Use the same mapping flags on `preping`, `generate-buckets`, and `scan`.
 
 ## Scenario 4: Observe rich dashboard output (scan)
 
-Goal: See the rich dashboard render during an interactive scan.
+Goal: See the rich dashboard while an interactive scan runs.
 
-Command (after building a bucket file as in Scenario 2):
+Command (build a bucket file first, as in Scenario 2):
 ```bash
 go run ./cmd/port-scan scan \
   -cidr-file tests/integration/testdata/rich_input/dedup_context.csv \
@@ -127,12 +127,12 @@ go run ./cmd/port-scan scan \
 ```
 
 Expected:
-- When `stderr` is a TTY and `-format human` is used, the rich dashboard appears.
-- Redirecting `stderr` or selecting `-format json` falls back to non-rich output.
+- When `stderr` is a TTY and you use `-format human`, the rich dashboard appears.
+- If you redirect `stderr` or select `-format json`, `port-scan` shows the non-rich output.
 
 ## Scenario 5: Validate inputs (human and JSON)
 
-Goal: Pre-flight check input files without scanning.
+Goal: Validate the input files before a scan.
 
 Commands:
 ```bash
@@ -151,13 +151,13 @@ go run ./cmd/port-scan validate \
 
 Expected:
 - Exit `0` for valid input, `1` for invalid input.
-- `human` prints readable text; `json` prints validity fields for scripts/CI.
+- `human` prints readable text. `json` prints validity fields for scripts and CI.
 
 ## Scenario 6: Scan with pressure control
 
-Goal: Pause/resume dispatch based on the pressure API (scan-only feature).
+Goal: Pause and resume dispatch from the pressure API (scan-only feature).
 
-Command (after building a bucket file):
+Command (build a bucket file first):
 ```bash
 go run ./cmd/port-scan scan \
   -cidr-file e2e/inputs/cidr_normal.csv \
@@ -170,9 +170,9 @@ go run ./cmd/port-scan scan \
 
 Expected:
 - The scanner polls the pressure API and adjusts the dispatch gate.
-- Logs show pressure-triggered pause/resume transitions.
+- The logs show the pause and resume transitions that pressure triggers.
 - The third consecutive API failure terminates the scan with a non-zero exit and
-  persists the resume snapshot. Use `-disable-api` to isolate API effects.
+  persists the resume snapshot. To isolate the API effects, use `-disable-api`.
 
 ## Scenario 7: Resume-in-place after SIGINT
 
@@ -196,8 +196,9 @@ go run ./cmd/port-scan scan \
 ```
 
 Expected:
-- On SIGINT (exit `130`) or error, `scan` writes progress back to the **same**
-  `-resume` path (`e2e/out/buckets.json`), overwriting the bucket file it read.
+- On SIGINT (exit `130`) or on an error, `scan` writes the progress back to the
+  **same** `-resume` path (`e2e/out/buckets.json`). It overwrites the bucket file
+  that it read.
 - The second run loads that updated snapshot and continues without duplicate or
   missing records.
 
@@ -207,21 +208,22 @@ Troubleshooting:
 
 ## Scenario 8: Same-second output collision naming
 
-Goal: Observe `-n` suffix allocation when scans start within the same second.
+Goal: When two scans start in the same second, observe the `-n` suffix allocation.
 
-Command (run twice quickly, after building a bucket file):
+Command (build a bucket file first, then run this twice quickly):
 ```bash
 go run ./cmd/port-scan scan -cidr-file e2e/inputs/cidr_normal.csv -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr -resume e2e/out/buckets.json -port-file e2e/inputs/ports.csv -output e2e/out/scan_results.csv
 go run ./cmd/port-scan scan -cidr-file e2e/inputs/cidr_normal.csv -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr -resume e2e/out/buckets.json -port-file e2e/inputs/ports.csv -output e2e/out/scan_results.csv
 ```
 
 Expected:
-- `scan_results-YYYYMMDDTHHMMSSZ.csv` then `scan_results-YYYYMMDDTHHMMSSZ-1.csv`;
+- `scan_results-YYYYMMDDTHHMMSSZ.csv`, then `scan_results-YYYYMMDDTHHMMSSZ-1.csv`.
   `opened_results` uses the same sequence for each batch.
 
 ## Scenario 9: e2e parity execution
 
-Goal: Validate production-like e2e behavior with Docker mocks and report artifacts.
+Goal: Verify the production-like e2e behavior with Docker mocks and report
+artifacts.
 
 Command:
 ```bash
@@ -231,11 +233,12 @@ bash e2e/run_e2e.sh
 Expected:
 - The three-step pipeline (`preping` -> `generate-buckets` -> `scan`) runs in
   sequence against the mock services.
-- Normal and failure scenarios pass; artifacts appear under `e2e/out/` (report
+- The normal and failure scenarios pass. Artifacts appear under `e2e/out/` (report
   files, batch CSVs, bucket/resume snapshots).
 
 Troubleshooting:
-- If e2e fails early, verify the Docker daemon and `docker compose` availability.
+- If e2e fails early, make sure that the Docker daemon and `docker compose` are
+  available.
 
 ## Scenario 10: From-scratch pre-processing into the pipeline
 
@@ -260,12 +263,12 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 
 Expected:
 - Step 1 prints a `total / kept / dropped` summary and the output path.
-- Step 2 buckets and scans the filtered rich targets; `opened_results-*.csv`
+- Step 2 buckets and scans the filtered rich targets. `opened_results-*.csv`
   contains only open ports.
 
 Troubleshooting:
-- If `preprocess` reports 0 kept rows, verify `--fab-name` matches the `fab`
-  column in `cleaned_cidrs.csv` (case-sensitive).
+- If `preprocess` reports 0 kept rows, make sure that `--fab-name` matches the
+  `fab` column in `cleaned_cidrs.csv` (case-sensitive).
 
 ## Scenario 11: Re-scan pre-processing into the pipeline
 
@@ -289,10 +292,10 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 ```
 
 Expected:
-- `enrich-targets` reports `Enriched N rows from M input rows`; unparseable ports
-  are skipped with per-row warnings.
+- `enrich-targets` reports `Enriched N rows from M input rows`. It skips
+  unparseable ports and writes a warning for each row.
 - `preprocess` prints the total/kept/dropped summary and output path.
-- The pipeline runs a full rich-mode scan using the previously discovered hosts.
+- The pipeline runs a full rich-mode scan on the hosts discovered before.
 
 ---
 **Revised**: 2026-07-22 | **Author**: docs-team

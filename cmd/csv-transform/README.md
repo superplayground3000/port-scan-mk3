@@ -1,6 +1,6 @@
 # csv-transform
 
-Transforms a CSV file containing port scan results into a Rich CSV input file consumable by the `port-scan` pipeline.
+`csv-transform` transforms a CSV file of port scan results into a Rich CSV input file. The `port-scan` pipeline can read this file.
 
 ## Usage
 
@@ -20,16 +20,16 @@ csv-transform --input=scan.csv --output=data.csv
 
 ## Input Format
 
-The CSV should have columns for Host, Port, and Pass the test. Example:
+The CSV must have columns for Host, Port, and Pass the test. Example:
 
 | Host | Port | Pass the test |
 |------|------|---------------|
 | 192.168.1.1 | 80/443 | FALSE |
 | 10.0.0.5 | 22 | TRUE |
 
-- Rows where `Pass the test` is `"TRUE"` (case-insensitive) are **skipped**.
-- Ports separated by `/` are **expanded** into one row per port.
-- Hostnames are resolved via DNS; on failure the hostname string is passed through as-is.
+- `csv-transform` **skips** the rows where `Pass the test` is `"TRUE"` (case-insensitive).
+- `csv-transform` **expands** the ports separated by `/` into one row per port.
+- `csv-transform` resolves the hostnames with DNS. If the lookup fails, it writes the hostname string without a change.
 
 ## Output Format
 
@@ -99,7 +99,7 @@ csv-transform
 
 ## Pipeline Integration
 
-After transforming, use the output as input to the `port-scan` pipeline:
+After `csv-transform` writes the output, use that file as the input to the `port-scan` pipeline:
 
 ```bash
 # Transform CSV → Rich CSV

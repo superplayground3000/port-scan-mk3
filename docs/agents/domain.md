@@ -1,15 +1,15 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+This document tells the engineering skills how to read this repo's domain documentation during an exploration of the codebase.
 
-This is a **single-context** repo: one `CONTEXT.md` at the root and one `docs/adr/` directory for all decisions.
+This repo is **single-context**: one `CONTEXT.md` at the root, and one `docs/adr/` directory for all decisions.
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root — the domain glossary and context overview.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
+- **`CONTEXT.md`** at the repo root — the domain glossary and the context overview.
+- **`docs/adr/`** — read the ADRs that touch the area of your work.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+If one of these files does not exist, **continue silently**. Do not report the missing file, and do not propose to create it first. The `/domain-modeling` skill (reached through `/grill-with-docs` and `/improve-codebase-architecture`) creates these files later, when a term or a decision is resolved.
 
 ## File structure
 
@@ -24,14 +24,14 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term that `CONTEXT.md` defines. Do not use a synonym that the glossary explicitly avoids.
 
-If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+A concept that is not yet in the glossary is a signal. Either you invent language that the project does not use (think again), or a real gap exists (record it for `/domain-modeling`).
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+If your output contradicts an existing ADR, report the contradiction explicitly. Do not override the ADR silently:
 
 > _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
 
-ADRs complement `.claude/rules/constitution.md`: the constitution holds MUST-level project law; ADRs record individual architecture decisions and their context. When they conflict, the constitution wins.
+ADRs complement `.claude/rules/constitution.md`. The constitution holds MUST-level project law. Each ADR records one architecture decision and its context. If the two conflict, the constitution wins.
