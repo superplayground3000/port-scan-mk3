@@ -16,7 +16,7 @@ not register `-disable-pre-scan-ping` or `-pre-scan-ping-timeout` at all.
 
 | Subcommand | Purpose | Required flags |
 |------------|---------|----------------|
-| `preping` | Ping unique target IPs, write `unreachable_results-<ts>.csv` | `-cidr-file` |
+| `pre-ping` | Ping unique target IPs, write `unreachable_results-<ts>.csv` | `-cidr-file` |
 | `generate-buckets` | Build the resume bucket snapshot from targets − blocklist | `-cidr-file`, `-buckets-out` |
 | `scan` | Pure TCP scan of a bucket snapshot | `-cidr-file`, `-resume` |
 | `validate` | Validate CIDR/port inputs, no scan | `-cidr-file` |
@@ -27,7 +27,7 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 (default `ip`), `-cidr-ip-cidr-col` (default `ip_cidr`), `-log-level` (default
 `info`), `-format` (`human`|`json`, default `human`), `-quiet`.
 
-### `port-scan preping`
+### `port-scan pre-ping`
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -51,7 +51,7 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 | `-cidr-file` | string | required | Path to CIDR/rich CSV input file. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
 | `-port-file` | string | optional | Port list (`<port>/tcp` lines). Required in basic (non-rich) mode. Ignored in rich mode, where the command reads the port of each target from the CSV. |
-| `-unreachable-file` | string | optional | Blocklist CSV (a `preping` output). The command subtracts its `ip` column from the target set. Omit it to bucket all targets. |
+| `-unreachable-file` | string | optional | Blocklist CSV (a `pre-ping` output). The command subtracts its `ip` column from the target set. Omit it to bucket all targets. |
 | `-buckets-out` | string | **required** | Output path for the bucket snapshot (the resume `Snapshot` JSON). |
 | `-workers` | int | `10` | Parallel chunk builders, one for each CIDR group. Accepted range `1`-`1024`. The output is deterministic (CIDR-sorted) at every worker count. |
 | `-progress-interval` | int | `100` | Progress line cadence (count of processed CIDR groups). The command writes these lines to stderr. |
@@ -98,14 +98,14 @@ validates the inputs only. It never scans and never pings.
 - `-cidr-file` is required for every subcommand.
 - `-format` accepts `human` or `json` only.
 - `-cidr-ip-col` and `-cidr-ip-cidr-col` must not be empty after the command trims them.
-- `preping` requires `-pre-scan-ping-timeout > 0`.
+- `pre-ping` requires `-pre-scan-ping-timeout > 0`.
 - `generate-buckets` requires `-buckets-out`. `-unreachable-file` is optional.
 - `scan` requires `-resume`, and `-pressure-interval` must be more than zero. If
   you set `-pressure-use-auth`, all four auth flags are required
   (`-pressure-auth-url`, `-pressure-data-url`, `-pressure-client-id`,
   `-pressure-client-secret`).
 - Batch output names use a shared timestamp suffix. A collision inside the same
-  second appends `-n`. `preping` writes `unreachable_results-<ts>.csv`. `scan`
+  second appends `-n`. `pre-ping` writes `unreachable_results-<ts>.csv`. `scan`
   writes `scan_results-<ts>.csv` and `opened_results-<ts>.csv`.
 - **Ctrl+C keeps the results, and `-resume` appends to the same files.** `scan`
   writes rows directly to the final `scan_results-<ts>.csv` /
@@ -135,7 +135,7 @@ validates the inputs only. It never scans and never pings.
   still resolves against that new directory. The command uses an absolute path in
   a snapshot exactly as recorded.
 - The `-unreachable-file` name has a timestamp and is not deterministic. Capture
-  the stdout path that `preping` prints when you chain the steps. Do not
+  the stdout path that `pre-ping` prints when you chain the steps. Do not
   hard-code the name.
 
 ## Common Mistakes
@@ -143,10 +143,10 @@ validates the inputs only. It never scans and never pings.
 1. **You run `scan` without `-resume`** — `scan` no longer builds buckets. Run
    `generate-buckets` first, then pass its `-buckets-out` file as `-resume`.
 2. **You pass a ping flag to `scan`** — `-disable-pre-scan-ping` and
-   `-pre-scan-ping-timeout` belong to `preping` only. On `scan` they are unknown
-   flags (exit `2`). To skip the ping, skip the `preping` step.
+   `-pre-scan-ping-timeout` belong to `pre-ping` only. On `scan` they are
+   unknown flags (exit `2`). To skip the ping, skip the `pre-ping` step.
 3. **You hard-code the unreachable filename** — the name has a timestamp.
-   Capture the path that `preping` prints to stdout.
+   Capture the path that `pre-ping` prints to stdout.
 4. **You use the wrong case in a CIDR column name** — column names are
    case-sensitive. Match the CSV header exactly.
 5. **You omit `-port-file` for `generate-buckets` in basic mode** — the flag is
@@ -158,7 +158,7 @@ validates the inputs only. It never scans and never pings.
 
 ```bash
 # 1. Ping targets; capture the printed unreachable CSV path
-UNREACHABLE=$(go run ./cmd/port-scan preping \
+UNREACHABLE=$(go run ./cmd/port-scan pre-ping \
   -cidr-file e2e/inputs/cidr_normal.csv \
   -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
   -output e2e/out/scan_results.csv)

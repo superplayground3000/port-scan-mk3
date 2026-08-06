@@ -16,8 +16,8 @@ CLI entry point (main.go)
     ├── handleValidateCommand
     │       config.Parse() → validate.Inputs() → cli.WriteValidation()
     │
-    ├── handlePrepingCommand
-    │       ParseFor("preping") → scanapp.RunPreping()
+    ├── handlePrePingCommand
+    │       ParseFor("pre-ping") → scanapp.RunPrePing()
     │           ├── collect unique IPs → reachability checker (platform ping)
     │           ├── progress (stderr) via pkg/progress
     │           └── writer.UnreachableWriter → unreachable_results-<ts>.csv (path → stdout)

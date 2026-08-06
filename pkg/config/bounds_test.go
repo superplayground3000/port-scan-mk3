@@ -26,7 +26,7 @@ func TestParseFor_RejectsOutOfRangeWorkers(t *testing.T) {
 	maxInt := strconv.Itoa(math.MaxInt)
 	overCeiling := strconv.Itoa(MaxWorkers + 1)
 
-	for _, command := range []string{"preping", "generate-buckets", "scan"} {
+	for _, command := range []string{"pre-ping", "generate-buckets", "scan"} {
 		for _, value := range []string{"0", "-1", maxInt, overCeiling} {
 			t.Run(command+"/"+value, func(t *testing.T) {
 				_, err := ParseFor(command, baseArgs(command, "-workers", value))

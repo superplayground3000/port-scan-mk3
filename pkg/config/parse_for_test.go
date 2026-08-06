@@ -7,14 +7,14 @@ import (
 
 // --- Ticket T0 required red tests ---
 
-func TestParseFor_Preping_RejectsPingScanFlags(t *testing.T) {
-	// preping does not own -disable-pre-scan-ping.
-	if _, err := ParseFor("preping", []string{"-cidr-file", "cidr.csv", "-disable-pre-scan-ping"}); err == nil {
-		t.Fatal("expected unknown-flag error for -disable-pre-scan-ping on preping")
+func TestParseFor_PrePing_RejectsPingScanFlags(t *testing.T) {
+	// pre-ping does not own -disable-pre-scan-ping.
+	if _, err := ParseFor("pre-ping", []string{"-cidr-file", "cidr.csv", "-disable-pre-scan-ping"}); err == nil {
+		t.Fatal("expected unknown-flag error for -disable-pre-scan-ping on pre-ping")
 	}
-	// preping does not own -port-file (ping is per-IP).
-	if _, err := ParseFor("preping", []string{"-cidr-file", "cidr.csv", "-port-file", "ports.csv"}); err == nil {
-		t.Fatal("expected unknown-flag error for -port-file on preping")
+	// pre-ping does not own -port-file (ping is per-IP).
+	if _, err := ParseFor("pre-ping", []string{"-cidr-file", "cidr.csv", "-port-file", "ports.csv"}); err == nil {
+		t.Fatal("expected unknown-flag error for -port-file on pre-ping")
 	}
 }
 
@@ -60,7 +60,7 @@ func TestParseFor_Scan_RejectsPingFlag(t *testing.T) {
 
 func TestParseFor_ProgressInterval_Default(t *testing.T) {
 	commands := map[string][]string{
-		"preping":          {"-cidr-file", "cidr.csv"},
+		"pre-ping":         {"-cidr-file", "cidr.csv"},
 		"generate-buckets": {"-cidr-file", "cidr.csv", "-buckets-out", "b.json"},
 		"scan":             {"-cidr-file", "cidr.csv", "-resume", "b.json"},
 	}
@@ -86,8 +86,8 @@ func TestParseFor_ProgressInterval_Default(t *testing.T) {
 
 // --- Additional coverage for per-command flag surfaces ---
 
-func TestParseFor_Preping_OwnsPingTimeoutAndOutput(t *testing.T) {
-	cfg, err := ParseFor("preping", []string{
+func TestParseFor_PrePing_OwnsPingTimeoutAndOutput(t *testing.T) {
+	cfg, err := ParseFor("pre-ping", []string{
 		"-cidr-file", "cidr.csv",
 		"-pre-scan-ping-timeout", "250ms",
 		"-output", "out/",
@@ -107,8 +107,8 @@ func TestParseFor_Preping_OwnsPingTimeoutAndOutput(t *testing.T) {
 	}
 }
 
-func TestParseFor_Preping_RejectsNonPositivePingTimeout(t *testing.T) {
-	if _, err := ParseFor("preping", []string{"-cidr-file", "cidr.csv", "-pre-scan-ping-timeout", "0s"}); err == nil {
+func TestParseFor_PrePing_RejectsNonPositivePingTimeout(t *testing.T) {
+	if _, err := ParseFor("pre-ping", []string{"-cidr-file", "cidr.csv", "-pre-scan-ping-timeout", "0s"}); err == nil {
 		t.Fatal("expected error for non-positive ping timeout")
 	}
 }
@@ -214,7 +214,7 @@ func TestParseFor_Scan_RejectsInvalidPressureInterval(t *testing.T) {
 
 func TestParseFor_CIDRFileRequiredForAllCommands(t *testing.T) {
 	cases := map[string][]string{
-		"preping":          {},
+		"pre-ping":         {},
 		"generate-buckets": {"-buckets-out", "b.json"},
 		"scan":             {"-resume", "b.json"},
 		"validate":         {},
@@ -227,13 +227,13 @@ func TestParseFor_CIDRFileRequiredForAllCommands(t *testing.T) {
 }
 
 func TestParseFor_FormatValidatedForAllCommands(t *testing.T) {
-	if _, err := ParseFor("preping", []string{"-cidr-file", "cidr.csv", "-format", "xml"}); err == nil {
+	if _, err := ParseFor("pre-ping", []string{"-cidr-file", "cidr.csv", "-format", "xml"}); err == nil {
 		t.Fatal("expected error for invalid format")
 	}
 }
 
 func TestParseFor_EmptyColumnNamesRejected(t *testing.T) {
-	if _, err := ParseFor("preping", []string{"-cidr-file", "cidr.csv", "-cidr-ip-col", " "}); err == nil {
+	if _, err := ParseFor("pre-ping", []string{"-cidr-file", "cidr.csv", "-cidr-ip-col", " "}); err == nil {
 		t.Fatal("expected error for empty cidr-ip-col")
 	}
 }
@@ -255,7 +255,7 @@ func TestParseFor_UnknownCommand_ReturnsError(t *testing.T) {
 }
 
 func TestParseFor_HelpRequest_ReturnsFlagErrHelp(t *testing.T) {
-	if _, err := ParseFor("preping", []string{"-h"}); err == nil {
+	if _, err := ParseFor("pre-ping", []string{"-h"}); err == nil {
 		t.Fatal("expected error (flag.ErrHelp) for -h")
 	}
 }

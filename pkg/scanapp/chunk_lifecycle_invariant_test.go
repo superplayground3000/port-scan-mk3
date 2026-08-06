@@ -8,7 +8,7 @@ import (
 )
 
 // These tests lock the primary correctness invariant of the split
-// preping/generate-buckets/scan feature (plan T1, design §5.3, risk R1):
+// pre-ping/generate-buckets/scan feature (plan T1, design §5.3, risk R1):
 //
 //	the TotalCount stamped onto a chunk by the fresh-build path
 //	(loadOrBuildChunksWithPredicate) is exactly the value scan's runtime

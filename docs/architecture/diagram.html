@@ -12,7 +12,7 @@
         <h1>port-scan-mk3 Architecture (Static Block Flow)</h1>
         <p>CLI orchestration, core package flow, and e2e artifact validation path.</p>
         <p>As of 2.0.0, <code>port-scan</code> is a three-step pipeline with
-        durable file hand-offs: <code>preping</code> →
+        durable file hand-offs: <code>pre-ping</code> →
         <code>generate-buckets</code> → <code>scan</code>. <code>scan</code>
         requires a bucket snapshot via <code>-resume</code> and never pings.</p>
       </header>
@@ -22,7 +22,7 @@
         <div class="grid two">
           <article class="node">
             <h3>CLI (three-step pipeline)</h3>
-            <p><code>port-scan preping</code> → unreachable CSV</p>
+            <p><code>port-scan pre-ping</code> → unreachable CSV</p>
             <p><code>port-scan generate-buckets</code> → bucket snapshot</p>
             <p><code>port-scan scan -resume &lt;bucket&gt;</code> → results</p>
             <p><code>port-scan validate</code> (inputs only)</p>

@@ -25,12 +25,12 @@ func runMain(args []string, stdout, stderr io.Writer) int {
 ### Command Routing
 
 The CLI uses simple switch-based dispatch. `port-scan` is a three-step pipeline
-(`preping` -> `generate-buckets` -> `scan`) plus a `validate` helper:
+(`pre-ping` -> `generate-buckets` -> `scan`) plus a `validate` helper:
 
 | Input | Command | Handler |
 |-------|---------|---------|
 | `args[0] == "validate"` | Input validation only | `handleValidateCommand()` |
-| `args[0] == "preping"` | Ping unique IPs, write unreachable CSV | `handlePrepingCommand()` |
+| `args[0] == "pre-ping"` | Ping unique IPs, write unreachable CSV | `handlePrePingCommand()` |
 | `args[0] == "generate-buckets"` | Build resume bucket snapshot | `handleGenerateBucketsCommand()` |
 | `args[0] == "scan"` | Pure scan of a bucket snapshot (requires `-resume`) | `handleScanCommand()` |
 | `args[0] == "--help"` or `-h` | Help | `handleHelpCommand()` |
@@ -73,16 +73,16 @@ func handleValidateCommand(args []string, stdout, stderr io.Writer) int
 3. Output result via `cli.WriteValidation(stdout, cfg.Format, result.Valid, result.Detail)`
 4. Return 0 if valid, 1 if invalid
 
-### handlePrepingCommand()
+### handlePrePingCommand()
 
 ```go
-func handlePrepingCommand(args []string, stdout, stderr io.Writer) int
+func handlePrePingCommand(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse via `config.ParseFor("preping", args)` (rejects scan/bucket flags)
+1. Parse via `config.ParseFor("pre-ping", args)` (rejects scan/bucket flags)
 2. Wrap context with `state.WithSIGINTCancel(ctx)`
-3. Call `scanapp.RunPreping(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`,
+3. Call `scanapp.RunPrePing(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`,
    which writes `unreachable_results-<ts>.csv` and prints its resolved path to
    stdout for chaining
 4. Map errors to exit codes (parse → 2, `context.Canceled` → 130, else → 1)

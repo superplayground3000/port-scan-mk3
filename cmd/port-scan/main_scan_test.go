@@ -236,7 +236,7 @@ func TestRunMain_ScanWritesOpenedResultsCSV(t *testing.T) {
 // "...ScanContractStillSucceeds" test. Its original intent — that scan tolerates
 // -disable-pre-scan-ping and still writes a (header-only) unreachable file — is
 // obsolete: after the split, scan never pings and owns no ping flags or
-// unreachable artifact (that is preping's job). The meaningful contract now is
+// unreachable artifact (that is pre-ping's job). The meaningful contract now is
 // that the removed flag is an unknown-flag parse error, which this asserts.
 // (Complements TestRunMain_Scan_RejectsPingFlags, which covers
 // -pre-scan-ping-timeout.)

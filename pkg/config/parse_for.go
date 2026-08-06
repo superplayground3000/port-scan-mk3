@@ -22,7 +22,7 @@ import (
 //
 // # Parameters
 //
-//	command: one of "preping", "generate-buckets", "scan", or "validate".
+//	command: one of "pre-ping", "generate-buckets", "scan", or "validate".
 //	args:    CLI arguments for the subcommand, without the subcommand token.
 //
 // # Returns
@@ -62,7 +62,7 @@ func ParseFor(command string, args []string) (Config, error) {
 	}
 
 	switch command {
-	case "preping":
+	case "pre-ping":
 		registerWorkers()
 		registerProgress()
 		fs.StringVar(&cfg.Output, "output", "scan_results.csv", "output csv")
@@ -117,7 +117,7 @@ func ParseFor(command string, args []string) (Config, error) {
 
 	// Command-specific required-flag and value validation.
 	switch command {
-	case "preping":
+	case "pre-ping":
 		if err := validateWorkers(cfg.Workers); err != nil {
 			return Config{}, err
 		}

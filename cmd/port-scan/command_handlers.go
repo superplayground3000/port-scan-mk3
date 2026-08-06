@@ -39,14 +39,14 @@ func handleScanCommand(args []string, stdout, stderr io.Writer) int {
 	return runScan(args, stdout, stderr)
 }
 
-// handlePrepingCommand runs the standalone pre-scan ping step. It parses only the
-// preping flag surface (ParseFor rejects scan/bucket flags), needs no pressure
-// fetcher, and delegates to scanapp.RunPreping, which writes the
+// handlePrePingCommand runs the standalone pre-scan ping step. It parses only the
+// pre-ping flag surface (ParseFor rejects scan/bucket flags), needs no pressure
+// fetcher, and delegates to scanapp.RunPrePing, which writes the
 // unreachable_results-<ts>.csv and prints the resolved path to stdout for
 // chaining. Exit codes mirror runScan: parse error → 2, SIGINT/cancel → 130,
 // any other error → 1.
-func handlePrepingCommand(args []string, stdout, stderr io.Writer) int {
-	cfg, err := config.ParseFor("preping", args)
+func handlePrePingCommand(args []string, stdout, stderr io.Writer) int {
+	cfg, err := config.ParseFor("pre-ping", args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -55,9 +55,9 @@ func handlePrepingCommand(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := state.WithSIGINTCancel(context.Background())
 	defer cancel()
 
-	if err := scanapp.RunPreping(ctx, cfg, stdout, stderr, scanapp.RunOptions{}); err != nil {
+	if err := scanapp.RunPrePing(ctx, cfg, stdout, stderr, scanapp.RunOptions{}); err != nil {
 		if errors.Is(err, context.Canceled) {
-			fmt.Fprintln(stderr, "preping canceled")
+			fmt.Fprintln(stderr, "pre-ping canceled")
 			return 130
 		}
 		fmt.Fprintln(stderr, err)
@@ -133,9 +133,9 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "port-scan is a three-step pipeline: preping -> generate-buckets -> scan.")
+	fmt.Fprintln(w, "port-scan is a three-step pipeline: pre-ping -> generate-buckets -> scan.")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "port-scan preping -cidr-file <file> [-pre-scan-ping-timeout 100ms] [-workers N] [-output <file>] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
+	fmt.Fprintln(w, "port-scan pre-ping -cidr-file <file> [-pre-scan-ping-timeout 100ms] [-workers N] [-output <file>] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
 	fmt.Fprintln(w, "    Ping unique targets and write unreachable_results-<ts>.csv; prints its path for chaining. No -port-file and no ping-toggle flag (skip pinging by skipping this step).")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "port-scan generate-buckets -cidr-file <file> -buckets-out <file> [-port-file <file>] [-unreachable-file <file>] [-workers N] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")

@@ -17,7 +17,7 @@ import (
 
 // richPipelineCSV is the shared rich-input fixture for the three-step pipeline
 // tests: three targets in one /24, all on port 443. 127.0.0.1 is dialable
-// (open), 127.0.0.2 refuses (closed), 127.0.0.3 is the one preping marks
+// (open), 127.0.0.2 refuses (closed), 127.0.0.3 is the one pre-ping marks
 // unreachable so bucket-gen subtracts it before scan ever sees it.
 const richPipelineCSV = "src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n" +
 	"192.168.1.10,192.168.1.0/24,127.0.0.1,127.0.0.0/24,web,tcp,443,accept,P-1,allow\n" +
@@ -77,12 +77,12 @@ func assertLineStatus(t *testing.T, data []byte, ip, wantStatus string) {
 	t.Fatalf("expected a scan row for target %s, none found in:\n%s", ip, string(data))
 }
 
-// TestPipeline_PrepingToBucketsToScan exercises the full durable-file hand-off
-// chain in process: RunPreping writes an unreachable CSV, GenerateBuckets reads
+// TestPipeline_PrePingToBucketsToScan exercises the full durable-file hand-off
+// chain in process: RunPrePing writes an unreachable CSV, GenerateBuckets reads
 // it as a blocklist and writes a resume snapshot, and Run consumes the snapshot.
 // It asserts the unreachable target is absent from the final scan output, that
 // rich metadata survives end to end, and that open/closed states are correct.
-func TestPipeline_PrepingToBucketsToScan(t *testing.T) {
+func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "rich.csv")
 	outFile := filepath.Join(tmp, "out.csv")
@@ -90,28 +90,28 @@ func TestPipeline_PrepingToBucketsToScan(t *testing.T) {
 
 	baseCfg := pipelineBaseConfig(t, cidrFile, outFile)
 
-	// Step 1 — preping: mark 127.0.0.3 unreachable, others reachable.
+	// Step 1 — pre-ping: mark 127.0.0.3 unreachable, others reachable.
 	checker := &fakePreScanChecker{
 		results: map[string]ReachabilityResult{
 			"127.0.0.3": {IP: "127.0.0.3", Reachable: false, FailureText: "timeout"},
 		},
 	}
-	var prepingStdout bytes.Buffer
-	if err := RunPreping(context.Background(), baseCfg, &prepingStdout, &bytes.Buffer{}, RunOptions{
+	var prePingStdout bytes.Buffer
+	if err := RunPrePing(context.Background(), baseCfg, &prePingStdout, &bytes.Buffer{}, RunOptions{
 		ReachabilityChecker: checker,
 	}); err != nil {
-		t.Fatalf("preping step failed: %v", err)
+		t.Fatalf("pre-ping step failed: %v", err)
 	}
-	unreachableFile := strings.TrimSpace(prepingStdout.String())
+	unreachableFile := strings.TrimSpace(prePingStdout.String())
 	if unreachableFile == "" {
-		t.Fatal("preping did not print a resolved unreachable-file path to stdout")
+		t.Fatal("pre-ping did not print a resolved unreachable-file path to stdout")
 	}
 	unreachableData, err := os.ReadFile(unreachableFile)
 	if err != nil {
-		t.Fatalf("read preping output %s: %v", unreachableFile, err)
+		t.Fatalf("read pre-ping output %s: %v", unreachableFile, err)
 	}
 	if !bytes.Contains(unreachableData, []byte("127.0.0.3")) {
-		t.Fatalf("expected preping to record 127.0.0.3 as unreachable, got:\n%s", unreachableData)
+		t.Fatalf("expected pre-ping to record 127.0.0.3 as unreachable, got:\n%s", unreachableData)
 	}
 
 	// Step 2 — generate-buckets: subtract the blocklist, write the snapshot.
@@ -153,10 +153,10 @@ func TestPipeline_PrepingToBucketsToScan(t *testing.T) {
 	assertLineStatus(t, scanData, "127.0.0.2", "close")
 }
 
-// TestPipeline_NoPreping_ScansAll skips preping entirely: GenerateBuckets with no
+// TestPipeline_NoPrePing_ScansAll skips pre-ping entirely: GenerateBuckets with no
 // blocklist must produce a snapshot covering every target, and scan must consume
 // it without ever constructing a reachability checker.
-func TestPipeline_NoPreping_ScansAll(t *testing.T) {
+func TestPipeline_NoPrePing_ScansAll(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "rich.csv")
 	outFile := filepath.Join(tmp, "out.csv")
@@ -164,7 +164,7 @@ func TestPipeline_NoPreping_ScansAll(t *testing.T) {
 
 	baseCfg := pipelineBaseConfig(t, cidrFile, outFile)
 
-	// No preping, no -unreachable-file → empty blocklist.
+	// No pre-ping, no -unreachable-file → empty blocklist.
 	generateBucketFile(t, baseCfg, bucketsFile, "")
 
 	scanCfg := baseCfg
@@ -188,7 +188,7 @@ func TestPipeline_NoPreping_ScansAll(t *testing.T) {
 	}
 	for _, ip := range []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"} {
 		if !bytes.Contains(scanData, []byte(ip)) {
-			t.Fatalf("expected target %s in scan output when preping is skipped, got:\n%s", ip, scanData)
+			t.Fatalf("expected target %s in scan output when pre-ping is skipped, got:\n%s", ip, scanData)
 		}
 	}
 }

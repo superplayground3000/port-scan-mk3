@@ -8,7 +8,7 @@ package scanapp
 // config.MaxWorkers is validated at parse time and re-applied by
 // effectiveWorkerCount, which is what keeps a worker count from reaching the
 // scarce Windows resources: the process's handle table, the ~16k default
-// dynamic port range, and — in preping — one ping child process per worker.
+// dynamic port range, and — in pre-ping — one ping child process per worker.
 // Raising a limit here was considered and rejected: the Windows equivalents are
 // machine-wide registry settings, not per-process limits a scanner should
 // mutate on the operator's host.

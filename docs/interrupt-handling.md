@@ -2,7 +2,7 @@
 
 `port-scan` treats exactly one class of event as a *graceful stop*: an OS
 interrupt signal. `pkg/state/signal.go` subscribes to it (`WithSIGINTCancel`).
-`cmd/port-scan/command_handlers.go` wires it into `preping`, `generate-buckets`
+`cmd/port-scan/command_handlers.go` wires it into `pre-ping`, `generate-buckets`
 and `scan`.
 
 A graceful stop means all of the following, and operators can rely on it:

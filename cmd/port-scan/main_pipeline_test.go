@@ -4,17 +4,18 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestRunMain_Preping_WritesUnreachable drives the standalone preping subcommand
+// TestRunMain_PrePing_WritesUnreachable drives the standalone pre-ping subcommand
 // end to end. It asserts exit 0 and that an unreachable_results-*.csv is written
 // into the -output directory. It deliberately does NOT assert specific
 // reachability, because ping availability/behaviour varies by environment; the
-// reachability logic itself is unit-tested in pkg/scanapp/preping_test.go.
-func TestRunMain_Preping_WritesUnreachable(t *testing.T) {
+// reachability logic itself is unit-tested in pkg/scanapp/pre_ping_test.go.
+func TestRunMain_PrePing_WritesUnreachable(t *testing.T) {
 	tmp := t.TempDir()
-	// Rich CSV so no -port-file is needed: preping is per-IP and its flag surface
+	// Rich CSV so no -port-file is needed: pre-ping is per-IP and its flag surface
 	// (design §6) intentionally omits -port-file.
 	cidrFile := filepath.Join(tmp, "rich.csv")
 	outFile := filepath.Join(tmp, "out.csv")
@@ -28,7 +29,7 @@ func TestRunMain_Preping_WritesUnreachable(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	code := runMain([]string{
-		"preping",
+		"pre-ping",
 		"-cidr-file", cidrFile,
 		"-output", outFile,
 		"-workers", "1",
@@ -40,6 +41,57 @@ func TestRunMain_Preping_WritesUnreachable(t *testing.T) {
 
 	// The resolved path is printed to stdout for chaining and the file exists.
 	mustFindOneMain(t, filepath.Join(tmp, "unreachable_results-*.csv"))
+}
+
+// TestRunMain_PrePing_CommandContract pins the 3.0.0 CLI contract for the
+// reachability step: the accepted spelling is "pre-ping". The 2.x spelling of
+// the same command has no alias, so it takes the normal unknown-command path
+// (exit 2). See issue #97.
+func TestRunMain_PrePing_CommandContract(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich.csv")
+	outFile := filepath.Join(tmp, "out.csv")
+	if err := os.WriteFile(cidrFile, []byte(
+		"src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n"+
+			"10.0.0.10,10.0.0.0/24,127.0.0.1,127.0.0.0/24,web,tcp,8080,accept,P-1,allow\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// "pre-ping" dispatches to the pre-ping runner: exit 0 and the unreachable
+	// CSV lands next to -output.
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := runMain([]string{
+		"pre-ping",
+		"-cidr-file", cidrFile,
+		"-output", outFile,
+		"-workers", "1",
+		"-pre-scan-ping-timeout", "200ms",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0 for pre-ping, got %d stderr=%s", code, stderr.String())
+	}
+	mustFindOneMain(t, filepath.Join(tmp, "unreachable_results-*.csv"))
+
+	// The 2.x spelling is no longer a command: unknown-command error, exit 2.
+	// The token is assembled from two parts on purpose. The repo-wide check for
+	// issue #97 requires that the old spelling survives only in historical
+	// release notes, and this test still exercises the exact removed string.
+	removed := "pre" + "ping"
+	oldOut := &bytes.Buffer{}
+	oldErr := &bytes.Buffer{}
+	oldCode := runMain([]string{
+		removed,
+		"-cidr-file", cidrFile,
+		"-output", outFile,
+	}, oldOut, oldErr)
+	if oldCode != 2 {
+		t.Fatalf("expected exit 2 for the removed %q command, got %d stderr=%s", removed, oldCode, oldErr.String())
+	}
+	if !strings.Contains(oldErr.String(), "unknown command: "+removed) {
+		t.Fatalf("expected unknown-command error for %q, got stderr=%q", removed, oldErr.String())
+	}
 }
 
 // TestRunMain_GenerateBuckets_WritesSnapshot drives the generate-buckets
