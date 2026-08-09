@@ -17,13 +17,17 @@ var ErrInvalidFabName = errors.New("invalid fab name")
 // component rather than being told a character is invalid.
 const windowsInvalidNameChars = `<>:"|?*`
 
-// reservedDeviceNames holds the DOS device names Windows reserves in every
-// directory, lowercased for case-insensitive lookup. The set is the one
-// documented for current Windows (CON, PRN, AUX, NUL, COM0-COM9, LPT0-LPT9);
-// COM0 and LPT0 are included even though older references list only 1-9.
+// reservedDeviceNames contains the lowercase DOS device names that Windows
+// reserves in each directory. The map supports case-insensitive lookup.
+// The set contains CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-COM9, LPT0-LPT9,
+// and the COM/LPT forms with superscript 1, 2, or 3.
+// Windows resolves CONIN$ and CONOUT$ to console devices through CreateFile.
+// COM0 and LPT0 are included because Windows can define them as device aliases.
 var reservedDeviceNames = func() map[string]struct{} {
 	names := map[string]struct{}{
-		"con": {}, "prn": {}, "aux": {}, "nul": {},
+		"con": {}, "prn": {}, "aux": {}, "nul": {}, "conin$": {}, "conout$": {},
+		"com¹": {}, "com²": {}, "com³": {},
+		"lpt¹": {}, "lpt²": {}, "lpt³": {},
 	}
 	for d := '0'; d <= '9'; d++ {
 		names["com"+string(d)] = struct{}{}

@@ -1,6 +1,6 @@
 # preprocess Specification
 
-**Tool**: `cmd/preprocess` | **Revised**: 2026-05-03
+**Tool**: `cmd/preprocess` | **Revised**: 2026-08-09
 
 ## Overview
 
@@ -39,11 +39,21 @@ Rejected:
   `0x00`–`0x1F`.
 - A trailing dot or space — Windows strips them, silently renaming the output
   directory.
-- Windows reserved device names, case-insensitively and including extension
-  variants: `CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, so
-  `con.txt` is rejected as well as `con`. Windows trims trailing spaces and
-  dots off the stem before it matches a device, so padded forms such as
-  `con .txt` are rejected too.
+- Windows reserved device names: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`,
+  `CONOUT$`, `COM0`–`COM9`, `LPT0`–`LPT9`, `COM¹`, `COM²`, `COM³`, `LPT¹`,
+  `LPT²`, and `LPT³`.
+- The reserved-name rule ignores case and includes extension forms. Thus,
+  `com¹.txt` is rejected as well as `COM¹`.
+- Windows removes trailing spaces and dots from the stem before it matches a
+  device. Thus, the tool also rejects padded forms such as `CONOUT$ .log`.
+
+Microsoft lists [`CONIN$` and `CONOUT$`](https://learn.microsoft.com/en-us/windows/win32/devnotes/rtlisdosdevicename_u)
+as DOS device names. [`CreateFile`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea#consoles)
+also opens them as console devices. Therefore, the validator rejects them and
+their extension or padded-stem forms on every platform.
+
+Microsoft also lists the [superscript COM and LPT forms](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#naming-conventions)
+as reserved names in each directory.
 
 Accepted: letters (including non-ASCII, e.g. `fab 12 東京`), digits, interior
 spaces and dots, and the usual punctuation — `dc-east`, `fab_01`, `fab.v2`.
