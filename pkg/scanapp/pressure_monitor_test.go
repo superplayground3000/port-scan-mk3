@@ -152,28 +152,23 @@ func TestPollPressureAPI_PressureJustBelowThreshold_DoesNotPause(t *testing.T) {
 	}
 }
 
-func TestPollPressureAPI_PressureAboveThreshold_Pauses(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": 91})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+func TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety(t *testing.T) {
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":91}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	time.Sleep(30 * time.Millisecond)
-
-	if !ctrl.IsPaused() {
-		t.Error("expected controller to be paused when pressure=91 and threshold=90")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to be paused when pressure=91 and threshold=90", ctrl.APIPaused)
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
 
 // -------------------------------------------------------------------
