@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
@@ -852,42 +853,37 @@ func TestScanLogger_WhenTextOrJSONEnabled_FormatsOutputByMode(t *testing.T) {
 }
 
 func TestPollPressureAPI_WhenPressureCrossesThreshold_TogglesPauseAndLogsTransition(t *testing.T) {
-	values := []int{95, 20}
-	var mu sync.Mutex
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		mu.Lock()
-		v := values[0]
-		if len(values) > 1 {
-			values = values[1:]
-		}
-		mu.Unlock()
-		_, _ = fmt.Fprintf(w, `{"pressure":%d}`, v)
-	}))
-	defer api.Close()
-
-	cfg := config.Config{
-		PressureAPI:      api.URL,
-		PressureInterval: 5 * time.Millisecond,
-	}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	errCh := make(chan error, 1)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 5 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90, PressureHTTP: &http.Client{Timeout: time.Second}}, ctrl, logger, errCh)
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":95}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to pause and log the pause transition", func() bool {
+			return ctrl.APIPaused() && strings.Contains(logOut.String(), "scan automatically paused")
+		})
 
-	time.Sleep(40 * time.Millisecond)
-	cancel()
-	time.Sleep(10 * time.Millisecond)
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":20}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume and log the resume transition", func() bool {
+			return !ctrl.APIPaused() && strings.Contains(logOut.String(), "scan automatically resumed")
+		})
 
-	select {
-	case err := <-errCh:
-		t.Fatalf("unexpected err: %v", err)
-	default:
-	}
-	if ctrl.IsPaused() {
+	poller.stop(t)
+	poller.makeSureNoError(t)
+
+	if ctrl.APIPaused() {
 		t.Fatal("expected resumed after pressure drop")
 	}
 	if !strings.Contains(logOut.String(), "scan automatically paused") || !strings.Contains(logOut.String(), "scan automatically resumed") {
