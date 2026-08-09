@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
@@ -544,39 +544,37 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 }
 
 func TestPollPressureAPI_WhenJSONLoggerEnabled_EmitsPauseResumeMessages(t *testing.T) {
-	values := []int{95, 20}
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		v := values[0]
-		if len(values) > 1 {
-			values = values[1:]
-		}
-		_, _ = w.Write([]byte(`{"pressure":` + strconv.Itoa(v) + `}`))
-	}))
-	defer api.Close()
-
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", true, logOut)
-	errCh := make(chan error, 1)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go pollPressureAPI(ctx, config.Config{
-		PressureAPI:      api.URL,
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
 		PressureInterval: 5 * time.Millisecond,
 	}, RunOptions{
 		PressureLimit: 90,
-		PressureHTTP:  &http.Client{Timeout: time.Second},
-	}, ctrl, logger, errCh)
+	}, ctrl, logger)
 
-	time.Sleep(40 * time.Millisecond)
-	cancel()
-	time.Sleep(10 * time.Millisecond)
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":95}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to pause and emit the pause message", func() bool {
+			return ctrl.APIPaused() && strings.Contains(logOut.String(), "scan automatically paused")
+		})
 
-	select {
-	case err := <-errCh:
-		t.Fatalf("unexpected err: %v", err)
-	default:
-	}
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":20}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume and emit the resume message", func() bool {
+			return !ctrl.APIPaused() && strings.Contains(logOut.String(), "scan automatically resumed")
+		})
+
+	poller.stop(t)
+	poller.makeSureNoError(t)
 
 	logs := logOut.String()
 	if !strings.Contains(logs, `"level":"info"`) {
@@ -591,38 +589,28 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	errCh := make(chan error, 1)
 	observer := &pressureTelemetryRecorder{}
 	controllerObserver := &controllerTelemetryRecorder{}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pollPressureAPI(ctx, config.Config{
+	poller := startTestPressurePoller(t, config.Config{
 		PressureInterval: 5 * time.Millisecond,
 	}, RunOptions{
 		PressureLimit:      90,
 		PressureFetcher:    &scriptedPressureFetcher{results: []scriptedPressureResult{{err: errors.New("boom-1")}, {err: errors.New("boom-2")}, {pressure: 42}}},
 		pressureObserver:   observer,
 		controllerObserver: controllerObserver,
-	}, ctrl, logger, errCh)
+	}, ctrl, logger)
 
-	deadline := time.Now().Add(100 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		observer.mu.Lock()
-		done := len(observer.failures) >= 2 && len(observer.samples) >= 1
-		observer.mu.Unlock()
-		if done {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	cancel()
-	time.Sleep(10 * time.Millisecond)
+	testkit.WaitFor(t, pressureTestTimeout,
+		"pressure observer to report two failures and one sample", func() bool {
+			observer.mu.Lock()
+			done := len(observer.failures) >= 2 && len(observer.samples) >= 1
+			observer.mu.Unlock()
+			return done
+		})
 
-	select {
-	case err := <-errCh:
-		t.Fatalf("unexpected err: %v", err)
-	default:
-	}
+	poller.stop(t)
+	poller.makeSureNoError(t)
 
 	observer.mu.Lock()
 	defer observer.mu.Unlock()

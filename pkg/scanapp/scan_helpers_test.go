@@ -1,7 +1,6 @@
 package scanapp
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
@@ -760,46 +759,33 @@ func TestFetchPressure_WhenFieldMissingOrTypeUnsupported_ReturnsError(t *testing
 }
 
 func TestPollPressureAPI_WhenFirstTwoRequestsFail_DoesNotReturnFatalError(t *testing.T) {
-	steps := []int{500, 500, 200, 200}
-	var mu sync.Mutex
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		mu.Lock()
-		status := steps[0]
-		if len(steps) > 1 {
-			steps = steps[1:]
-		}
-		mu.Unlock()
-		if status >= 400 {
-			http.Error(w, "fail", status)
-			return
-		}
-		_, _ = fmt.Fprintln(w, `{"pressure":10}`)
-	}))
-	defer api.Close()
-
-	cfg := config.Config{
-		PressureAPI:      api.URL,
-		PressureInterval: 5 * time.Millisecond,
-	}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
+	ctrl.SetAPIPaused(true)
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	errCh := make(chan error, 1)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 5 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90, PressureHTTP: &http.Client{Timeout: time.Second}}, ctrl, logger, errCh)
-
-	time.Sleep(60 * time.Millisecond)
-	cancel()
-	time.Sleep(10 * time.Millisecond)
-
-	select {
-	case err := <-errCh:
-		t.Fatalf("expected no fatal error before 3rd failure, got %v", err)
-	default:
+	for range 2 {
+		server.respond(t, scriptedPressureHTTPResponse{
+			statusCode: http.StatusInternalServerError,
+			body:       "fail",
+		})
 	}
-	if ctrl.IsPaused() {
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":10}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume after low pressure", func() bool { return !ctrl.APIPaused() })
+
+	poller.stop(t)
+	poller.makeSureNoError(t)
+
+	if ctrl.APIPaused() {
 		t.Fatal("expected not paused at low pressure")
 	}
 	logs := logOut.String()
