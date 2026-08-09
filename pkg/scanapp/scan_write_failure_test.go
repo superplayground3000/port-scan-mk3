@@ -11,10 +11,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
-	"github.com/xuxiping/port-scan-mk3/pkg/task"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
@@ -43,6 +43,38 @@ func (w *nthWriteFailingRecordWriter) Write(record writer.Record) error {
 
 func (w *nthWriteFailingRecordWriter) WriteHeader() error { return w.inner.WriteHeader() }
 
+type waitingFailingRecordWriter struct {
+	inner RecordWriter
+	ready <-chan struct{}
+}
+
+func (w *waitingFailingRecordWriter) Write(writer.Record) error {
+	<-w.ready
+	return errInjectedWriteFailure
+}
+
+func (w *waitingFailingRecordWriter) WriteHeader() error { return w.inner.WriteHeader() }
+
+type releaseThenFailRecordWriter struct {
+	inner   RecordWriter
+	release chan struct{}
+	writes  int
+}
+
+func (w *releaseThenFailRecordWriter) Write(record writer.Record) error {
+	w.writes++
+	if w.writes == 2 {
+		return errInjectedWriteFailure
+	}
+	err := w.inner.Write(record)
+	if w.writes == 1 {
+		close(w.release)
+	}
+	return err
+}
+
+func (w *releaseThenFailRecordWriter) WriteHeader() error { return w.inner.WriteHeader() }
+
 // failingScanWriterOpener returns a batchOutputs opener that builds the real
 // outputs and then wraps the full-results writer so the failOn-th record write
 // fails. Only the scan_results writer is wrapped: the open-only writer filters
@@ -64,13 +96,257 @@ func refusingDial(context.Context, string, string) (net.Conn, error) {
 	return nil, errors.New("connection refused")
 }
 
-// TestRun_WhenOutputWriteFails_DoesNotPersistResumeSnapshot is the issue #51
-// guarantee: an output-write failure must not leave a resume snapshot behind.
-// The dispatch cursor (NextIndex) advanced at enqueue time for rows that were
-// never written, so any snapshot saved here would make the next -resume skip
-// them silently. The run must instead fail loudly with the write error.
-func TestRun_WhenOutputWriteFails_DoesNotPersistResumeSnapshot(t *testing.T) {
-	t.Run("no snapshot is created at the save path", func(t *testing.T) {
+func newTwoChunkWriteFailureConfig(t *testing.T) (config.Config, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+
+	if err := os.WriteFile(cidrFile, []byte(
+		"fab_name,ip,ip_cidr,cidr_name\n"+
+			"fab1,10.0.0.1,10.0.0.1/32,first\n"+
+			"fab2,10.0.0.2,10.0.0.2/32,second\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("80/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           filepath.Join(tmp, "out.csv"),
+		Timeout:          20 * time.Millisecond,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          2,
+		PressureInterval: 5 * time.Second,
+		DisableAPI:       true,
+		LogLevel:         "error",
+	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
+	return cfg, tmp
+}
+
+func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
+	cfg, tmp := newTwoChunkWriteFailureConfig(t)
+	resumeOut := filepath.Join(tmp, "resume-out.json")
+	secondChunkDialed := make(chan struct{})
+	var signalSecondChunk sync.Once
+
+	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		ResumeStatePath: resumeOut,
+		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
+			if strings.HasPrefix(address, "10.0.0.2:") {
+				signalSecondChunk.Do(func() { close(secondChunkDialed) })
+			}
+			return nil, errors.New("connection refused")
+		},
+		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+			outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
+			if err != nil {
+				return nil, err
+			}
+			outputs.scanWriter = &waitingFailingRecordWriter{
+				inner: outputs.scanWriter,
+				ready: secondChunkDialed,
+			}
+			return outputs, nil
+		},
+	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error must identify the write failure, got: %v", runErr)
+	}
+
+	snapshot, err := state.LoadSnapshot(resumeOut)
+	if err != nil {
+		t.Fatalf("load corrected resume snapshot: %v", err)
+	}
+	if len(snapshot.Chunks) != 2 {
+		t.Fatalf("expected two saved chunks, got %d", len(snapshot.Chunks))
+	}
+	for _, chunk := range snapshot.Chunks {
+		if chunk.NextIndex != 0 {
+			t.Errorf("chunk %s cursor=%d, want 0 for its first unwritten task", chunk.CIDR, chunk.NextIndex)
+		}
+		if chunk.ScannedCount != 0 || chunk.Status != "pending" {
+			t.Errorf("chunk %s state=(scanned %d, status %s), want (0, pending)",
+				chunk.CIDR, chunk.ScannedCount, chunk.Status)
+		}
+	}
+}
+
+func TestRun_WhenOutputWriteFails_KeepsCursorForFullyPersistedChunk(t *testing.T) {
+	cfg, tmp := newTwoChunkWriteFailureConfig(t)
+	resumeOut := filepath.Join(tmp, "resume-out.json")
+	releaseSecondDial := make(chan struct{})
+
+	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		ResumeStatePath: resumeOut,
+		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
+			if strings.HasPrefix(address, "10.0.0.2:") {
+				<-releaseSecondDial
+			}
+			return nil, errors.New("connection refused")
+		},
+		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+			outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
+			if err != nil {
+				return nil, err
+			}
+			outputs.scanWriter = &releaseThenFailRecordWriter{
+				inner:   outputs.scanWriter,
+				release: releaseSecondDial,
+			}
+			return outputs, nil
+		},
+	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error must identify the write failure, got: %v", runErr)
+	}
+
+	snapshot, err := state.LoadSnapshot(resumeOut)
+	if err != nil {
+		t.Fatalf("load corrected resume snapshot: %v", err)
+	}
+	if len(snapshot.Chunks) != 2 {
+		t.Fatalf("expected two saved chunks, got %d", len(snapshot.Chunks))
+	}
+	first, second := snapshot.Chunks[0], snapshot.Chunks[1]
+	if first.NextIndex != 1 || first.ScannedCount != 1 || first.Status != "completed" {
+		t.Fatalf("fully persisted chunk state=%+v, want completed cursor 1", first)
+	}
+	if second.NextIndex != 0 || second.ScannedCount != 0 || second.Status != "pending" {
+		t.Fatalf("unwritten chunk state=%+v, want pending cursor 0", second)
+	}
+}
+
+func TestRun_WhenOutputWriteFails_AlignsScannedCountWithRewoundCursor(t *testing.T) {
+	cfg, tmp, _ := newInterruptibleScanConfig(t)
+	inputSnapshot, err := state.LoadSnapshot(cfg.Resume)
+	if err != nil {
+		t.Fatalf("load input snapshot: %v", err)
+	}
+	inputSnapshot.Chunks[0].NextIndex = 1
+	inputSnapshot.Chunks[0].ScannedCount = 0
+	inputSnapshot.Chunks[0].Status = "scanning"
+	if err := state.SaveSnapshot(cfg.Resume, inputSnapshot); err != nil {
+		t.Fatalf("save input snapshot: %v", err)
+	}
+	resumeOut := filepath.Join(tmp, "resume-out.json")
+
+	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard:    true,
+		Dial:               refusingDial,
+		ResumeStatePath:    resumeOut,
+		batchOutputsOpener: failingScanWriterOpener(3),
+	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error must identify the write failure, got: %v", runErr)
+	}
+
+	corrected, err := state.LoadSnapshot(resumeOut)
+	if err != nil {
+		t.Fatalf("load corrected resume snapshot: %v", err)
+	}
+	chunk := corrected.Chunks[0]
+	if chunk.NextIndex != 3 || chunk.ScannedCount != 3 {
+		t.Fatalf("corrected progress=(cursor %d, scanned %d), want (3, 3)",
+			chunk.NextIndex, chunk.ScannedCount)
+	}
+}
+
+func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPersistedRows(t *testing.T) {
+	cfg, _, _ := newInterruptibleScanConfig(t)
+	cfg.Workers = 2
+	releaseFirstDial := make(chan struct{})
+
+	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
+			if strings.HasPrefix(address, "10.9.0.0:") {
+				<-releaseFirstDial
+			}
+			return nil, errors.New("connection refused")
+		},
+		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+			outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
+			if err != nil {
+				return nil, err
+			}
+			outputs.scanWriter = &releaseThenFailRecordWriter{
+				inner:   outputs.scanWriter,
+				release: releaseFirstDial,
+			}
+			return outputs, nil
+		},
+	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error must identify the write failure, got: %v", runErr)
+	}
+
+	failedSnapshot, err := state.LoadSnapshot(cfg.Resume)
+	if err != nil {
+		t.Fatalf("load corrected resume snapshot: %v", err)
+	}
+	if failedSnapshot.Output == nil {
+		t.Fatal("corrected resume snapshot must record the output paths")
+	}
+	if len(failedSnapshot.Chunks) != 1 {
+		t.Fatalf("expected one saved chunk, got %d", len(failedSnapshot.Chunks))
+	}
+	totalTasks := failedSnapshot.Chunks[0].TotalCount
+	if failedSnapshot.Chunks[0].NextIndex != 0 {
+		t.Fatalf("saved cursor=%d, want 0 after the first task finished after the failure",
+			failedSnapshot.Chunks[0].NextIndex)
+	}
+
+	_, partialRows := readCSVRows(t, failedSnapshot.Output.ScanPath)
+	if len(partialRows) != 1 {
+		t.Fatalf("failed run wrote %d rows, want 1 persisted row", len(partialRows))
+	}
+
+	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            refusingDial,
+	}); err != nil {
+		t.Fatalf("resume corrected snapshot: %v", err)
+	}
+
+	header, rows := readCSVRows(t, failedSnapshot.Output.ScanPath)
+	columnIndex := make(map[string]int, len(header))
+	for idx, name := range header {
+		columnIndex[name] = idx
+	}
+	identityCounts := make(map[string]int, totalTasks)
+	for _, row := range rows {
+		identity := row[columnIndex["ip"]] + ":" + row[columnIndex["port"]]
+		identityCounts[identity]++
+	}
+	if len(identityCounts) != totalTasks {
+		t.Fatalf("resume covered %d unique tasks, want %d", len(identityCounts), totalTasks)
+	}
+	if len(rows) != totalTasks+1 {
+		t.Fatalf("resume wrote %d total rows, want %d tasks plus one duplicate", len(rows), totalTasks)
+	}
+	duplicates := 0
+	for _, count := range identityCounts {
+		if count == 2 {
+			duplicates++
+		}
+	}
+	if duplicates != 1 {
+		t.Fatalf("resume produced %d duplicated task rows, want 1", duplicates)
+	}
+}
+
+// TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot verifies both
+// supported save locations. The corrected cursor preserves safe progress.
+func TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot(t *testing.T) {
+	t.Run("explicit save path", func(t *testing.T) {
 		cfg, tmp, _ := newInterruptibleScanConfig(t)
 		resumeOut := filepath.Join(tmp, "resume-out.json")
 
@@ -86,18 +362,24 @@ func TestRun_WhenOutputWriteFails_DoesNotPersistResumeSnapshot(t *testing.T) {
 		if !errors.Is(err, errInjectedWriteFailure) {
 			t.Fatalf("run error must identify the write failure, got: %v", err)
 		}
-		if _, statErr := os.Stat(resumeOut); !os.IsNotExist(statErr) {
-			t.Fatalf("expected NO resume snapshot at %s after an output-write failure, stat err: %v", resumeOut, statErr)
+		snapshot, loadErr := state.LoadSnapshot(resumeOut)
+		if loadErr != nil {
+			t.Fatalf("load corrected snapshot: %v", loadErr)
+		}
+		if len(snapshot.Chunks) != 1 {
+			t.Fatalf("expected one saved chunk, got %d", len(snapshot.Chunks))
+		}
+		chunk := snapshot.Chunks[0]
+		if chunk.NextIndex != 2 || chunk.ScannedCount != 2 {
+			t.Fatalf("saved progress=(cursor %d, scanned %d), want (2, 2)", chunk.NextIndex, chunk.ScannedCount)
+		}
+		if snapshot.Output == nil {
+			t.Fatal("corrected snapshot must record output paths")
 		}
 	})
 
-	t.Run("the input bucket snapshot is left untouched", func(t *testing.T) {
+	t.Run("input bucket path", func(t *testing.T) {
 		cfg, _, bucketsFile := newInterruptibleScanConfig(t)
-		before, err := os.ReadFile(bucketsFile)
-		if err != nil {
-			t.Fatalf("read bucket file: %v", err)
-		}
-
 		runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 			DisableKeyboard:    true,
 			Dial:               refusingDial,
@@ -106,14 +388,15 @@ func TestRun_WhenOutputWriteFails_DoesNotPersistResumeSnapshot(t *testing.T) {
 		if !errors.Is(runErr, errInjectedWriteFailure) {
 			t.Fatalf("run error must identify the write failure, got: %v", runErr)
 		}
-
-		after, err := os.ReadFile(bucketsFile)
-		if err != nil {
-			t.Fatalf("re-read bucket file: %v", err)
+		snapshot, loadErr := state.LoadSnapshot(bucketsFile)
+		if loadErr != nil {
+			t.Fatalf("load corrected input bucket: %v", loadErr)
 		}
-		if !bytes.Equal(before, after) {
-			t.Fatalf("the bucket snapshot at %s was rewritten after an output-write failure;\nbefore: %s\nafter:  %s",
-				bucketsFile, string(before), string(after))
+		if len(snapshot.Chunks) != 1 || snapshot.Chunks[0].NextIndex != 2 {
+			t.Fatalf("unexpected corrected chunks: %+v", snapshot.Chunks)
+		}
+		if snapshot.Output == nil {
+			t.Fatal("corrected input bucket must record output paths")
 		}
 	})
 }
@@ -154,6 +437,45 @@ func TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows(t *test
 	if reported != len(rows) {
 		t.Fatalf("reported scanned count %d should equal the %d data rows in %s", reported, len(rows), scanPath)
 	}
+}
+
+func TestRun_WhenOutputWriteFails_LogsCorrectedResumeSnapshot(t *testing.T) {
+	cfg, tmp, _ := newInterruptibleScanConfig(t)
+	cfg.LogLevel = "info"
+	cfg.Format = "json"
+	resumeOut := filepath.Join(tmp, "resume-out.json")
+	var stderr bytes.Buffer
+
+	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &stderr, RunOptions{
+		DisableKeyboard:    true,
+		Dial:               refusingDial,
+		ResumeStatePath:    resumeOut,
+		batchOutputsOpener: failingScanWriterOpener(3),
+	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error must identify the write failure, got: %v", runErr)
+	}
+	logOutput := stderr.String()
+	for _, line := range strings.Split(logOutput, "\n") {
+		var entry struct {
+			Msg    string `json:"msg"`
+			Fields struct {
+				Reason     string `json:"reason"`
+				ResumePath string `json:"resume_path"`
+			} `json:"fields"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil || entry.Msg != "resume_state_rewound" {
+			continue
+		}
+		if entry.Fields.Reason != "scan_output_write_failed" {
+			t.Fatalf("rewind reason = %q, want scan_output_write_failed", entry.Fields.Reason)
+		}
+		if entry.Fields.ResumePath != resumeOut {
+			t.Fatalf("rewind resume path = %q, want %q", entry.Fields.ResumePath, resumeOut)
+		}
+		return
+	}
+	t.Fatalf("no resume_state_rewound event in log output:\n%s", logOutput)
 }
 
 // completionTotalTasks extracts fields.total_tasks from the scan_completion
@@ -219,66 +541,3 @@ func TestRun_WhenCanceledWithoutWriteFailure_StillPersistsResumeSnapshot(t *test
 		t.Fatalf("expected an advanced-but-incomplete cursor, got NextIndex=%d TotalCount=%d", ch.NextIndex, ch.TotalCount)
 	}
 }
-
-// TestPersistResumeSnapshot_WhenRunErrIsOutputWriteFailure_DeclinesToSave pins
-// the decision at its owner: the snapshot writer distinguishes an output-write
-// error from every other run error and refuses to save for the former, while a
-// graceful cancel still saves.
-func TestPersistResumeSnapshot_WhenRunErrIsOutputWriteFailure_DeclinesToSave(t *testing.T) {
-	newRuntimes := func() []*chunkRuntime {
-		ch := &task.Chunk{
-			CIDR:         "10.0.0.0/24",
-			NextIndex:    4,
-			ScannedCount: 2,
-			TotalCount:   8,
-			Status:       "scanning",
-		}
-		return []*chunkRuntime{{state: ch, tracker: newChunkStateTracker(ch)}}
-	}
-
-	t.Run("output-write error declines and reports", func(t *testing.T) {
-		resumeFile := filepath.Join(t.TempDir(), "resume.json")
-		var logs bytes.Buffer
-		logger := newLogger("info", true, &logs)
-
-		runErr := writeScanRecord(&alwaysFailingRecordWriter{}, &alwaysFailingRecordWriter{}, writer.Record{})
-		err := persistResumeSnapshot(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger,
-			newRuntimes(), state.PreScanPingState{}, nil, nil, runErr)
-		if err == nil {
-			t.Fatal("expected persistResumeSnapshot to report that it declined to save")
-		}
-		if !errors.Is(err, errInjectedWriteFailure) {
-			t.Fatalf("the reported error must carry the underlying write failure, got: %v", err)
-		}
-		if _, statErr := os.Stat(resumeFile); !os.IsNotExist(statErr) {
-			t.Fatalf("expected no snapshot file at %s, stat err: %v", resumeFile, statErr)
-		}
-		if logs.Len() == 0 {
-			t.Fatal("expected a structured log entry explaining that resume state was not saved")
-		}
-	})
-
-	t.Run("graceful cancel still saves", func(t *testing.T) {
-		resumeFile := filepath.Join(t.TempDir(), "resume.json")
-		logger := newLogger("error", false, &bytes.Buffer{})
-
-		if err := persistResumeSnapshot(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger,
-			newRuntimes(), state.PreScanPingState{}, nil, nil, context.Canceled); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		snap, err := state.LoadSnapshot(resumeFile)
-		if err != nil {
-			t.Fatalf("expected a saved snapshot, got: %v", err)
-		}
-		if len(snap.Chunks) != 1 || snap.Chunks[0].NextIndex != 4 {
-			t.Fatalf("unexpected saved chunks: %+v", snap.Chunks)
-		}
-	})
-}
-
-// alwaysFailingRecordWriter fails every Write; used to produce a genuine
-// writeScanRecord error rather than hand-constructing the wrapped sentinel.
-type alwaysFailingRecordWriter struct{}
-
-func (alwaysFailingRecordWriter) Write(writer.Record) error { return errInjectedWriteFailure }
-func (alwaysFailingRecordWriter) WriteHeader() error        { return nil }

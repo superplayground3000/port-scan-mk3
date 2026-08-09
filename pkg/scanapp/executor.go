@@ -86,6 +86,7 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 				})
 				resultCh <- scanResult{
 					chunkIdx: t.chunkIdx,
+					taskIdx:  t.taskIdx,
 					record:   recordFromScanTask(t, res),
 				}
 			}

@@ -35,12 +35,10 @@ type resultSummary struct {
 // (writeScanRecord) so downstream code can classify the failure with errors.Is
 // instead of inspecting message text.
 //
-// The classification matters because the dispatch cursor (task.Chunk.NextIndex)
-// advances at enqueue time, not at write time: once a row fails to be written,
-// the cursor no longer describes what is on disk, so a resume snapshot saved
-// afterwards would make the next -resume skip the rows that were in flight
-// (issue #51). persistResumeSnapshot therefore refuses to save for this error
-// class and for no other.
+// The classification matters because the dispatch cursor advances at enqueue
+// time. After this error, the result loop marks each result that did not reach
+// all output writers. The resume manager rewinds the affected chunk cursors
+// before it saves the snapshot (issue #57).
 var errScanOutputWrite = errors.New("scan output write failed")
 
 // writeScanRecord writes a scan record to both the full-results writer and

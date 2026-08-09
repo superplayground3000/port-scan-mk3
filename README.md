@@ -297,11 +297,10 @@ truth for target metadata.
    - `opened_results-YYYYMMDDTHHMMSSZ[-n].csv`
 5. On cancel or error, save progress **in place at the `-resume` path** (the
    command overwrites the bucket file with updated progress, and a re-run of
-   the same command continues from there). The one exception is a **failure to
-   write the output CSV**. In that case the command deliberately does NOT save
-   progress (the bucket file stays untouched). The command then exits with an
-   error that explains your recovery options — see "Output and Resume
-   Behavior" below.
+   the same command continues from there). If an output write fails, `scan`
+   rewinds the affected chunk cursors before it saves progress. The command
+   then exits with the original write error. See "Output and Resume Behavior"
+   below.
 
 This **step sequencing** enforces the "unreachable results are finalized before
 any TCP dial" guarantee — `pre-ping` completes before `scan` runs.
@@ -314,9 +313,9 @@ any TCP dial" guarantee — `pre-ping` completes before `scan` runs.
 - To skip the reachability gate, skip the `pre-ping` step and run `generate-buckets` without `-unreachable-file`.
 - The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel or error saves progress back to that exact path (in place). A re-run of the same `scan` command continues from there.
 - The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist, so `scan` reuses the same filtering decision without a ping.
-- **If a write to the output CSV fails, the command saves no resume progress.** The dispatch cursor advances when a task enters the queue. After a write failure, the cursor covers rows that never reached the file. A saved cursor makes the next `-resume` skip those rows silently. `scan` therefore leaves the bucket file unchanged, logs `resume_state_not_saved`, and exits with an error. Every other failure (Ctrl+C, pressure-API error, worker panic) saves progress as usual.
+- **If an output write fails, `scan` saves corrected resume progress.** Each result carries its zero-based task index. `scan` rewinds each affected chunk to its first dispatched task that did not reach all required writers. A chunk with no unwritten result keeps its cursor. The command logs `resume_state_rewound`, saves the corrected snapshot, and exits with the write error.
 
-  Recovery: the bucket file still holds the cursor from **before** this run. A re-run of the same `scan -resume` command therefore **covers every target** — a test verifies this claim. The re-run does not clean up after the failed run. Those already-written rows stay on disk: the re-run either appends them again into the same output files (when the bucket recorded them) or leaves them behind as separate partial files (when it did not). This applies to **both** result files — `scan_results-*.csv` and `opened_results-*.csv` open together, so they leave the same leftover shape. Reconcile both files before you consume them, because a glob over either file otherwise counts rows twice. For a clean single output instead, re-run `generate-buckets` to mint a fresh bucket file and scan into a new output path. (A "just do not resume" option does not exist: `scan` requires `-resume <bucket file>`.)
+  Recovery: run the same `scan -resume` command. The resumed run covers every target and appends to the recorded output files. It can write some persisted rows again because results finish out of order. Duplicate rows can occur in both `scan_results-*.csv` and `opened_results-*.csv`. Use a CSV parser and the `ip` plus `port` columns to remove duplicates. Do not use line-based tools because quoted fields can contain newlines. The [3.0.1 release notes](docs/release-notes/3.0.1.md) include a standard-library script that keeps the last result for each target.
 
 ## Dashboard and Logging
 

@@ -84,6 +84,7 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 				return ctx.Err()
 			case taskCh <- scanTask{
 				chunkIdx: idx,
+				taskIdx:  i,
 				ipCidr:   defaultString(target.ipCidr, ch.CIDR),
 				ip:       target.ip,
 				port:     port,

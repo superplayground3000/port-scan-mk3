@@ -39,6 +39,7 @@ type scanTarget struct {
 
 type scanTask struct {
 	chunkIdx int
+	taskIdx  int
 	ipCidr   string
 	ip       string
 	port     int
@@ -47,5 +48,6 @@ type scanTask struct {
 
 type scanResult struct {
 	chunkIdx int
+	taskIdx  int
 	record   ScanRecord
 }

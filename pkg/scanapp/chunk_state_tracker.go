@@ -7,12 +7,13 @@ import (
 )
 
 type chunkStateTracker struct {
-	mu    sync.Mutex
-	chunk *task.Chunk
+	mu             sync.Mutex
+	chunk          *task.Chunk
+	firstUnwritten int
 }
 
 func newChunkStateTracker(ch *task.Chunk) *chunkStateTracker {
-	return &chunkStateTracker{chunk: ch}
+	return &chunkStateTracker{chunk: ch, firstUnwritten: -1}
 }
 
 func (t *chunkStateTracker) AdvanceNextIndex(i int) {
@@ -27,6 +28,31 @@ func (t *chunkStateTracker) IncrementScanned() {
 	defer t.mu.Unlock()
 	t.chunk.ScannedCount++
 	t.updateStatus()
+}
+
+func (t *chunkStateTracker) MarkUnwritten(taskIdx int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.firstUnwritten < 0 || taskIdx < t.firstUnwritten {
+		t.firstUnwritten = taskIdx
+	}
+}
+
+func (t *chunkStateTracker) RewindUnwritten() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.firstUnwritten < 0 {
+		return false
+	}
+	t.chunk.NextIndex = t.firstUnwritten
+	t.chunk.ScannedCount = t.chunk.NextIndex
+	t.firstUnwritten = -1
+	if t.chunk.NextIndex == 0 {
+		t.chunk.Status = "pending"
+	} else {
+		t.updateStatus()
+	}
+	return true
 }
 
 func (t *chunkStateTracker) Snapshot() task.Chunk {
