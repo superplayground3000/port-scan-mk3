@@ -107,6 +107,44 @@ func TestRunMain_UnsafeFabName_RejectedBeforeWritingAnything(t *testing.T) {
 	}
 }
 
+func TestRunMain_ReservedFabNameRejectedBeforeInputOrOutputIO(t *testing.T) {
+	reservedNames := []string{
+		"COM¹",
+		"lPt².csv",
+		"LPT³ .log",
+		"CONIN$",
+		"cOnOuT$.txt",
+		"CONIN$ .csv",
+	}
+
+	for _, fab := range reservedNames {
+		t.Run(fab, func(t *testing.T) {
+			dir := t.TempDir()
+			before := entryNames(t, dir)
+
+			var stdout, stderr bytes.Buffer
+			err := runMain([]string{
+				"--input", filepath.Join(dir, "missing-input.csv"),
+				"--cleaned-cidrs", filepath.Join(dir, "missing-cidrs.csv"),
+				"--fab-name", fab,
+				"--output-dir", filepath.Join(dir, "output"),
+			}, &stdout, &stderr, time.Date(2026, 4, 16, 15, 30, 0, 0, time.UTC))
+
+			if err == nil {
+				t.Fatalf("runMain with --fab-name %q returned nil, want a rejection", fab)
+			}
+			if !strings.HasPrefix(err.Error(), "--fab-name:") {
+				t.Errorf("error %q does not identify --fab-name before an input error", err)
+			}
+
+			after := entryNames(t, dir)
+			if !slices.Equal(before, after) {
+				t.Errorf("run with --fab-name %q changed %s: before %v, after %v", fab, dir, before, after)
+			}
+		})
+	}
+}
+
 func TestRunMain_EndToEnd(t *testing.T) {
 	dir := t.TempDir()
 

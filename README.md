@@ -396,12 +396,21 @@ preprocess --input <file> --cleaned-cidrs <file> --fab-name <name> --output-dir 
 
 **Output:** Timestamped CSV at `<output-dir>/<fab-name>/<timestamp>/input.csv` plus a summary (total / kept / dropped) on stderr.
 
-`--fab-name` must be a single safe directory name. The tool validates it before
-it reads any input. The tool rejects (and does not sanitize): path separators,
-`.`/`..`, absolute paths, the characters `< > : " | ? *`, control characters, a
-trailing dot or space, and Windows reserved device names (`CON`, `NUL`, `COM1`,
-… — including `con.txt`). See
-[docs/apps/preprocess/SPEC.md](docs/apps/preprocess/SPEC.md) for the full list.
+`--fab-name` must be one safe directory name. The tool validates it before it
+reads an input file. The tool rejects these values without sanitization:
+
+- Path separators, `.` or `..`, absolute paths, control characters, and the
+  characters `< > : " | ? *`.
+- Names that end with a dot or space.
+- These Windows device names: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`,
+  `COM0`–`COM9`, and `LPT0`–`LPT9`.
+- These superscript device names: `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and
+  `LPT³`.
+- Matching extension or padded-stem forms, such as `com¹.txt` and
+  `CONOUT$ .log`. This rule ignores case.
+
+For the full list, see
+[docs/apps/preprocess/SPEC.md](docs/apps/preprocess/SPEC.md).
 
 ### cidr-compare
 

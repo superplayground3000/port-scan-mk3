@@ -20,14 +20,17 @@ func TestValidateFabName_RejectsWindowsReservedDeviceNames(t *testing.T) {
 		"cOn", "NuL",
 		"COM1", "COM5", "COM9", "com1", "com9",
 		"LPT1", "LPT5", "LPT9", "lpt1", "lpt9",
+		"COM¹", "COM²", "COM³", "com¹", "cOm²", "Com³",
+		"LPT¹", "LPT²", "LPT³", "lpt¹", "lPt²", "Lpt³",
+		"CONIN$", "CONOUT$", "conin$", "cOnOuT$",
 		// Extension variants: the device is matched on the stem.
-		"con.txt", "NUL.csv", "com1.log", "lpt9.CSV",
+		"con.txt", "NUL.csv", "com1.log", "lpt9.CSV", "com¹.txt", "LPT³.csv", "conin$.txt", "CONOUT$.log",
 		"aux.tar.gz",
 		// Padded stems. Windows trims trailing spaces and dots off a component
 		// before it matches a device name, so "con .txt" resolves to CON just
 		// like "con.txt" does. The trailing-space rule does not catch these:
 		// they end in an extension, not in the padding.
-		"con .txt", "nul .csv", "com1 .log", "lpt9 .CSV", "aux .tar.gz",
+		"con .txt", "nul .csv", "com1 .log", "lpt9 .CSV", "com¹ .log", "LPT³ .CSV", "CONIN$ .txt", "conout$ .log", "aux .tar.gz",
 		"con  .txt", "CON .TXT", "con..txt", "prn . txt",
 	}
 
@@ -297,6 +300,9 @@ func TestValidateFabName_AcceptsNamesThatMerelyLookReserved(t *testing.T) {
 		"console", "printer", "auxiliary", "nullarbor",
 		"com", "lpt", "com10", "lpt10", "com1x",
 		"con-1", "nul_fab", "prn2",
+		"COM⁰", "COM⁴", "COM₁", "COM１", "COM١", "COM⁴.txt",
+		"COM¹x", "LPT²-fab", "XCOM³", "XLPT¹",
+		"CONIN", "CONOUT", "CONIN$x", "CONOUT$-fab", "CONIN$x.txt",
 		// Padded stems that trim down to a non-device: the trailing-space trim
 		// must not turn these into false positives.
 		"console .txt", "com10 .log", "con1 .txt", "auxiliary .csv",
