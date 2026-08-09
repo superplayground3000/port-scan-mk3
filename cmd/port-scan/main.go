@@ -37,8 +37,8 @@ func runMain(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "validate":
 		return handleValidateCommand(args[1:], stdout, stderr)
-	case "preping":
-		return handlePrepingCommand(args[1:], stdout, stderr)
+	case "pre-ping":
+		return handlePrePingCommand(args[1:], stdout, stderr)
 	case "generate-buckets":
 		return handleGenerateBucketsCommand(args[1:], stdout, stderr)
 	case "scan":

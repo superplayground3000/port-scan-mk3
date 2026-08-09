@@ -72,7 +72,7 @@ func assertNoBatchOutputs(t *testing.T, dir string) {
 // TestFinalizeUnreachableResults_OpenSuccessAndError covers the retained helper
 // directly: an empty row set produces a valid header-only file, and an
 // unwritable destination surfaces the open error. (Run no longer calls this
-// under decision B; preping owns it, and it now lives in preping.go.)
+// under decision B; pre-ping owns it, and it now lives in pre_ping.go.)
 func TestFinalizeUnreachableResults_OpenSuccessAndError(t *testing.T) {
 	tmp := t.TempDir()
 	good := filepath.Join(tmp, "unreachable.csv")
@@ -294,7 +294,7 @@ func TestRun_BasicResumeWithoutPortFile_Succeeds(t *testing.T) {
 }
 
 // TestRun_DoesNotWriteUnreachableCSV asserts scan no longer emits an
-// unreachable_results CSV (that artifact belongs to preping under decision B).
+// unreachable_results CSV (that artifact belongs to pre-ping under decision B).
 func TestRun_DoesNotWriteUnreachableCSV(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")

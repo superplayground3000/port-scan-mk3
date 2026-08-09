@@ -18,14 +18,14 @@ go run ./cmd/port-scan validate \
   -format human
 ```
 
-Run a real scan — `port-scan` is a **three-step pipeline** (`preping` ->
+Run a real scan — `port-scan` is a **three-step pipeline** (`pre-ping` ->
 `generate-buckets` -> `scan`). `scan` requires a bucket snapshot through
 `-resume`. It never pings and no longer accepts ping flags (this behavior
 changed in 2.0.0 — see the [release notes](docs/release-notes/2.0.0.md)):
 
 ```bash
 # 1. Ping unique targets; capture the printed unreachable CSV path (stdout)
-UNREACHABLE=$(go run ./cmd/port-scan preping \
+UNREACHABLE=$(go run ./cmd/port-scan pre-ping \
   -cidr-file e2e/inputs/cidr_normal.csv \
   -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
   -output e2e/out/scan_results.csv)
@@ -48,7 +48,7 @@ go run ./cmd/port-scan scan \
 ```
 
 To skip the pre-scan reachability check (the old `-disable-pre-scan-ping=true`),
-omit the `preping` step and run `generate-buckets` without `-unreachable-file`.
+omit the `pre-ping` step and run `generate-buckets` without `-unreachable-file`.
 The snapshot then covers all targets and still stamps
 `pre_scan_ping.enabled=true`. As a result, `scan` never pings:
 
@@ -135,7 +135,7 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 
 ## Commands
 
-- `preping`: ping unique target IPs, write `unreachable_results-<ts>.csv`, print its path
+- `pre-ping`: ping unique target IPs, write `unreachable_results-<ts>.csv`, print its path
 - `generate-buckets`: build the resume bucket snapshot from targets minus an optional blocklist (`-buckets-out` required)
 - `scan`: pure TCP scan of a bucket snapshot (`-resume` required. It dispatches, probes, writes output, and persists resume state in place)
 - `validate`: parse and validate input files only
@@ -203,7 +203,7 @@ at any boundary. `rich.csv` (`-cidr-file`) feeds all three steps.
            │
            ▼
    ┌───────────────┐
-   │    preping    │  ping unique IPs (progress → stderr)
+   │    pre-ping   │  ping unique IPs (progress → stderr)
    └───────┬───────┘
            │  unreachable_results-<ts>.csv   (path printed to stdout)
            ▼
@@ -269,7 +269,7 @@ The pipeline is three separately-runnable steps with durable file hand-offs.
 `rich.csv` (`-cidr-file`) feeds all three steps as the single source of
 truth for target metadata.
 
-**Step 1 — `preping`** (optional: skip it to skip reachability filtering):
+**Step 1 — `pre-ping`** (optional: skip it to skip reachability filtering):
 1. Load the CIDR/rich CSV and collect unique IPv4 targets.
 2. Ping each unique target (`-pre-scan-ping-timeout`, default `100ms`) and write
    percentage progress to stderr every `-progress-interval` units.
@@ -304,14 +304,14 @@ truth for target metadata.
    Behavior" below.
 
 This **step sequencing** enforces the "unreachable results are finalized before
-any TCP dial" guarantee — `preping` completes before `scan` runs.
+any TCP dial" guarantee — `pre-ping` completes before `scan` runs.
 
 ## Output and Resume Behavior
 
 - `-output` controls the output directory. Result files are always timestamped batches.
 - Default batch naming is collision-safe within the same second (`-1`, `-2`, ... suffix).
-- `preping` writes `unreachable_results-*` even when all targets are reachable. In that case the file contains the header only. `scan` no longer writes this file.
-- To skip the reachability gate, skip the `preping` step and run `generate-buckets` without `-unreachable-file`.
+- `pre-ping` writes `unreachable_results-*` even when all targets are reachable. In that case the file contains the header only. `scan` no longer writes this file.
+- To skip the reachability gate, skip the `pre-ping` step and run `generate-buckets` without `-unreachable-file`.
 - The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel or error saves progress back to that exact path (in place). A re-run of the same `scan` command continues from there.
 - The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist, so `scan` reuses the same filtering decision without a ping.
 - **If a write to the output CSV fails, the command saves no resume progress.** The dispatch cursor advances when a task enters the queue. After a write failure, the cursor covers rows that never reached the file. A saved cursor makes the next `-resume` skip those rows silently. `scan` therefore leaves the bucket file unchanged, logs `resume_state_not_saved`, and exits with an error. Every other failure (Ctrl+C, pressure-API error, worker panic) saves progress as usual.
@@ -332,7 +332,7 @@ any TCP dial" guarantee — `preping` completes before `scan` runs.
 `port-scan` is a TCP port scanner with pressure-aware pacing and resume support.
 
 **Commands** (each parses only its own flag surface):
-- `port-scan preping [flags]` - Ping unique target IPs. Write `unreachable_results-<ts>.csv` and print its path
+- `port-scan pre-ping [flags]` - Ping unique target IPs. Write `unreachable_results-<ts>.csv` and print its path
 - `port-scan generate-buckets [flags]` - Build the resume bucket snapshot (`-buckets-out` required). No network I/O
 - `port-scan scan [flags]` - Pure TCP scan of a bucket snapshot (`-resume` required). No ping flags
 - `port-scan validate [flags]` - Validate input files only (no network scan)
@@ -344,13 +344,13 @@ defaults are in [All flags](docs/cli/flags.md).
 |------|---------------|-------|
 | `-cidr-file` (required) | all | Rich/basic CSV. The source of truth for target metadata |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | all | Case-sensitive column mapping (defaults `ip` / `ip_cidr`) |
-| `-workers` | `preping`, `generate-buckets`, `scan` | Also parallelizes bucket generation (default `10`, accepted range `1`-`1024`) |
-| `-progress-interval` | `preping`, `generate-buckets`, `scan` | Progress line cadence, count-based (default `100`) — **NEW** |
+| `-workers` | `pre-ping`, `generate-buckets`, `scan` | Also parallelizes bucket generation (default `10`, accepted range `1`-`1024`) |
+| `-progress-interval` | `pre-ping`, `generate-buckets`, `scan` | Progress line cadence, count-based (default `100`) — **NEW** |
 | `-log-level` / `-format` / `-quiet` | all | Shared observability flags |
-| `-pre-scan-ping-timeout` | `preping` | Ping reply-wait (default `100ms`). Removed from `scan` |
-| `-output` | `preping`, `scan` | Output anchor: unreachable CSV (`preping`), scan/opened CSVs (`scan`) |
+| `-pre-scan-ping-timeout` | `pre-ping` | Ping reply-wait (default `100ms`). Removed from `scan` |
+| `-output` | `pre-ping`, `scan` | Output anchor: unreachable CSV (`pre-ping`), scan/opened CSVs (`scan`) |
 | `-port-file` | `generate-buckets` (primary), `scan` (fallback) | Required in basic mode. Ignored in rich mode |
-| `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `preping` output) — **NEW** |
+| `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `pre-ping` output) — **NEW** |
 | `-buckets-out` (required) | `generate-buckets` | Bucket snapshot output path — **NEW** |
 | `-resume` (required) | `scan` | Bucket snapshot to scan. Updated in place on cancel or error |
 | `-timeout` / `-delay` / `-bucket-rate` / `-bucket-capacity` | `scan` | Dial/dispatch tuning (`-bucket-rate` and `-bucket-capacity` accept `1`-`1000000`) |
@@ -468,11 +468,11 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 | `-cidr-file` | CIDR/rich input CSV path (required on every subcommand) |
 | `-port-file` | Port list path — `generate-buckets` in basic mode, `scan` fallback |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | Map custom CSV column names |
-| `-unreachable-file` | `generate-buckets`: blocklist to subtract (a `preping` output) |
+| `-unreachable-file` | `generate-buckets`: blocklist to subtract (a `pre-ping` output) |
 | `-buckets-out` | `generate-buckets`: bucket snapshot output (required) |
 | `-resume` | `scan`: bucket snapshot to scan (required, updated in place) |
-| `-output` | `preping` / `scan`: output directory anchor |
-| `-pre-scan-ping-timeout` | `preping`: reachability timeout (default `100ms`) |
+| `-output` | `pre-ping` / `scan`: output directory anchor |
+| `-pre-scan-ping-timeout` | `pre-ping`: reachability timeout (default `100ms`) |
 | `-progress-interval` | Pipeline steps: progress line cadence (default `100`) |
 | `-disable-api` | `scan`: disable pressure API polling |
 | `-pressure-api` / `-pressure-interval` | `scan`: pressure-based pause control |

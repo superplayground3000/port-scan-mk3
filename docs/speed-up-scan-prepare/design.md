@@ -35,7 +35,7 @@ O(N²)**：每插入一個 target 就對整個 group 做一次線性掃描 + 兩
 
 ## 1. Context & problem
 
-`port-scan` runs `preping → generate-buckets → scan` (breaking change in #42).
+`port-scan` runs `pre-ping → generate-buckets → scan` (breaking change in #42).
 `scan -resume <bucket.json>` must rebuild an in-memory runtime plan before dialing:
 expand each segment into IPs, drop unreachable IPs, **group by
 `dst_network_segment` and de-duplicate by `execution_key`**, attach ports. The

@@ -2,7 +2,7 @@
 // The reporter writes periodic percentage lines to an io.Writer, which is
 // stderr in production.
 //
-// The long-running pre-scan phases (preping, generate-buckets) use this package
+// The long-running pre-scan phases (pre-ping, generate-buckets) use this package
 // to give an operator visible feedback over otherwise silent periods. The
 // reporter writes one line each time progress advances by a configurable number
 // of units. Done always writes a final 100% summary line. All methods are safe

@@ -8,7 +8,7 @@
 and rich), pressure-aware pacing via a configurable API, resumable scans, and
 real-time dashboard display.
 
-As of **2.0.0** it is a **three-step pipeline** — `preping` →
+As of **2.0.0** it is a **three-step pipeline** — `pre-ping` →
 `generate-buckets` → `scan` — with durable file hand-offs between steps. Each
 subcommand parses only its own flag surface (`config.ParseFor`). `scan` requires
 a bucket snapshot via `-resume`, constructs no reachability checker, and never
@@ -17,14 +17,14 @@ relocation table and migration.
 
 ## Commands
 
-### preping
+### pre-ping
 
 Pings unique target IPs and writes the `unreachable_results-<ts>.csv` blocklist,
 printing its resolved path to stdout for chaining. Reports percentage progress
 to stderr.
 
 ```bash
-port-scan preping -cidr-file <path> [-pre-scan-ping-timeout 100ms] [-workers N] \
+port-scan pre-ping -cidr-file <path> [-pre-scan-ping-timeout 100ms] [-workers N] \
   [-output <path>] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] \
   [-log-level info] [-format human|json] [-quiet]
 ```
@@ -79,18 +79,18 @@ own it. Required flags: `-cidr-file` (all), `-buckets-out` (`generate-buckets`),
 |------|---------|-------------|
 | `-cidr-file` | (required) | All commands. Path to the CIDR/rich input CSV. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | `ip` / `ip_cidr` | All commands. Case-sensitive column mapping. |
-| `-pre-scan-ping-timeout` | `100ms` | `preping` only. Ping reply-wait timeout (must be > 0). Removed from `scan`. |
-| `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `preping` output) whose `ip` column is subtracted. |
+| `-pre-scan-ping-timeout` | `100ms` | `pre-ping` only. Ping reply-wait timeout (must be > 0). Removed from `scan`. |
+| `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `pre-ping` output) whose `ip` column is subtracted. |
 | `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
 | `-resume` | (required) | `scan` only. Bucket snapshot to scan; updated in place on cancel/error. |
-| `-progress-interval` | `100` | `preping`, `generate-buckets`, `scan`. Progress-line cadence (count of processed units); emitted to stderr. |
+| `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. Progress-line cadence (count of processed units); emitted to stderr. |
 | `-port-file` | (basic mode) | `generate-buckets` (primary; required in basic mode, ignored in rich mode) and `scan` (fallback, normally ignored — chunks carry ports). |
-| `-output` | `scan_results.csv` | `preping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
+| `-output` | `scan_results.csv` | `pre-ping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
 | `-timeout` | `100ms` | `scan` only. Per-scan TCP connection timeout (Go duration string). |
 | `-delay` | `10ms` | `scan` only. Pause between dispatching consecutive tasks |
 | `-bucket-rate` | `100` | `scan` only. Leaky-bucket token refill rate (tokens/second) |
 | `-bucket-capacity` | `100` | `scan` only. Leaky-bucket maximum burst size |
-| `-workers` | `10` | `preping`, `generate-buckets`, `scan`. Concurrent workers (also parallelizes bucket generation) |
+| `-workers` | `10` | `pre-ping`, `generate-buckets`, `scan`. Concurrent workers (also parallelizes bucket generation) |
 | `-pressure-api` | `http://localhost:8080/api/pressure` | `scan` only. URL of the pressure API endpoint (plain HTTP) |
 | `-disable-api` | `false` | `scan` only. Disable pressure API polling; use only local rate control |
 | `-pressure-interval` | `5s` | `scan` only. Pressure poll interval (Go duration string or integer seconds) |

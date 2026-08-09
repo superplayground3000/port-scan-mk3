@@ -21,7 +21,7 @@ func lines(buf *bytes.Buffer) []string {
 
 func TestReporter_EmitsAtInterval(t *testing.T) {
 	var buf bytes.Buffer
-	r := New("preping", 10, 3, &buf)
+	r := New("pre-ping", 10, 3, &buf)
 
 	// Advance one at a time; a line should appear only when the running count
 	// crosses a multiple of the interval (3, 6, 9), not on every Inc().
@@ -41,7 +41,7 @@ func TestReporter_EmitsAtInterval(t *testing.T) {
 		t.Errorf("second interval line = %q, want it to contain 6/10", got[1])
 	}
 	for _, l := range got {
-		if !strings.HasPrefix(l, "preping: ") {
+		if !strings.HasPrefix(l, "pre-ping: ") {
 			t.Errorf("line %q missing label prefix", l)
 		}
 	}
@@ -49,7 +49,7 @@ func TestReporter_EmitsAtInterval(t *testing.T) {
 
 func TestReporter_FinalSummaryAlwaysEmitted(t *testing.T) {
 	var buf bytes.Buffer
-	r := New("preping", 10, 3, &buf)
+	r := New("pre-ping", 10, 3, &buf)
 
 	// Advance to a non-interval-aligned count (7), then Done().
 	r.Add(7)
@@ -64,7 +64,7 @@ func TestReporter_FinalSummaryAlwaysEmitted(t *testing.T) {
 	if !strings.Contains(final, "10/10") || !strings.Contains(final, "(100.0%)") {
 		t.Errorf("final summary = %q, want 10/10 and (100.0%%)", final)
 	}
-	if !strings.HasPrefix(final, "preping: ") {
+	if !strings.HasPrefix(final, "pre-ping: ") {
 		t.Errorf("final line %q missing label prefix", final)
 	}
 }
@@ -72,7 +72,7 @@ func TestReporter_FinalSummaryAlwaysEmitted(t *testing.T) {
 func TestReporter_FormatsPercent(t *testing.T) {
 	var buf bytes.Buffer
 	// interval == total so exactly one interval line is emitted at completion.
-	r := New("preping", 10000, 4200, &buf)
+	r := New("pre-ping", 10000, 4200, &buf)
 	r.Add(4200)
 
 	got := lines(&buf)

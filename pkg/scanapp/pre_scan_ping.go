@@ -80,7 +80,7 @@ func collectUniquePreScanIPs(inputs runInputs) ([]string, error) {
 // returns (reachable, unreachable, or errored), so callers can tick a progress
 // reporter per checked IP. It is called from worker goroutines, so onChecked
 // must be safe for concurrent use (progress.Reporter is). Passing nil skips
-// progress reporting. RunPreping is the sole production caller.
+// progress reporting. RunPrePing is the sole production caller.
 func runReachabilityChecksWithProgress(ctx context.Context, checker ReachabilityChecker, ips []string, workers int, timeout time.Duration, onChecked func()) ([]uint32, error) {
 	if len(ips) == 0 {
 		return nil, nil

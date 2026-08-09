@@ -14,7 +14,7 @@ import (
 
 // TestCollectUnreachableRows_RichRowsAggregateToSingleRowWithDistinctMergedMetadata
 // exercises the live rich aggregation path of collectUnreachableRows (used by
-// RunPreping): two rich records for the same dst IP but different ports/metadata
+// RunPrePing): two rich records for the same dst IP but different ports/metadata
 // collapse to one unreachable row whose metadata columns are pipe-merged. This
 // covers richUnreachableRowKey + mergeUnreachableRecord, which only the rich
 // branch reaches.
@@ -104,7 +104,7 @@ func TestCollectUnreachableRows_RichRowsAggregateToSingleRowWithDistinctMergedMe
 }
 
 // TestRunReachabilityChecksWithProgress_FailsFastOnFatalCheckerError drives the
-// live worker-pool entry (the one RunPreping uses) and asserts a tool-level
+// live worker-pool entry (the one RunPrePing uses) and asserts a tool-level
 // CheckDetailed error is fatal and stops the pool after the first IP.
 func TestRunReachabilityChecksWithProgress_FailsFastOnFatalCheckerError(t *testing.T) {
 	checker := &fakePreScanChecker{

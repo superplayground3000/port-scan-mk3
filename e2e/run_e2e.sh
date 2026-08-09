@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Isolated Docker e2e for the three-step pipeline (constitution IV/V):
-#   1. preping           — ping unique targets, write unreachable_results-<ts>.csv
+#   1. pre-ping          — ping unique targets, write unreachable_results-<ts>.csv
 #   2. generate-buckets  — subtract the unreachable blocklist, write a resume snapshot
 #   3. scan -resume      — scan the snapshot's buckets (never pings; no checker)
 # All steps run inside the scanner container against mock-only services on an
@@ -99,16 +99,16 @@ fi
 
 # Each pipeline step is a fresh scanner container invocation. -w /out makes
 # relative output paths resolve into the bind-mounted results directory.
-run_preping()          { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner preping "$@"; }
+run_pre_ping()         { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner pre-ping "$@"; }
 run_generate_buckets() { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner generate-buckets "$@"; }
 run_scan()             { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan "$@"; }
 
 # ---------------------------------------------------------------------------
-# Step 1 — preping: ping the two mock targets, write unreachable_results-<ts>.csv.
+# Step 1 — pre-ping: ping the two mock targets, write unreachable_results-<ts>.csv.
 # Both targets are live containers, so both answer ICMP and the blocklist is
 # empty; the step still exercises the real ping path and the durable CSV writer.
 # ---------------------------------------------------------------------------
-run_preping \
+run_pre_ping \
   -cidr-file /inputs/cidr_normal.csv \
   -cidr-ip-col source_ip \
   -cidr-ip-cidr-col source_cidr \
@@ -119,14 +119,14 @@ run_preping \
 
 UNREACHABLE_HOST="$(ls "$OUT_DIR"/unreachable_results-*.csv 2>/dev/null | sort | tail -n1 || true)"
 if [[ -z "${UNREACHABLE_HOST}" ]]; then
-  echo "e2e assertion failed: preping did not write unreachable_results-*.csv" >&2
+  echo "e2e assertion failed: pre-ping did not write unreachable_results-*.csv" >&2
   exit 1
 fi
 UNREACHABLE_CONTAINER="/out/$(basename "$UNREACHABLE_HOST")"
 
 # ---------------------------------------------------------------------------
 # Step 2 — generate-buckets: build the resume snapshot over targets minus the
-# preping blocklist. No network I/O; the snapshot is the durable hand-off to scan.
+# pre-ping blocklist. No network I/O; the snapshot is the durable hand-off to scan.
 # ---------------------------------------------------------------------------
 run_generate_buckets \
   -cidr-file /inputs/cidr_normal.csv \

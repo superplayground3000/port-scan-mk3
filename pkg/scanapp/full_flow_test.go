@@ -18,12 +18,12 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
-// TestFullFlow_PrepingGenerateBucketsScanResume_ProducesOneContinuousResultSet
+// TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSet
 // is the platform-neutral replacement for the Docker e2e suite on Windows: it
 // drives the whole three-step product pipeline end to end through the exported
 // package seam only —
 //
-//	RunPreping -> GenerateBuckets -> Run (first pass) -> Run (resume pass)
+//	RunPrePing -> GenerateBuckets -> Run (first pass) -> Run (resume pass)
 //
 // — against a real loopback TCP listener, with no Docker, no external network,
 // and no fixed-duration sleeps. Until this test existed the complete flow had
@@ -33,14 +33,14 @@ import (
 // Every step is observed only through its public entry point and the files it
 // produces, which is exactly the handoff a CLI user gets:
 //
-//   - preping writes unreachable_results-<ts>.csv and prints its path
-//     (preping.go:80-85), which generate-buckets consumes as -unreachable-file.
+//   - pre-ping writes unreachable_results-<ts>.csv and prints its path
+//     (pre_ping.go:80-85), which generate-buckets consumes as -unreachable-file.
 //   - generate-buckets writes the bucket snapshot to cfg.BucketsOut
 //     (bucketgen.go:115-125), which scan consumes as -resume.
 //   - scan's first pass is interrupted, so it persists a resume snapshot that
 //     records the output paths (resume_manager.go:25-40, scan.go:288), which the
 //     resume pass reopens in append mode (scan.go:95-106).
-func TestFullFlow_PrepingGenerateBucketsScanResume_ProducesOneContinuousResultSet(t *testing.T) {
+func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSet(t *testing.T) {
 	// A real listener on an OS-assigned loopback port is the only "service" in
 	// play; 127.0.0.1/32 is exempt from broadcast filtering (task/broadcast.go:26-29)
 	// so the /32 expands to exactly the one host we control.
@@ -56,7 +56,7 @@ func TestFullFlow_PrepingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	bucketsPath := filepath.Join(tmp, "buckets.json")
 	resumeStatePath := filepath.Join(tmp, "resume_state.json")
 
-	// 127.0.0.2 is never dialed: preping reports it unreachable, so
+	// 127.0.0.2 is never dialed: pre-ping reports it unreachable, so
 	// generate-buckets subtracts it and no chunk ever contains it. This keeps the
 	// blocklist handoff meaningful without depending on 127.0.0.2 being bound,
 	// which does not hold on Windows.
@@ -93,37 +93,37 @@ func TestFullFlow_PrepingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	}
 
 	// ---------------------------------------------------------------- step 1.
-	// RunPreping. The checker is injected through the documented public seam
-	// (preping.go:22-24, RunOptions.ReachabilityChecker) so the step is decided
+	// RunPrePing. The checker is injected through the documented public seam
+	// (pre_ping.go:22-24, RunOptions.ReachabilityChecker) so the step is decided
 	// by our fixture rather than by whether ICMP works on the CI runner.
 	prepCfg := baseCfg
 	var prepStdout, prepStderr bytes.Buffer
-	prepErr := RunPreping(context.Background(), prepCfg, &prepStdout, &prepStderr, RunOptions{
+	prepErr := RunPrePing(context.Background(), prepCfg, &prepStdout, &prepStderr, RunOptions{
 		ReachabilityChecker: fullFlowChecker{unreachable: map[string]bool{unreachableIP: true}},
 	})
 	if prepErr != nil {
-		t.Fatalf("step 1 (preping) failed: %v\nstderr: %s", prepErr, prepStderr.String())
+		t.Fatalf("step 1 (pre-ping) failed: %v\nstderr: %s", prepErr, prepStderr.String())
 	}
 
-	// preping.go:84 prints the resolved path so the next step can chain off it.
+	// pre_ping.go:84 prints the resolved path so the next step can chain off it.
 	unreachablePath := strings.TrimSpace(prepStdout.String())
 	if unreachablePath == "" {
-		t.Fatal("step 1 (preping): expected the unreachable output path on stdout, got nothing")
+		t.Fatal("step 1 (pre-ping): expected the unreachable output path on stdout, got nothing")
 	}
 	if got := mustFindOne(t, filepath.Join(tmp, "unreachable_results-*.csv")); got != unreachablePath {
-		t.Fatalf("step 1 (preping): stdout path %q does not name the produced file %q", unreachablePath, got)
+		t.Fatalf("step 1 (pre-ping): stdout path %q does not name the produced file %q", unreachablePath, got)
 	}
 	// Schema is writer.UnreachableWriter's fixed contract (unreachable_writer.go:29-41);
-	// the status/reason values come from pre_scan_ping.go:199-212 and preping.go:55.
+	// the status/reason values come from pre_scan_ping.go:199-212 and pre_ping.go:55.
 	unreachHeader, unreachRows := readCSVRows(t, unreachablePath)
 	if len(unreachHeader) == 0 || unreachHeader[0] != "ip" || unreachHeader[2] != "status" {
-		t.Fatalf("step 1 (preping): unexpected unreachable header %v", unreachHeader)
+		t.Fatalf("step 1 (pre-ping): unexpected unreachable header %v", unreachHeader)
 	}
 	if len(unreachRows) != 1 {
-		t.Fatalf("step 1 (preping): expected exactly 1 unreachable row, got %d: %v", len(unreachRows), unreachRows)
+		t.Fatalf("step 1 (pre-ping): expected exactly 1 unreachable row, got %d: %v", len(unreachRows), unreachRows)
 	}
 	if unreachRows[0][0] != unreachableIP || unreachRows[0][2] != "unreachable" {
-		t.Fatalf("step 1 (preping): expected %s marked unreachable, got %v", unreachableIP, unreachRows[0])
+		t.Fatalf("step 1 (pre-ping): expected %s marked unreachable, got %v", unreachableIP, unreachRows[0])
 	}
 
 	// ---------------------------------------------------------------- step 2.
@@ -364,7 +364,7 @@ func TestFullFlow_PrepingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 
 // fullFlowChecker is a ReachabilityChecker fixture: every IP is reachable except
 // the ones listed. It replaces the OS ping subprocess so the flow test is
-// deterministic on any runner (preping.go:94-99 takes the injected checker when
+// deterministic on any runner (pre_ping.go:94-99 takes the injected checker when
 // one is supplied).
 type fullFlowChecker struct {
 	unreachable map[string]bool

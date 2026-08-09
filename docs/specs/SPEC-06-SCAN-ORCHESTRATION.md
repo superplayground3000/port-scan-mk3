@@ -27,13 +27,13 @@ pkg/scanapp/
 ## 0. Command decomposition (2.0.0)
 
 Orchestration is split into three sibling library entry points in `pkg/scanapp`,
-each driven by its own CLI subcommand. What was one monolithic `Run` (preping ->
-inline chunk build -> scan) is now three separately-runnable stages with durable
-file hand-offs:
+each driven by its own CLI subcommand. What was one monolithic `Run`
+(pre-ping -> inline chunk build -> scan) is now three separately-runnable stages
+with durable file hand-offs:
 
 | Stage | Entry point | Input | Output |
 |-------|-------------|-------|--------|
-| `preping` | `RunPreping(ctx, cfg, stdout, stderr, RunOptions)` | rich/basic CSV | `unreachable_results-<ts>.csv` (path printed to stdout) |
+| `pre-ping` | `RunPrePing(ctx, cfg, stdout, stderr, RunOptions)` | rich/basic CSV | `unreachable_results-<ts>.csv` (path printed to stdout) |
 | `generate-buckets` | `GenerateBuckets(ctx, cfg, stderr, GenerateBucketsOptions)` | CSV + optional unreachable blocklist | bucket `Snapshot` JSON (`-buckets-out`) |
 | `scan` | `Run(ctx, cfg, stdout, stderr, RunOptions)` | CSV + bucket `Snapshot` (`-resume`, required) | `scan_results-<ts>.csv` / `opened_results-<ts>.csv` |
 
@@ -48,9 +48,9 @@ Key structural facts:
   resume path re-derives, so `total_count` matches — the primary invariant),
   stamps `pre_scan_ping.enabled=true`, and fans chunk building out over
   `-workers` with deterministic CIDR-sorted output.
-- **`preping`** owns reachability + the unreachable writer, with no chunk/scan
+- **`pre-ping`** owns reachability + the unreachable writer, with no chunk/scan
   logic. The "unreachable results finalized before any TCP dial" guarantee is
-  now enforced by CLI **sequencing** (preping is a separate step run before
+  now enforced by CLI **sequencing** (pre-ping is a separate step run before
   scan), not by ordering inside one command.
 
 The stages below (§2–§14) describe the `scan` (`Run`) path.

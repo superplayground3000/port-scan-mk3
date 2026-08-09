@@ -171,7 +171,7 @@ reopen the same file in append mode:
   present); if the file is missing/empty, fall back to `NewCSVWriter` so the
   header is recreated.
 
-(The `unreachable_results` writer used by `preping` still uses the `.tmp` +
+(The `unreachable_results` writer used by `pre-ping` still uses the `.tmp` +
 rename pattern; only the scan/open result files changed.)
 
 ### NewCSVWriterAppending

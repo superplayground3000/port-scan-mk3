@@ -92,7 +92,7 @@ type Config struct {
 
 // defaultProgressInterval is the count-based progress cadence carried from the
 // scanner's progressStep fallback (pkg/scanapp/scan.go). Kept in one place so
-// preping, generate-buckets, and scan share the same default.
+// pre-ping, generate-buckets, and scan share the same default.
 const defaultProgressInterval = 100
 
 // Parse processes CLI arguments and returns a validated Config. A non-nil error

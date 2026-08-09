@@ -48,10 +48,10 @@ func TestCLIHelp_IncludesRequiredFlags(t *testing.T) {
 	}
 	// Post-split help lists all three pipeline subcommands and their flags.
 	// -disable-pre-scan-ping is intentionally gone (skip pinging by skipping the
-	// preping step); the relocated flags -pre-scan-ping-timeout, -buckets-out,
+	// pre-ping step); the relocated flags -pre-scan-ping-timeout, -buckets-out,
 	// and -unreachable-file appear on their owning subcommands.
 	for _, want := range []string{
-		"preping", "generate-buckets", "scan",
+		"pre-ping", "generate-buckets", "scan",
 		"-cidr-file", "-port-file", "-cidr-ip-col", "-cidr-ip-cidr-col",
 		"-resume", "-buckets-out", "-unreachable-file", "-pre-scan-ping-timeout",
 		"-disable-api", "-format",

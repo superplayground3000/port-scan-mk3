@@ -12,18 +12,18 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
-// RunPreping runs the standalone pre-scan ping phase. It loads the target
+// RunPrePing runs the standalone pre-scan ping phase. It loads the target
 // inputs. It pings every unique target IP concurrently (cfg.Workers,
 // cfg.PreScanPingTimeout). It reports percentage progress over the unique-IP
 // count to stderr. It writes the fixed-schema unreachable_results-<ts>.csv into
 // the -output directory. It then prints the resolved output path to stdout, so
 // a caller can chain the file into generate-buckets.
 //
-// RunPreping builds no chunk, writes no snapshot, and scans no port. Its
+// RunPrePing builds no chunk, writes no snapshot, and scans no port. Its
 // signature is the same as the signature of Run, so the CLI wiring can dispatch
 // either entry point in the same way. A test injects a ReachabilityChecker
 // through opts.ReachabilityChecker.
-func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
+func RunPrePing(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
 	deps := defaultRunDependencies()
 	if strings.TrimSpace(cfg.CIDRIPCol) == "" {
 		cfg.CIDRIPCol = "ip"
@@ -36,7 +36,7 @@ func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer
 		return err
 	}
 
-	inputs, err := loadPrepingInputs(cfg, deps)
+	inputs, err := loadPrePingInputs(cfg, deps)
 	if err != nil {
 		return err
 	}
@@ -55,10 +55,10 @@ func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer
 	timeout := cfg.PreScanPingTimeout
 	reason := fmt.Sprintf("ping failed within %s", timeout)
 
-	reporter := progress.New("preping", len(uniqueIPs), cfg.ProgressInterval, stderr)
+	reporter := progress.New("pre-ping", len(uniqueIPs), cfg.ProgressInterval, stderr)
 	unreachable, err := runReachabilityChecksWithProgress(
 		ctx,
-		resolvePrepingChecker(opts),
+		resolvePrePingChecker(opts),
 		uniqueIPs,
 		cfg.Workers,
 		timeout,
@@ -86,13 +86,13 @@ func RunPreping(ctx context.Context, cfg config.Config, stdout, stderr io.Writer
 	return nil
 }
 
-// resolvePrepingChecker selects the reachability checker for preping. Preping's
-// whole purpose is to ping, so it always returns a checker: the injected one
+// resolvePrePingChecker selects the reachability checker for pre-ping. The
+// pre-ping step exists to ping, so it always returns a checker: the injected one
 // when present (tests) and otherwise the OS ping-command checker, which
 // preserves the Windows deadline-kill classification and
 // pingProcessStartupAllowance behavior. (Scan, by contrast, wires in no checker
 // at all under decision B, so its "never pings" guarantee is structural.)
-func resolvePrepingChecker(opts RunOptions) ReachabilityChecker {
+func resolvePrePingChecker(opts RunOptions) ReachabilityChecker {
 	if opts.ReachabilityChecker != nil {
 		return opts.ReachabilityChecker
 	}
@@ -100,8 +100,8 @@ func resolvePrepingChecker(opts RunOptions) ReachabilityChecker {
 }
 
 // finalizeUnreachableResults writes rows to a fresh unreachable_results CSV at
-// finalPath and finalizes it (header-only when rows is empty). RunPreping is its
-// sole caller; it lives here (not scan.go) so the preping path owns its writer.
+// finalPath and finalizes it (header-only when rows is empty). RunPrePing is its
+// sole caller; it lives here (not scan.go) so the pre-ping path owns its writer.
 func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecord) error {
 	output, err := openUnreachableOutput(finalPath)
 	if err != nil {

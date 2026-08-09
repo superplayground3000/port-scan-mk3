@@ -3,7 +3,7 @@
 Copy-paste scenarios for developers and contributors. Run from repo root unless
 noted.
 
-`port-scan` is a **three-step pipeline**: `preping` -> `generate-buckets` ->
+`port-scan` is a **three-step pipeline**: `pre-ping` -> `generate-buckets` ->
 `scan`. `scan` requires a bucket snapshot from `-resume`. It never pings, and it
 no longer accepts the ping flags. See [All flags](flags.md) and the
 [2.0.0 release notes](../release-notes/2.0.0.md) for the migration.
@@ -15,7 +15,7 @@ Goal: Run the complete pipeline end to end with a basic CIDR CSV + port file.
 Commands:
 ```bash
 # 1. Ping unique targets; capture the printed unreachable CSV path (stdout)
-UNREACHABLE=$(go run ./cmd/port-scan preping \
+UNREACHABLE=$(go run ./cmd/port-scan pre-ping \
   -cidr-file e2e/inputs/cidr_normal.csv \
   -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
   -output e2e/out/scan_results.csv)
@@ -38,8 +38,8 @@ go run ./cmd/port-scan scan \
 ```
 
 Expected:
-- `preping` prints its `unreachable_results-<ts>.csv` path to stdout and a
-  `preping: N/N (100.0%)` summary to stderr.
+- `pre-ping` prints its `unreachable_results-<ts>.csv` path to stdout and a
+  `pre-ping: N/N (100.0%)` summary to stderr.
 - `generate-buckets` writes `e2e/out/buckets.json` and prints a
   `generate-buckets: N/N (100.0%)` summary.
 - `scan` finishes with exit `0` and writes `scan_results-*.csv` /
@@ -56,7 +56,7 @@ target without a reachability filter.
 
 Commands:
 ```bash
-# No preping step; no -unreachable-file
+# No pre-ping step; no -unreachable-file
 go run ./cmd/port-scan generate-buckets \
   -cidr-file e2e/inputs/cidr_normal.csv \
   -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr \
@@ -101,9 +101,9 @@ Expected:
 
 Goal: Use non-default CIDR CSV column names (apply the same names to every step).
 
-Command (preping shown — pass the same flags to generate-buckets and scan):
+Command (pre-ping shown — pass the same flags to generate-buckets and scan):
 ```bash
-go run ./cmd/port-scan preping \
+go run ./cmd/port-scan pre-ping \
   -cidr-file e2e/inputs/cidr_normal.csv \
   -cidr-ip-col source_ip \
   -cidr-ip-cidr-col source_cidr \
@@ -112,7 +112,7 @@ go run ./cmd/port-scan preping \
 
 Troubleshooting:
 - Column names are case-sensitive. Make sure that the header spelling is exact.
-  Use the same mapping flags on `preping`, `generate-buckets`, and `scan`.
+  Use the same mapping flags on `pre-ping`, `generate-buckets`, and `scan`.
 
 ## Scenario 4: Observe rich dashboard output (scan)
 
@@ -231,7 +231,7 @@ bash e2e/run_e2e.sh
 ```
 
 Expected:
-- The three-step pipeline (`preping` -> `generate-buckets` -> `scan`) runs in
+- The three-step pipeline (`pre-ping` -> `generate-buckets` -> `scan`) runs in
   sequence against the mock services.
 - The normal and failure scenarios pass. Artifacts appear under `e2e/out/` (report
   files, batch CSVs, bucket/resume snapshots).

@@ -293,7 +293,7 @@ func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *
 		t.Fatalf("expected scan-only run to never invoke the checker, got %v", calls)
 	}
 
-	// Decision B: scan does not write the unreachable CSV (that is preping's
+	// Decision B: scan does not write the unreachable CSV (that is pre-ping's
 	// artifact). It only excludes the snapshot's blocklisted IPs from scanning.
 	if matches, _ := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); len(matches) != 0 {
 		t.Fatalf("scan must not write unreachable_results CSV, got %v", matches)

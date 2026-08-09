@@ -17,7 +17,7 @@ import (
 //     dynamic port range, about 16k ports by default. A worker ceiling one order
 //     of magnitude less than that range makes sure that even a max-workers scan
 //     cannot drain the ephemeral pool.
-//   - The preping step can run one ping child process for each worker
+//   - The pre-ping step can run one ping child process for each worker
 //     (pkg/scanapp/pre_scan_ping.go). Windows process creation is the scarce
 //     resource there. 64 concurrent pings caused enough contention to need a 10s
 //     startup allowance (.claude/rules/50-lessons.md, 2026-07-22).
