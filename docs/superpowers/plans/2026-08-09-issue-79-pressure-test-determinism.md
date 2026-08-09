@@ -154,7 +154,7 @@ Stop the poller. Then make sure that `errCh` contains no error.
 Run:
 
 ```text
-go test -race -shuffle=on -count=20 ./pkg/scanapp -run '^TestPollPressureAPI_PressureAboveThreshold_Pauses$'
+go test -race -shuffle=on -count=20 ./pkg/scanapp -run '^TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety$'
 ```
 
 Expected: PASS.
@@ -378,7 +378,7 @@ Do not commit this mutation.
 Run:
 
 ```text
-go test -race -count=1 ./pkg/scanapp -run '^TestPollPressureAPI_PressureAboveThreshold_Pauses$' -v
+go test -race -count=1 ./pkg/scanapp -run '^TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety$' -v
 ```
 
 Expected: FAIL after the bounded wait because the controller never pauses.
@@ -400,7 +400,7 @@ Expected: exit 0. No production change remains.
 Run:
 
 ```text
-go test -race -count=20 ./pkg/scanapp -run '^TestPollPressureAPI_PressureAboveThreshold_Pauses$'
+go test -race -count=20 ./pkg/scanapp -run '^TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety$'
 ```
 
 Expected: PASS.
@@ -547,7 +547,7 @@ The reviewer must inspect the complete diff from `master` to `HEAD`.
 
 Use this reviewer order:
 
-1. Use a different provider when one is available.
+1. If a different provider is available, use it.
 2. Otherwise, use a different model.
 3. Otherwise, use a fresh-context agent.
 
