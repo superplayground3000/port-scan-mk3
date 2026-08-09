@@ -1,13 +1,10 @@
 package scanapp
 
 import (
-	"context"
-	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
+	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,140 +13,120 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
 
-// -------------------------------------------------------------------
-// GAP 1: 3 consecutive API failures trigger error exit (circuit-breaker)
-// -------------------------------------------------------------------
-
 func TestPollPressureAPI_ThreeConsecutiveFailures_SendsErrorAndExits(t *testing.T) {
-	failCount := atomic.Int32{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		failCount.Add(1)
-		http.Error(w, "server error", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	go pollPressureAPI(ctx, cfg, RunOptions{}, ctrl, logger, errCh)
+	for range 3 {
+		server.respond(t, scriptedPressureHTTPResponse{
+			statusCode: http.StatusInternalServerError,
+			body:       "server error",
+		})
+	}
 
 	var err error
 	select {
-	case e := <-errCh:
-		err = e
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected error after 3 failures, but pollPressureAPI did not exit")
+	case err = <-poller.errCh:
+	case <-time.After(pressureTestTimeout):
+		t.Fatal("the pressure poller did not return an error before the timeout")
 	}
 
 	if err == nil {
-		t.Fatal("expected non-nil error after 3 consecutive failures")
+		t.Fatal("expected an error after three consecutive API failures")
 	}
-	// Should be the circuit-breaker error: "pressure api failed 3 times: ..."
 	if !strings.Contains(err.Error(), "pressure api failed 3 times") {
 		t.Fatalf("expected circuit-breaker error, got: %v", err)
 	}
 
-	if got := failCount.Load(); got < 3 {
-		t.Errorf("expected at least 3 failures, got %d", got)
+	select {
+	case <-poller.done:
+	case <-time.After(pressureTestTimeout):
+		t.Fatal("the pressure poller did not exit after the third failure")
 	}
+
+	poller.stop(t)
 }
 
 func TestPollPressureAPI_FailureRecoveryAfterTwoFails_SkipsThirdAndContinues(t *testing.T) {
-	// After 2 failures (not reaching 3), if a request succeeds, consecutiveFailures should reset to 0.
-	callCount := atomic.Int32{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c := callCount.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		if c <= 2 {
-			http.Error(w, "server error", http.StatusInternalServerError)
-			return
-		}
-		// Third call succeeds
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": 50})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	ctrl.SetAPIPaused(true)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	go pollPressureAPI(ctx, cfg, RunOptions{}, ctrl, logger, errCh)
-
-	// Wait enough time for at least 3 polls
-	time.Sleep(150 * time.Millisecond)
-
-	select {
-	case e := <-errCh:
-		t.Fatalf("unexpected error (should not have failed with 3 successes after 2 initial failures): %v", e)
-	default:
-		// Expected: no error
+	for range 2 {
+		server.respond(t, scriptedPressureHTTPResponse{
+			statusCode: http.StatusInternalServerError,
+			body:       "server error",
+		})
 	}
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":50}`,
+	})
 
-	// Should not be paused since pressure=50 < threshold=90
-	if ctrl.IsPaused() {
-		t.Error("expected controller not to be paused at pressure=50")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume when pressure=50", func() bool { return !ctrl.APIPaused() })
+
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusInternalServerError,
+		body:       "server error",
+	})
+	ctrl.SetAPIPaused(true)
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":50}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume after a recovered pressure API failure", func() bool { return !ctrl.APIPaused() })
+
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
 
-// -------------------------------------------------------------------
-// GAP 2: Pressure exactly equals threshold (90 >= 90) triggers pause
-// -------------------------------------------------------------------
-
 func TestPollPressureAPI_PressureExactlyAtThreshold_Pauses(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": 90})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":90}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	time.Sleep(30 * time.Millisecond)
-
-	if !ctrl.IsPaused() {
-		t.Error("expected controller to be paused when pressure=90 and threshold=90")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to pause when pressure=90 and threshold=90", ctrl.APIPaused)
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
 
 func TestPollPressureAPI_PressureJustBelowThreshold_DoesNotPause(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": 89})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	ctrl.SetAPIPaused(true)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":89}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	time.Sleep(30 * time.Millisecond)
-
-	if ctrl.IsPaused() {
-		t.Error("expected controller not to be paused when pressure=89 and threshold=90")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume when pressure=89 and threshold=90", func() bool { return !ctrl.APIPaused() })
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
 
 func TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety(t *testing.T) {
@@ -171,274 +148,179 @@ func TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety(t *testing.T) {
 	poller.makeSureNoError(t)
 }
 
-// -------------------------------------------------------------------
-// GAP 3: Pause → Resume transition (pressure drops below threshold)
-// -------------------------------------------------------------------
-
 func TestPollPressureAPI_PressureDropsBelowThreshold_Resumes(t *testing.T) {
-	// Values: 95 (pause), then 30 (resume) — enough values to avoid cycling during test.
-	// With 20ms interval and 100ms context, ~5 polls fire. Use 5 values: 95,30,30,30,30.
-	idx := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		values := []int{95, 30, 30, 30, 30}
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": values[idx%len(values)]})
-		idx++
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 20 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":95}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to pause when pressure=95", ctrl.APIPaused)
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	// First poll: should pause
-	time.Sleep(30 * time.Millisecond)
-	if !ctrl.IsPaused() {
-		t.Fatal("expected paused after first poll (pressure=95 >= 90)")
-	}
-
-	// Second poll: should resume
-	time.Sleep(30 * time.Millisecond)
-	if ctrl.IsPaused() {
-		t.Error("expected resumed after second poll (pressure=30 < 90)")
-	}
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":30}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume when pressure=30", func() bool { return !ctrl.APIPaused() })
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
-
-// -------------------------------------------------------------------
-// GAP 4: Rapid oscillation 89→91→89→91 (no hysteresis, choppy behavior)
-// -------------------------------------------------------------------
 
 func TestPollPressureAPI_RapidOscillation_RepeatedlyPausesAndResumes(t *testing.T) {
-	// Values: 95, 30, 95, 30 — rapid pause/resume cycles
-	idx := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		values := []int{95, 30, 95, 30}
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": values[idx%len(values)]})
-		idx++
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	// Track pause/resume transitions
-	var transitionCount int
-	prevPaused := ctrl.IsPaused()
-
-	for i := 0; i < 20; i++ {
-		time.Sleep(15 * time.Millisecond)
-		currPaused := ctrl.IsPaused()
-		if currPaused != prevPaused {
-			transitionCount++
-			prevPaused = currPaused
-		}
+	for _, step := range []struct {
+		pressure int
+		paused   bool
+	}{
+		{pressure: 95, paused: true},
+		{pressure: 30, paused: false},
+		{pressure: 95, paused: true},
+		{pressure: 30, paused: false},
+	} {
+		server.respond(t, scriptedPressureHTTPResponse{
+			statusCode: http.StatusOK,
+			body:       `{"pressure":` + strconv.Itoa(step.pressure) + `}`,
+		})
+		testkit.WaitFor(t, pressureTestTimeout, "controller to match the scripted pressure state", func() bool {
+			return ctrl.APIPaused() == step.paused
+		})
 	}
-
-	// Without hysteresis, every threshold crossing toggles state.
-	// 4 values = up to 3 transitions expected (95→30, 30→95, 95→30).
-	// At minimum we expect at least 2 transitions due to oscillation.
-	if transitionCount < 2 {
-		t.Errorf("expected at least 2 pause/resume transitions during rapid oscillation, got %d", transitionCount)
-	}
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
-
-// -------------------------------------------------------------------
-// GAP 5: Pressure = 0 (valid, should not pause)
-// -------------------------------------------------------------------
 
 func TestPollPressureAPI_ZeroPressure_DoesNotPause(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": 0})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	ctrl.SetAPIPaused(true)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":0}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	time.Sleep(30 * time.Millisecond)
-
-	if ctrl.IsPaused() {
-		t.Error("expected controller not to be paused when pressure=0")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume when pressure=0", func() bool { return !ctrl.APIPaused() })
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
-
-// -------------------------------------------------------------------
-// GAP 6: Negative pressure value (API returns -1 or similar — edge case)
-// -------------------------------------------------------------------
 
 func TestPollPressureAPI_NegativePressureValue_DoesNotPause(t *testing.T) {
-	// Some APIs might return -1 for unknown/missing pressure.
-	// The fetcher parses it as a number, normalizePressure passes it through.
-	// At integration level: pressure=-1 < threshold=90, should not pause.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": -1})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	ctrl.SetAPIPaused(true)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":-1}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	time.Sleep(30 * time.Millisecond)
-
-	if ctrl.IsPaused() {
-		t.Error("expected controller not to be paused when pressure=-1")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume when pressure=-1", func() bool { return !ctrl.APIPaused() })
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
 
-// -------------------------------------------------------------------
-// GAP 7: Threshold boundary rounding — 89.95 becomes 90.0
-// -------------------------------------------------------------------
-
 func TestPollPressureAPI_FractionalPressureRoundsUp_TriggersPause(t *testing.T) {
-	// normalizePressure: math.Round(v*10)/10, so 89.95*10 = 899.5 → round = 900 → 900/10 = 90.0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// API returns 89.95 as a float string
-		_ = json.NewEncoder(w).Encode(map[string]float64{"pressure": 89.95})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	// 89.95 rounds to 90.0, so the controller pauses at threshold 90.
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	// The poller lives for the duration of the test rather than a fixed 50ms:
-	// its lifetime is a bound on failure, not the thing under test.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":89.95}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	// Wait for the pause to be observed instead of sleeping a fixed 30ms: with
-	// Windows' ~15.6ms timer granularity a 10ms poll interval plus an HTTP
-	// round trip can easily exceed 30ms on a loaded runner, which would fail a
-	// correct implementation. 89.95 rounds to 90.0 via normalizePressure, which
-	// is >= 90, so the controller must pause.
-	testkit.WaitFor(t, 5*time.Second,
-		"controller to pause when pressure=89.95 (rounds to 90.0) >= threshold=90",
-		ctrl.IsPaused)
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to pause when pressure=89.95 rounds to 90.0", ctrl.APIPaused)
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
 
 func TestPollPressureAPI_FractionalPressureJustBelow_StaysActive(t *testing.T) {
-	// 89.94 rounds to 89.9, which is < 90, should not pause.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]float64{"pressure": 89.94})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 10 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
+	ctrl.SetAPIPaused(true)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":89.94}`,
+	})
 
-	go pollPressureAPI(ctx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	time.Sleep(30 * time.Millisecond)
-
-	// 89.94 rounds to 89.9, which is < 90, so should not pause.
-	if ctrl.IsPaused() {
-		t.Error("expected controller not to be paused when pressure=89.94 (rounds to 89.9) < threshold=90")
-	}
+	testkit.WaitFor(t, pressureTestTimeout,
+		"controller to resume when pressure=89.94 rounds to 89.9", func() bool { return !ctrl.APIPaused() })
+	poller.stop(t)
+	poller.makeSureNoError(t)
 }
-
-// -------------------------------------------------------------------
-// GAP 8: Manual pause first, then API pause (ordering)
-// -------------------------------------------------------------------
 
 func TestPollPressureAPI_ManualPausedThenAPIPauses_BothBlocksTogether(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"pressure": 95})
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{PressureAPI: srv.URL, PressureInterval: 20 * time.Millisecond}
+	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController(speedctrl.WithAPIEnabled(true))
-	errCh := make(chan error, 1)
-	logger := newTestLogger()
-
-	// Use a cancellable context so we can stop the polling goroutine after observing API pause.
-	pollCtx, pollCancel := context.WithCancel(context.Background())
-	defer pollCancel()
-
-	go pollPressureAPI(pollCtx, cfg, RunOptions{PressureLimit: 90}, ctrl, logger, errCh)
-
-	// Start manual paused first
 	ctrl.SetManualPaused(true)
+	poller := startTestPressurePoller(t, config.Config{
+		PressureAPI:      server.server.URL,
+		PressureInterval: 10 * time.Millisecond,
+	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
-	// Wait for API to also set paused (first tick fires at ~20ms)
-	time.Sleep(40 * time.Millisecond)
+	server.respond(t, scriptedPressureHTTPResponse{
+		statusCode: http.StatusOK,
+		body:       `{"pressure":95}`,
+	})
+	testkit.WaitFor(t, pressureTestTimeout,
+		"API pause to activate when pressure=95", ctrl.APIPaused)
 
-	// Both flags should be set
 	if !ctrl.ManualPaused() {
-		t.Error("manual pause should still be active")
+		t.Error("manual pause must remain active")
 	}
 	if !ctrl.APIPaused() {
-		t.Error("API should have set paused due to pressure >= 90")
+		t.Error("API pause must be active")
 	}
 	if !ctrl.IsPaused() {
-		t.Error("IsPaused should be true when either flag is set")
+		t.Error("the controller must remain paused while either pause is active")
 	}
 
-	// Stop the polling goroutine so it won't re-trigger APIPaused during our checks.
-	pollCancel()
-	time.Sleep(5 * time.Millisecond) // allow goroutine to exit
+	poller.stop(t)
+	poller.makeSureNoError(t)
 
-	// Resume API first — scan should still be paused (manual still active)
 	ctrl.SetAPIPaused(false)
-	time.Sleep(5 * time.Millisecond)
-
 	if !ctrl.IsPaused() {
-		t.Error("IsPaused should still be true (manual remains set)")
+		t.Error("the controller must remain paused while the manual pause is active")
 	}
 
-	// Resume manual — scan should now resume
 	ctrl.SetManualPaused(false)
-	time.Sleep(5 * time.Millisecond)
-
 	if ctrl.IsPaused() {
-		t.Error("IsPaused should be false after both flags cleared")
+		t.Error("the controller must resume after both pauses are inactive")
 	}
 }
-
-// -------------------------------------------------------------------
-// scanLogger helper (uses real concrete type with io.Discard output)
-// -------------------------------------------------------------------
 
 func newTestLogger() *scanLogger {
 	return newLogger("info", false, io.Discard)
