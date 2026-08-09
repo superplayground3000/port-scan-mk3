@@ -456,15 +456,26 @@ func TestRun_WhenOutputWriteFails_LogsCorrectedResumeSnapshot(t *testing.T) {
 		t.Fatalf("run error must identify the write failure, got: %v", runErr)
 	}
 	logOutput := stderr.String()
-	for _, required := range []string{
-		`"msg":"resume_state_rewound"`,
-		`"reason":"scan_output_write_failed"`,
-		`"resume_path":"` + resumeOut + `"`,
-	} {
-		if !strings.Contains(logOutput, required) {
-			t.Fatalf("log output does not contain %q:\n%s", required, logOutput)
+	for _, line := range strings.Split(logOutput, "\n") {
+		var entry struct {
+			Msg    string `json:"msg"`
+			Fields struct {
+				Reason     string `json:"reason"`
+				ResumePath string `json:"resume_path"`
+			} `json:"fields"`
 		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil || entry.Msg != "resume_state_rewound" {
+			continue
+		}
+		if entry.Fields.Reason != "scan_output_write_failed" {
+			t.Fatalf("rewind reason = %q, want scan_output_write_failed", entry.Fields.Reason)
+		}
+		if entry.Fields.ResumePath != resumeOut {
+			t.Fatalf("rewind resume path = %q, want %q", entry.Fields.ResumePath, resumeOut)
+		}
+		return
 	}
+	t.Fatalf("no resume_state_rewound event in log output:\n%s", logOutput)
 }
 
 // completionTotalTasks extracts fields.total_tasks from the scan_completion
