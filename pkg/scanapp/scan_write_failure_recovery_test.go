@@ -10,21 +10,12 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
-// TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget pins the
-// recovery path the operator is told to take.
+// TestRun_AfterWriteFailure_ResumeCoversEveryTarget verifies the saved recovery
+// path with ordered results.
 //
-// The other write-failure tests assert the *proxy* for issue #51 — that no
-// resume snapshot is left behind. This one asserts the property that actually
-// matters, end to end: after an output-write failure, re-running the same
-// `scan -resume` command still covers every target. That is the claim the
-// error message, README, and release notes make, so it needs a test that would
-// go red if the claim stopped being true.
-//
-// It is also the most direct regression test for the bug itself. If the fix
-// were reverted, run 1 would persist a dispatch cursor covering rows it never
-// wrote, run 2 would resume past them, and no output file would hold all the
-// targets — exactly the silent data loss #51 describes.
-func TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget(t *testing.T) {
+// The first run saves a corrected cursor. The second run uses that snapshot
+// and appends the remaining results to the recorded output files.
+func TestRun_AfterWriteFailure_ResumeCoversEveryTarget(t *testing.T) {
 	cfg, tmp, bucketsFile := newInterruptibleScanConfig(t)
 
 	// Independent source of truth for how many rows a complete scan owes: the
@@ -41,7 +32,7 @@ func TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget(t *testin
 		t.Fatal("bucket file declares no targets; the fixture is not exercising anything")
 	}
 
-	// Run 1: writing the 3rd record fails, so the snapshot is declined.
+	// The third record write stops run 1.
 	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
@@ -51,7 +42,7 @@ func TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget(t *testin
 		t.Fatalf("run 1 should fail with the injected write error, got: %v", runErr)
 	}
 
-	// Run 2: the documented recovery — the same command, nothing else changed.
+	// Run 2 uses the corrected snapshot from the first run.
 	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            refusingDial,
@@ -59,12 +50,7 @@ func TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget(t *testin
 		t.Fatalf("re-running the documented recovery must succeed, got: %v", err)
 	}
 
-	// Every target must be covered. The failed run's partial rows are still on
-	// disk — here in a separate timestamped file, because this bucket carried no
-	// recorded output path; when it does carry one the recovery appends to it and
-	// the partial rows become duplicates instead. Either way nothing is lost,
-	// which is what the guidance promises, so the assertion is "some output file
-	// holds a complete set", not "there is exactly one file".
+	// All targets stay in one recorded output file.
 	outputs, err := filepath.Glob(filepath.Join(tmp, "scan_results-*.csv"))
 	if err != nil {
 		t.Fatalf("glob outputs: %v", err)
@@ -77,15 +63,14 @@ func TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget(t *testin
 		}
 	}
 	if best < totalTargets {
-		t.Fatalf("re-resume after a declined save lost targets: the fullest of %d output file(s) (%s) holds %d rows, but the bucket declares %d targets",
+		t.Fatalf("resume after a corrected save lost targets: the fullest of %d output file(s) (%s) holds %d rows, but the bucket declares %d targets",
 			len(outputs), bestPath, best, totalTargets)
 	}
+	if len(outputs) != 1 {
+		t.Fatalf("expected one recorded scan output, got %d (%v)", len(outputs), outputs)
+	}
 
-	// Both result families are opened together by openBatchOutputs, so whatever
-	// leftover shape the recovery produces applies to the open-only file too. The
-	// operator-facing guidance tells people to reconcile before consuming, so it
-	// must not name only scan_results-*: if these counts ever diverge, the docs
-	// are describing one file while the other behaves differently.
+	// The scan opens both output families together.
 	openOnly, err := filepath.Glob(filepath.Join(tmp, "opened_results-*.csv"))
 	if err != nil {
 		t.Fatalf("glob open-only outputs: %v", err)

@@ -2,6 +2,7 @@ package scanapp
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
@@ -103,6 +104,8 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			if persisted {
 				applyScanResult(deps.runtimes, res, &summary, deps.resultObserver)
 				emitScanResultEvents(deps.stdout, deps.logger, deps.ctrl, deps.progressStep, deps.runtimes, res, &summary, deps.quiet)
+			} else if errors.Is(runErr, errScanOutputWrite) {
+				deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)
 			}
 		}
 	}

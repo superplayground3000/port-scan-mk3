@@ -71,9 +71,9 @@ func Run(
 
 `Run` now **requires `cfg.Resume`** (the bucket snapshot). It loads that snapshot,
 scans its chunks, and on interrupt/error persists progress back **in place at the
-same `-resume` path** (`resumePath` returns `cfg.Resume` when set) — with one
-exception: an **output-write failure persists nothing** (see §9), because the
-saved cursor would no longer match what is on disk.
+same `-resume` path** (`resumePath` returns `cfg.Resume` when set). If an output
+write fails, `Run` rewinds each affected cursor before it saves the snapshot.
+See §9.
 
 ### RunOptions
 
@@ -494,23 +494,34 @@ func persistResumeState(
 - Incomplete (some tasks not done) AND
 - (Error occurred OR shouldSaveOnDispatchErr)
 
-**Never saved when the run's error is an output-write failure**
-(`errors.Is(runErr, errScanOutputWrite)`). `NextIndex` advances at *dispatch*
-time, so after a write failure it covers rows that never reached the output
-file; a snapshot carrying that cursor would make the next `-resume` treat those
-rows as finished and skip them silently. In that case the run declines to save,
-logs the structured `resume_state_not_saved` event, and returns an error stating
-that resume state was deliberately not written, plus the recovery options. The
-bucket file keeps the cursor it had before the run, so re-running the same
-`scan -resume` covers every target (pinned by
-`TestRun_AfterDeclinedSaveOnWriteFailure_ReResumeCoversEveryTarget`); the failed
-run's rows remain on disk, appended again or as leftover partial files — in both
-result families, since `scan_results-*` and `opened_results-*` are opened
-together — so the operator reconciles both before consuming. A fresh `generate-buckets` gives one clean
-output instead. "Do not resume" is never an option — `scan` requires `-resume`
-(`errScanRequiresResume`).
-Every other terminating error — pressure API failure, executor panic, graceful
-cancel / Ctrl+C — saves exactly as before.
+**Rewound after an output-write failure**
+(`errors.Is(runErr, errScanOutputWrite)`). The dispatcher advances `NextIndex`
+after it enqueues a task. Each internal scan task and result also carries the
+zero-based task index for its chunk.
+
+If an output write fails, the result loop marks that result as unwritten. It
+also marks each later result that the loop does not send to the writers. Before
+the snapshot save, each affected tracker sets `NextIndex` to its lowest marked
+index. A tracker with no marked result keeps its cursor.
+
+The rewind also sets `ScannedCount` to `NextIndex`. Thus, duplicate writes
+cannot increase progress beyond `TotalCount`. If both values are zero, the
+status returns to `pending`.
+
+`Run` saves the corrected snapshot with the recorded output paths. It then
+logs `resume_state_rewound` with the save path and affected chunk count. It then
+returns the original output-write error. The next `scan -resume` appends all
+work from the corrected cursor. This operation can duplicate persisted rows,
+but it cannot skip an unwritten row.
+
+`TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk` verifies affected
+chunks. `TestRun_WhenOutputWriteFails_KeepsCursorForFullyPersistedChunk`
+verifies unaffected chunks. The resume test verifies complete target coverage
+and the accepted duplicate row.
+
+Pressure API failures, executor panics, and graceful cancellation keep their
+existing save behavior. Graceful cancellation keeps its no-loss and
+no-duplicate contract.
 
 **Saved state:**
 ```go

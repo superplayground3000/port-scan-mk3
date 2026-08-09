@@ -283,9 +283,8 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 		}
 	}
 
-	// A snapshot failure (including the deliberate refusal to save after an
-	// output-write failure) is the run's outcome, so it still gets a completion
-	// summary — constitution VI requires every long-running scan to emit one.
+	// A failure to save the snapshot is the run outcome. Therefore, it gets a
+	// completion summary, as constitution VI requires.
 	if err := persistResumeSnapshot(cfg, opts, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
 		emitCompletionSummary(logger, summary, startedAt, err)
 		return err

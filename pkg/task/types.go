@@ -38,7 +38,8 @@ type Chunk struct {
 	// NextIndex is the index of the next task to dispatch. The resume logic uses
 	// it.
 	NextIndex int `json:"next_index"`
-	// ScannedCount is the number of tasks that produced a result.
+	// ScannedCount is the number of persisted task results credited to progress.
+	// A write-failure rewind sets it to the safe dispatch cursor.
 	ScannedCount int `json:"scanned_count"`
 	// TotalCount is the total number of scan tasks for this chunk (targets × ports).
 	TotalCount int `json:"total_count"`
