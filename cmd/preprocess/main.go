@@ -57,7 +57,8 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 	// before any input is opened: an unsafe name must fail immediately rather
 	// than late in os.MkdirAll, or worse, place output outside the base
 	// directory.
-	if err := preprocess.ValidateFabName(*fabName); err != nil {
+	validatedFabName, err := preprocess.ParseFabName(*fabName)
+	if err != nil {
 		return fmt.Errorf("--fab-name: %w", err)
 	}
 
@@ -67,7 +68,7 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 		return fmt.Errorf("opening cleaned CIDRs: %w", err)
 	}
 	defer cidrsFile.Close()
-	closedTree, err := preprocess.LoadCleanedCIDRs(cidrsFile, *fabName, stderr)
+	closedTree, err := preprocess.LoadCleanedCIDRs(cidrsFile, validatedFabName.String(), stderr)
 	if err != nil {
 		return fmt.Errorf("loading cleaned CIDRs: %w", err)
 	}
@@ -100,7 +101,10 @@ func runMain(args []string, stdout, stderr io.Writer, now time.Time) error {
 	}
 
 	// Create output.
-	outPath := preprocess.OutputPath(*outputDir, *fabName, now)
+	outPath, err := preprocess.OutputPathForFabName(*outputDir, validatedFabName, now)
+	if err != nil {
+		return fmt.Errorf("creating output path: %w", err)
+	}
 	cw, outFile, err := preprocess.CreateOutputWriter(outPath)
 	if err != nil {
 		return err
