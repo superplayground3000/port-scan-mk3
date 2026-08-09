@@ -11,10 +11,30 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/preprocesscfg"
 )
 
-// OutputPath returns the canonical output file path for a given base directory,
-// fab name, and timestamp. The path has this layout:
+// OutputPathForFabName returns the output file path for a validated fab name.
+// The path stays lexically inside baseDir and has this layout:
 //
-//	<baseDir>/<fabName>/<YYYYMMDDTHHMMSSz>/input.csv
+//	<baseDir>/<fabName>/<YYYYMMDDTHHMMSSZ>/input.csv
+//
+// This function returns an error that wraps [ErrInvalidFabName] if fabName is
+// the zero value.
+//
+// This function does not resolve symlinks or Windows junctions. A link inside
+// baseDir can redirect a file operation outside that directory.
+func OutputPathForFabName(baseDir string, fabName FabName, ts time.Time) (string, error) {
+	if fabName.String() == "" {
+		return "", fmt.Errorf("%w: zero FabName value", ErrInvalidFabName)
+	}
+	return OutputPath(baseDir, fabName.String(), ts), nil
+}
+
+// OutputPath returns the output file path for a raw fab name. The path has this
+// layout:
+//
+//	<baseDir>/<fabName>/<YYYYMMDDTHHMMSSZ>/input.csv
+//
+// Deprecated: Use [ParseFabName] and [OutputPathForFabName]. This function does
+// not validate fabName and does not guarantee containment inside baseDir.
 func OutputPath(baseDir, fabName string, ts time.Time) string {
 	return filepath.Join(baseDir, fabName, ts.Format("20060102T150405Z"), "input.csv")
 }

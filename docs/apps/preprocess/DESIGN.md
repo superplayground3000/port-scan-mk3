@@ -1,6 +1,6 @@
 # preprocess Design Document
 
-**Tool**: `cmd/preprocess` | **Revised**: 2026-05-03
+**Tool**: `cmd/preprocess` | **Revised**: 2026-08-09
 
 ## Architecture
 
@@ -48,13 +48,53 @@ func (f *Filter) Keep(dstNetworkSegment string) (bool, error)
 - Filters by `fab-name` and `status=close` (case-insensitive)
 - Returns `*cidrutil.IntervalTree` with closed CIDRs inserted
 
+### Fab Name (`pkg/preprocess/fabname.go`)
+
+```go
+type FabName struct { /* private fields */ }
+
+func ParseFabName(name string) (FabName, error)
+func (n FabName) String() string
+```
+
+`ParseFabName` validates a raw name and returns an opaque value. Only this
+constructor can store a nonempty name in `FabName`.
+
+`String` returns the original validated name. It does not change the name.
+
 ### Output Functions (`pkg/preprocess/output.go`)
+
+**OutputPathForFabName:**
+
+```go
+func OutputPathForFabName(baseDir string, fabName FabName, ts time.Time) (string, error)
+```
+
+The function accepts the opaque value and returns this path:
+
+```text
+<baseDir>/<fabName>/<YYYYMMDDTHHMMSSZ>/input.csv
+```
+
+The function rejects the zero `FabName` value with `ErrInvalidFabName`. Each
+returned path stays lexically below `baseDir`.
+
+The function does not resolve symlinks or Windows junctions. A hostile link
+inside `baseDir` can redirect file operations outside that directory.
 
 **OutputPath:**
 ```go
 func OutputPath(baseDir, fabName string, ts time.Time) string
 // Returns: <baseDir>/<fabName>/<YYYYMMDDTHHMMSSZ>/input.csv
 ```
+
+`OutputPath` remains exported for source compatibility. Its raw `fabName`
+parameter has no containment guarantee. New callers use `ParseFabName` and
+`OutputPathForFabName`.
+
+`ValidateFabName` also remains exported for source compatibility. The CLI uses
+`ParseFabName` before it opens an input file. The CLI flags and output layout do
+not change.
 
 **CreateOutputWriter:**
 - Creates all parent directories with `os.MkdirAll`
@@ -74,9 +114,11 @@ cmd/preprocess/
 pkg/preprocess/
 ├── filter.go        # Filter type, Keep method
 ├── filter_test.go
+├── fabname.go       # FabName type, parser, and compatibility validator
+├── fabname_test.go
 ├── loader.go        # LoadCleanedCIDRs
 ├── loader_test.go
-├── output.go        # OutputPath, CreateOutputWriter, PrintSummary
+├── output.go        # Typed and compatibility output paths, CSV output
 └── output_test.go
 
 pkg/preprocesscfg/

@@ -11,6 +11,27 @@ import (
 // message text.
 var ErrInvalidFabName = errors.New("invalid fab name")
 
+// FabName contains a fab name for output path construction. Its fields are
+// private, so callers use [ParseFabName] to create a nonempty value.
+// The zero value has no name.
+type FabName struct {
+	value string
+}
+
+// ParseFabName validates name and returns an opaque value. It returns an error
+// that wraps [ErrInvalidFabName] if name is not one safe directory name.
+func ParseFabName(name string) (FabName, error) {
+	if err := ValidateFabName(name); err != nil {
+		return FabName{}, err
+	}
+	return FabName{value: name}, nil
+}
+
+// String returns the original name without changes.
+func (n FabName) String() string {
+	return n.value
+}
+
 // windowsInvalidNameChars are the printable characters Windows forbids in a
 // file or directory name. Path separators are excluded here on purpose: they
 // get their own check so the operator is told the name must be a single

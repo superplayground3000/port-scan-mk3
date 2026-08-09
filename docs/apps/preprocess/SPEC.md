@@ -91,6 +91,19 @@ Written to:
 
 The header row is passed through from the input. Only rows whose `dst_network_segment` is **not** contained within any closed CIDR are written.
 
+### Library interface compatibility
+
+`ParseFabName` validates a raw string and returns an opaque `FabName` value.
+`OutputPathForFabName` accepts this value and returns a lexically contained
+path. It rejects a zero `FabName` value with `ErrInvalidFabName`.
+
+The containment guarantee does not include symlinks or Windows junctions. A
+hostile link inside the output directory can redirect file operations.
+
+`ValidateFabName` and the raw-string `OutputPath` remain available for source
+compatibility. `OutputPath` is deprecated because it does not validate its fab
+name. The CLI flags and output layout do not change.
+
 ## Filter Logic
 
 For each input row:
