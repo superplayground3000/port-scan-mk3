@@ -210,7 +210,7 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 		ResumeStatePath: resumeStatePath,
 	}
 	var firstStderr bytes.Buffer
-	firstErr := Run(ctx, scanCfg, &bytes.Buffer{}, &firstStderr, firstOpts)
+	firstErr := Run(ctx, testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &firstStderr, firstOpts)
 	if !errors.Is(firstErr, context.Canceled) {
 		t.Fatalf("step 3 (scan, first pass): expected context.Canceled from the interrupt, got: %v\nstderr: %s",
 			firstErr, firstStderr.String())
@@ -283,7 +283,7 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	resumeCfg := scanCfg
 	resumeCfg.Resume = resumeStatePath
 	var resumeStderr bytes.Buffer
-	resumeErr := Run(context.Background(), resumeCfg, &bytes.Buffer{}, &resumeStderr, RunOptions{
+	resumeErr := Run(context.Background(), testScanConfigurationFromLegacy(t, resumeCfg), &bytes.Buffer{}, &resumeStderr, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dialer.DialContext,
 		ResumeStatePath: resumeStatePath,

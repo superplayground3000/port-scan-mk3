@@ -90,7 +90,7 @@ func handleGenerateBucketsCommand(args []string, stdout, stderr io.Writer) int {
 }
 
 func runScan(args []string, stdout, stderr io.Writer) int {
-	cfg, err := config.ParseFor("scan", args)
+	cfg, err := config.ParseScan(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -99,26 +99,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := state.WithSIGINTCancel(context.Background())
 	defer cancel()
 
-	// Build RunOptions with appropriate PressureFetcher
-	opts := scanapp.RunOptions{}
-	if !cfg.DisableAPI {
-		if cfg.PressureUseAuth {
-			opts.PressureFetcher = scanapp.NewMultiSourcePressureFetcher(
-				cfg.PressureAuthURL,
-				cfg.PressureDataURLs,
-				cfg.PressureClientID,
-				cfg.PressureClientSecret,
-				nil,
-			)
-		} else {
-			opts.PressureFetcher = scanapp.NewSimplePressureFetcher(
-				cfg.PressureAPI,
-				nil,
-			)
-		}
-	}
-
-	err = scanapp.Run(ctx, cfg, stdout, stderr, opts)
+	err = scanapp.Run(ctx, cfg, stdout, stderr, scanapp.RunOptions{})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(stderr, "scan canceled")

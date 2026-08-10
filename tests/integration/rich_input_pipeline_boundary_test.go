@@ -69,21 +69,23 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 		t.Fatalf("generate buckets: %v", err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Resume:             bucketsOut,
-		Timeout:            100 * time.Millisecond,
-		PreScanPingTimeout: 100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureAPI:        "http://127.0.0.1:1",
-		PressureInterval:   time.Second,
-		DisableAPI:         true,
-		Format:             "human",
+	cfg, err := config.NewScan(config.ScanValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		Output:         outFile,
+		ResumeInput:    bucketsOut,
+		DialTimeout:    100 * time.Millisecond,
+		DispatchDelay:  0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       config.PressureDisabled(),
+		Format:         "human",
+	})
+	if err != nil {
+		t.Fatalf("new scan configuration: %v", err)
 	}
 
 	if err := scanapp.Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, scanapp.RunOptions{DisableKeyboard: true}); err != nil {

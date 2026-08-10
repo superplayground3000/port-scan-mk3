@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
 
@@ -35,8 +34,7 @@ func startManualPauseMonitor(ctx context.Context, ctrl *speedctrl.Controller, lo
 	}()
 }
 
-func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ctrl *speedctrl.Controller, logger *scanLogger, errCh chan<- error) {
-	interval := cfg.PressureInterval
+func pollPressureAPI(ctx context.Context, interval time.Duration, source PressureSource, opts RunOptions, ctrl *speedctrl.Controller, logger *scanLogger, errCh chan<- error) {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
@@ -45,18 +43,6 @@ func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ct
 		threshold = defaultPressureLimit
 	}
 	thresholdValue := float64(threshold)
-
-	// Use PressureFetcher if provided, otherwise create SimplePressureFetcher for backward compatibility
-	var fetcher PressureFetcher
-	if opts.PressureFetcher != nil {
-		fetcher = opts.PressureFetcher
-	} else {
-		client := opts.PressureHTTP
-		if client == nil {
-			client = &http.Client{Timeout: 2 * time.Second}
-		}
-		fetcher = NewSimplePressureFetcher(cfg.PressureAPI, client)
-	}
 
 	var consecutiveFailures int
 	var prevPaused bool
@@ -70,12 +56,25 @@ func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ct
 			return
 		case <-ticker.C:
 			sampledAt := time.Now()
-			pressure, err := fetchPressureWithSourceTelemetry(ctx, fetcher, pressureObserver, sampledAt)
+			sample, err := source.Sample(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			pressureValue := sample.Maximum
+			failureCount := 0
 			if err != nil {
-				consecutiveFailures++
-				if pressureObserver != nil {
-					pressureObserver.OnPressureFailure(consecutiveFailures, sampledAt)
-				}
+				failureCount = consecutiveFailures + 1
+			}
+			if pressureObserver != nil {
+				pressureObserver.OnPressurePoll(pressurePoll{
+					sample:       sample,
+					err:          err,
+					failureCount: failureCount,
+					sampledAt:    sampledAt,
+				})
+			}
+			if err != nil {
+				consecutiveFailures = failureCount
 				if consecutiveFailures <= 2 {
 					logger.errorf("pressure api request failed (%d/3): %v", consecutiveFailures, err)
 					continue
@@ -87,47 +86,19 @@ func pollPressureAPI(ctx context.Context, cfg config.Config, opts RunOptions, ct
 				return
 			}
 			consecutiveFailures = 0
-			logger.infof("[API] pressure api status=ok pressure=%.1f%% threshold=%.1f", pressure, thresholdValue)
+			logger.infof("[API] pressure api status=ok pressure=%.1f%% threshold=%.1f", pressureValue, thresholdValue)
 
-			if pressureObserver != nil {
-				pressureObserver.OnPressureSample(int(pressure), sampledAt)
-			}
-			paused := pressure >= thresholdValue
+			paused := pressureValue >= thresholdValue
 			ctrl.SetAPIPaused(paused)
 			if paused != prevPaused {
 				if paused {
-					logger.infof("[API] router pressure overload — scan automatically paused pressure=%.1f threshold=%.1f", pressure, thresholdValue)
+					logger.infof("[API] router pressure overload — scan automatically paused pressure=%.1f threshold=%.1f", pressureValue, thresholdValue)
 				} else {
-					logger.infof("[API] router pressure recovered — scan automatically resumed pressure=%.1f threshold=%.1f", pressure, thresholdValue)
+					logger.infof("[API] router pressure recovered — scan automatically resumed pressure=%.1f threshold=%.1f", pressureValue, thresholdValue)
 				}
 				prevPaused = paused
 			}
 		}
-	}
-}
-
-func fetchPressureWithSourceTelemetry(ctx context.Context, fetcher PressureFetcher, observer pressureTelemetryObserver, sampledAt time.Time) (float64, error) {
-	sourceFetcher, ok := fetcher.(pressureSourceStatusFetcher)
-	if !ok {
-		return fetcher.Fetch(ctx)
-	}
-
-	pressure, sources, err := sourceFetcher.FetchWithSourceStatuses(ctx)
-	reportPressureSourceResults(observer, sources, sampledAt)
-	return pressure, err
-}
-
-func reportPressureSourceResults(observer pressureTelemetryObserver, sources []PressureSourceResult, sampledAt time.Time) {
-	sourceObserver, ok := observer.(pressureSourceTelemetryObserver)
-	if !ok {
-		return
-	}
-	for _, source := range sources {
-		if source.Err != nil {
-			sourceObserver.OnPressureSourceFailure(source.Name, sampledAt)
-			continue
-		}
-		sourceObserver.OnPressureSourceSample(source.Name, int(source.Pressure), sampledAt)
 	}
 }
 

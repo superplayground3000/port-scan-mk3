@@ -144,10 +144,34 @@ func (s *dashboardState) OnPressureFailure(streak int, t time.Time) {
 	s.lastPressureFailureAt = t
 }
 
-func (s *dashboardState) OnPressureSourceSample(source string, pressure int, t time.Time) {
+func (s *dashboardState) OnPressurePoll(poll pressurePoll) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	for _, source := range poll.sample.Sources {
+		if source.Err != nil {
+			s.onPressureSourceFailureLocked(source.Name, poll.sampledAt)
+			continue
+		}
+		s.onPressureSourceSampleLocked(source.Name, int(source.Pressure), poll.sampledAt)
+	}
+	if poll.err != nil {
+		s.apiHealthText = fmt.Sprintf("fail streak %d", poll.failureCount)
+		s.lastPressureFailureAt = poll.sampledAt
+		return
+	}
+	s.pressurePercent = int(poll.sample.Maximum)
+	s.apiHealthText = "ok"
+	s.lastPressureUpdateAt = poll.sampledAt
+}
+
+func (s *dashboardState) OnPressureSourceSample(source string, pressure int, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onPressureSourceSampleLocked(source, pressure, t)
+}
+
+func (s *dashboardState) onPressureSourceSampleLocked(source string, pressure int, t time.Time) {
 	source = dashboardSourceName(source)
 	s.ensureAPISourceLocked(source)
 	s.apiSources[source] = dashboardAPISourceState{
@@ -161,7 +185,10 @@ func (s *dashboardState) OnPressureSourceSample(source string, pressure int, t t
 func (s *dashboardState) OnPressureSourceFailure(source string, t time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.onPressureSourceFailureLocked(source, t)
+}
 
+func (s *dashboardState) onPressureSourceFailureLocked(source string, t time.Time) {
 	source = dashboardSourceName(source)
 	s.ensureAPISourceLocked(source)
 	sourceState := s.apiSources[source]

@@ -129,7 +129,7 @@ func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), scanCfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		Dial:                dialOpenFor("127.0.0.1"),
 		ReachabilityChecker: spy,
@@ -178,7 +178,7 @@ func TestPipeline_NoPrePing_ScansAll(t *testing.T) {
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), scanCfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		Dial:                dialOpenFor("127.0.0.1"),
 		ReachabilityChecker: spy,
@@ -229,7 +229,7 @@ func TestPipeline_TamperedTotalCount_Rejected(t *testing.T) {
 
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
-	err = Run(context.Background(), scanCfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err = Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dialOpenFor("127.0.0.1"),
 	})

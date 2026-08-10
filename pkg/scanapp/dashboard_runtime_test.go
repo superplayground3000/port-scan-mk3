@@ -149,7 +149,7 @@ func TestRun_WhenRichDashboardEnabled_RendersPeriodicUpdatesToStderr(t *testing.
 
 	var renders atomic.Int32
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(ctx, cfg, stdout, stderr, RunOptions{
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			<-ctx.Done()

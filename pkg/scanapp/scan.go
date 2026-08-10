@@ -5,11 +5,11 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
@@ -29,14 +29,26 @@ var errScanRequiresResume = errors.New("scan requires -resume <bucket file>; run
 // DialFunc abstracts TCP dialing for tests and runtime customization.
 type DialFunc func(context.Context, string, string) (net.Conn, error)
 
+// PressureSource samples router pressure for the scan monitor.
+type PressureSource interface {
+	// Sample returns one aggregate sample and its source results.
+	// It returns an error when the sample is not complete.
+	Sample(context.Context) (pressure.Sample, error)
+}
+
+// ScanConfiguration supplies validated values for one scan run.
+type ScanConfiguration interface {
+	// Resolve returns the validated values for one scan run.
+	Resolve() (config.ScanValues, error)
+}
+
 // RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
 	Dial                DialFunc
 	ResumeStatePath     string
 	PressureLimit       int
 	DisableKeyboard     bool
-	PressureHTTP        *http.Client
-	PressureFetcher     PressureFetcher
+	PressureSource      PressureSource
 	ProgressInterval    int
 	ReachabilityChecker ReachabilityChecker
 
@@ -58,18 +70,28 @@ type RunOptions struct {
 // RunOptions.batchOutputsOpener.
 type batchOutputsOpenFunc func(scanPath, openPath string, appendMode bool) (*batchOutputs, error)
 
-// Run performs a full scan flow. It loads the inputs, dispatches the scan
-// tasks, and writes the batch outputs. If the run is interrupted or fails, Run
-// persists the resume state.
-func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
+// Run resolves the configuration before file or network work. It then loads
+// inputs, dispatches scan tasks, and writes batch outputs. Run saves resume
+// state when the scan is interrupted or fails.
+func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io.Writer, opts RunOptions) error {
+	values, err := configuration.Resolve()
+	if err != nil {
+		return err
+	}
+	pressureValues, err := values.Pressure.Resolve()
+	if err != nil {
+		return err
+	}
+	if opts.PressureSource == nil && pressureValues.Kind != config.PressureKindDisabled {
+		opts.PressureSource, err = newPressureSource(values.Pressure)
+		if err != nil {
+			return err
+		}
+	}
+	cfg := legacyScanConfig(values, pressureValues)
+
 	deps := defaultRunDependencies()
 	logger := newLoggerWithQuiet(cfg.LogLevel, cfg.Format == "json", stderr, cfg.Quiet)
-	if strings.TrimSpace(cfg.CIDRIPCol) == "" {
-		cfg.CIDRIPCol = "ip"
-	}
-	if strings.TrimSpace(cfg.CIDRIPCidrCol) == "" {
-		cfg.CIDRIPCidrCol = "ip_cidr"
-	}
 
 	// Decision B: scan is a pure scanner. It requires a bucket file via -resume,
 	// constructs no reachability checker, never pings, and never builds fresh
@@ -229,7 +251,7 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 
 	apiErrCh := make(chan error, 1)
 	if !cfg.DisableAPI {
-		go pollPressureAPI(runCtx, cfg, runOpts, ctrl, logger, apiErrCh)
+		go pollPressureAPI(runCtx, cfg.PressureInterval, runOpts.PressureSource, runOpts, ctrl, logger, apiErrCh)
 	}
 
 	taskCh := make(chan scanTask, queueSize)
@@ -300,4 +322,31 @@ func Run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts 
 	}
 	emitCompletionSummary(logger, summary, startedAt, nil)
 	return nil
+}
+
+func legacyScanConfig(values config.ScanValues, pressureValues config.PressureValues) config.Config {
+	return config.Config{
+		CIDRFile:             values.CIDRFile,
+		CIDRIPCol:            values.CIDRIPCol,
+		CIDRIPCidrCol:        values.CIDRIPCidrCol,
+		PortFile:             values.PortFile,
+		Resume:               values.ResumeInput,
+		Output:               values.Output,
+		Workers:              values.Workers,
+		Timeout:              values.DialTimeout,
+		Delay:                values.DispatchDelay,
+		BucketRate:           values.BucketRate,
+		BucketCapacity:       values.BucketCapacity,
+		LogLevel:             values.LogLevel,
+		Format:               values.Format,
+		Quiet:                values.Quiet,
+		DisableAPI:           pressureValues.Kind == config.PressureKindDisabled,
+		PressureAPI:          pressureValues.Endpoint,
+		PressureInterval:     pressureValues.Interval,
+		PressureAuthURL:      pressureValues.AuthEndpoint,
+		PressureDataURLs:     append([]string(nil), pressureValues.DataEndpoints...),
+		PressureClientID:     pressureValues.ClientID,
+		PressureClientSecret: pressureValues.ClientSecret,
+		PressureUseAuth:      pressureValues.Kind == config.PressureKindAuthenticated,
+	}
 }

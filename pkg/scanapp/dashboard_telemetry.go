@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
 
@@ -13,14 +14,15 @@ type resultTelemetryObserver interface {
 	OnResult()
 }
 
-type pressureTelemetryObserver interface {
-	OnPressureSample(pressure int, t time.Time)
-	OnPressureFailure(streak int, t time.Time)
+type pressurePoll struct {
+	sample       pressure.Sample
+	err          error
+	failureCount int
+	sampledAt    time.Time
 }
 
-type pressureSourceTelemetryObserver interface {
-	OnPressureSourceSample(source string, pressure int, t time.Time)
-	OnPressureSourceFailure(source string, t time.Time)
+type pressureTelemetryObserver interface {
+	OnPressurePoll(pressurePoll)
 }
 
 type controllerTelemetryObserver interface {
@@ -75,35 +77,9 @@ func appendPressureTelemetryObservers(observers ...pressureTelemetryObserver) pr
 	}
 }
 
-func (o pressureTelemetryObservers) OnPressureSample(pressure int, t time.Time) {
+func (o pressureTelemetryObservers) OnPressurePoll(poll pressurePoll) {
 	for _, observer := range o {
-		observer.OnPressureSample(pressure, t)
-	}
-}
-
-func (o pressureTelemetryObservers) OnPressureFailure(streak int, t time.Time) {
-	for _, observer := range o {
-		observer.OnPressureFailure(streak, t)
-	}
-}
-
-func (o pressureTelemetryObservers) OnPressureSourceSample(source string, pressure int, t time.Time) {
-	for _, observer := range o {
-		sourceObserver, ok := observer.(pressureSourceTelemetryObserver)
-		if !ok {
-			continue
-		}
-		sourceObserver.OnPressureSourceSample(source, pressure, t)
-	}
-}
-
-func (o pressureTelemetryObservers) OnPressureSourceFailure(source string, t time.Time) {
-	for _, observer := range o {
-		sourceObserver, ok := observer.(pressureSourceTelemetryObserver)
-		if !ok {
-			continue
-		}
-		sourceObserver.OnPressureSourceFailure(source, t)
+		observer.OnPressurePoll(poll)
 	}
 }
 

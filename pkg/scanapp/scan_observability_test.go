@@ -17,6 +17,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
@@ -61,23 +62,23 @@ type scriptedPressureFetcher struct {
 	results []scriptedPressureResult
 }
 
-func (f *scriptedPressureFetcher) Fetch(context.Context) (float64, error) {
+func (f *scriptedPressureFetcher) Sample(context.Context) (pressure.Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if len(f.results) == 0 {
-		return 0.0, errors.New("no scripted pressure results configured")
+		return pressure.Sample{}, errors.New("no scripted pressure results configured")
 	}
 	result := f.results[0]
 	if len(f.results) > 1 {
 		f.results = f.results[1:]
 	}
-	return result.pressure, result.err
+	return pressure.Sample{Maximum: result.pressure}, result.err
 }
 
 type scriptedSourcePressureResult struct {
 	pressure float64
-	sources  []PressureSourceResult
+	sources  []pressure.SourceResult
 	err      error
 }
 
@@ -86,31 +87,23 @@ type scriptedSourcePressureFetcher struct {
 	results []scriptedSourcePressureResult
 }
 
-func (f *scriptedSourcePressureFetcher) Fetch(ctx context.Context) (float64, error) {
-	pressure, _, err := f.FetchWithSourceStatuses(ctx)
-	return pressure, err
-}
-
-func (f *scriptedSourcePressureFetcher) FetchWithSourceStatuses(context.Context) (float64, []PressureSourceResult, error) {
+func (f *scriptedSourcePressureFetcher) Sample(context.Context) (pressure.Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if len(f.results) == 0 {
-		return 0.0, nil, errors.New("no scripted source pressure results configured")
+		return pressure.Sample{}, errors.New("no scripted source pressure results configured")
 	}
 	result := f.results[0]
 	if len(f.results) > 1 {
 		f.results = f.results[1:]
 	}
-	return result.pressure, result.sources, result.err
+	return pressure.Sample{Maximum: result.pressure, Sources: result.sources}, result.err
 }
 
 type pressureTelemetryRecorder struct {
-	mu           sync.Mutex
-	samples      []int
-	sampleTimes  []time.Time
-	failures     []int
-	failureTimes []time.Time
+	mu    sync.Mutex
+	polls []pressurePoll
 }
 
 type controllerTelemetryRecorder struct {
@@ -127,20 +120,10 @@ func (r *controllerTelemetryRecorder) OnController(manualPaused, apiPaused bool)
 	r.statuses = append(r.statuses, dashboardControllerStatus(manualPaused, apiPaused))
 }
 
-func (r *pressureTelemetryRecorder) OnPressureSample(pressure int, t time.Time) {
+func (r *pressureTelemetryRecorder) OnPressurePoll(poll pressurePoll) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	r.samples = append(r.samples, pressure)
-	r.sampleTimes = append(r.sampleTimes, t)
-}
-
-func (r *pressureTelemetryRecorder) OnPressureFailure(streak int, t time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.failures = append(r.failures, streak)
-	r.failureTimes = append(r.failureTimes, t)
+	r.polls = append(r.polls, poll)
 }
 
 func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *testing.T) {
@@ -191,7 +174,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), cfg, stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -245,7 +228,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(context.Background(), cfg, io.Discard, stderr, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, errors.New("dial failed for observability test")
@@ -296,7 +279,7 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(ctx, cfg, io.Discard, stderr, RunOptions{
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			panic("boom in dial")
@@ -345,31 +328,31 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 
 	recorder := &dashboardSnapshotRecorder{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			time.Sleep(25 * time.Millisecond)
 			return nil, errors.New("dial refused for test")
 		},
 		PressureLimit: 90,
-		PressureFetcher: &scriptedSourcePressureFetcher{results: []scriptedSourcePressureResult{
+		PressureSource: &scriptedSourcePressureFetcher{results: []scriptedSourcePressureResult{
 			{
 				pressure: 95,
-				sources: []PressureSourceResult{
+				sources: []pressure.SourceResult{
 					{Name: "src1", Pressure: 95},
 					{Name: "src2", Pressure: 44},
 				},
 			},
 			{
 				pressure: 20,
-				sources: []PressureSourceResult{
+				sources: []pressure.SourceResult{
 					{Name: "src1", Pressure: 20},
 					{Name: "src2", Pressure: 18},
 				},
 			},
 			{
 				pressure: 20,
-				sources: []PressureSourceResult{
+				sources: []pressure.SourceResult{
 					{Name: "src1", Pressure: 20},
 					{Name: "src2", Pressure: 18},
 				},
@@ -506,7 +489,7 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 		},
 	}
 
-	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			select {
@@ -591,12 +574,14 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	logger := newLogger("info", false, logOut)
 	observer := &pressureTelemetryRecorder{}
 	controllerObserver := &controllerTelemetryRecorder{}
+	boom1 := errors.New("boom-1")
+	boom2 := errors.New("boom-2")
 
 	poller := startTestPressurePoller(t, config.Config{
 		PressureInterval: 5 * time.Millisecond,
 	}, RunOptions{
 		PressureLimit:      90,
-		PressureFetcher:    &scriptedPressureFetcher{results: []scriptedPressureResult{{err: errors.New("boom-1")}, {err: errors.New("boom-2")}, {pressure: 42}}},
+		PressureSource:     &scriptedPressureFetcher{results: []scriptedPressureResult{{err: boom1}, {err: boom2}, {pressure: 42}}},
 		pressureObserver:   observer,
 		controllerObserver: controllerObserver,
 	}, ctrl, logger)
@@ -604,7 +589,7 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	testkit.WaitFor(t, pressureTestTimeout,
 		"pressure observer to report two failures and one sample", func() bool {
 			observer.mu.Lock()
-			done := len(observer.failures) >= 2 && len(observer.samples) >= 1
+			done := len(observer.polls) >= 3
 			observer.mu.Unlock()
 			return done
 		})
@@ -615,17 +600,19 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	observer.mu.Lock()
 	defer observer.mu.Unlock()
 
-	if len(observer.failures) < 2 || observer.failures[0] != 1 || observer.failures[1] != 2 {
-		t.Fatalf("expected failure streak callbacks [1 2], got %#v", observer.failures)
+	if !errors.Is(observer.polls[0].err, boom1) || observer.polls[0].failureCount != 1 {
+		t.Fatalf("first pressure poll = %#v, want boom-1 with failure count 1", observer.polls[0])
 	}
-	if len(observer.samples) == 0 || observer.samples[0] != 42 {
-		t.Fatalf("expected first pressure sample callback 42, got %#v", observer.samples)
+	if !errors.Is(observer.polls[1].err, boom2) || observer.polls[1].failureCount != 2 {
+		t.Fatalf("second pressure poll = %#v, want boom-2 with failure count 2", observer.polls[1])
 	}
-	if observer.failureTimes[0].IsZero() || observer.failureTimes[1].IsZero() {
-		t.Fatalf("expected failure timestamps, got %#v", observer.failureTimes)
+	if observer.polls[2].err != nil || observer.polls[2].failureCount != 0 || observer.polls[2].sample.Maximum != 42 {
+		t.Fatalf("third pressure poll = %#v, want successful pressure 42", observer.polls[2])
 	}
-	if observer.sampleTimes[0].IsZero() {
-		t.Fatalf("expected sample timestamp, got %#v", observer.sampleTimes)
+	for i, poll := range observer.polls[:3] {
+		if poll.sampledAt.IsZero() {
+			t.Fatalf("pressure poll %d has zero sample time", i)
+		}
 	}
 
 	controllerObserver.mu.Lock()

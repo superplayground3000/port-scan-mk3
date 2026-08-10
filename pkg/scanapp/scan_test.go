@@ -21,11 +21,18 @@ import (
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
+
+type pressureSourceFunc func(context.Context) (pressure.Sample, error)
+
+func (f pressureSourceFunc) Sample(ctx context.Context) (pressure.Sample, error) {
+	return f(ctx)
+}
 
 type lockedBuffer struct {
 	mu sync.Mutex
@@ -95,6 +102,53 @@ func (l *lockedBuffer) String() string {
 	return l.b.String()
 }
 
+func TestRunRejectsZeroScanConfigurationBeforeFileWork(t *testing.T) {
+	err := Run(context.Background(), config.ScanConfig{}, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{})
+	if !errors.Is(err, config.ErrUninitializedConfiguration) {
+		t.Fatalf("Run() error = %v, want ErrUninitializedConfiguration", err)
+	}
+}
+
+func TestRunBuildsConfiguredPressureSourceBeforeFileWork(t *testing.T) {
+	authenticated, err := config.AuthenticatedPressure(
+		"https://auth.example/token",
+		[]string{"https://router.example/pressure"},
+		"client-id",
+		"client-secret",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("AuthenticatedPressure() error = %v", err)
+	}
+	simple, err := config.SimplePressure("https://router.example/pressure", time.Second)
+	if err != nil {
+		t.Fatalf("SimplePressure() error = %v", err)
+	}
+
+	for _, policy := range []config.PressurePolicy{simple, authenticated} {
+		cfg, err := config.NewScan(config.ScanValues{
+			CIDRFile:       filepath.Join(t.TempDir(), "missing.csv"),
+			CIDRIPCol:      "ip",
+			CIDRIPCidrCol:  "ip_cidr",
+			ResumeInput:    "missing.json",
+			Workers:        1,
+			DialTimeout:    time.Millisecond,
+			BucketRate:     1,
+			BucketCapacity: 1,
+			Format:         "human",
+			Pressure:       policy,
+		})
+		if err != nil {
+			t.Fatalf("NewScan() error = %v", err)
+		}
+
+		err = Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{})
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Run() error = %v, want CIDR file error after pressure source construction", err)
+		}
+	}
+}
+
 func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -155,7 +209,7 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 		LogLevel:           "error",
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -174,11 +228,6 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 }
 
 func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState(t *testing.T) {
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "fail", http.StatusInternalServerError)
-	}))
-	defer api.Close()
-
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
@@ -201,7 +250,6 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 		BucketRate:       1,
 		BucketCapacity:   1,
 		Workers:          1,
-		PressureAPI:      api.URL,
 		PressureInterval: 5 * time.Millisecond,
 		DisableAPI:       false,
 		LogLevel:         "error",
@@ -210,10 +258,12 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	// the fatal-error resume snapshot is written (it wins over cfg.Resume).
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
-	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeFile,
-		PressureHTTP:    &http.Client{Timeout: 500 * time.Millisecond},
+		PressureSource: pressureSourceFunc(func(context.Context) (pressure.Sample, error) {
+			return pressure.Sample{}, errors.New("scripted pressure failure")
+		}),
 	})
 	if err == nil {
 		t.Fatal("expected api failure error")
@@ -281,7 +331,7 @@ func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *
 		LogLevel:         "error",
 	}
 
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, dialErrnoFailure(syscall.ECONNREFUSED)
 		},
@@ -363,7 +413,7 @@ func TestRun_WhenResumeSnapshotPreScanStateAndContextCanceled_AbortsWithoutWriti
 		LogLevel:         "error",
 	}
 
-	err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
@@ -436,7 +486,7 @@ func TestRun_WhenResumeReusesChunksAndBroadcastExclusionChangesTotal_FailsWithCl
 		LogLevel:           "error",
 	}
 
-	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
 		DisableKeyboard: true,
 	})
@@ -492,7 +542,7 @@ func TestRun_WhenResumeCIDRIsEntirelyBroadcast_FailsWithClearError(t *testing.T)
 		LogLevel:           "error",
 	}
 
-	err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
 		DisableKeyboard: true,
 	})
@@ -539,7 +589,7 @@ func TestRun_WhenAllTargetsBlocklisted_SucceedsWithHeaderOnlyScanOutputs(t *test
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
@@ -609,7 +659,7 @@ func TestRun_WhenRichAllTargetsBlocklisted_SucceedsWithoutDispatchingTCP(t *test
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
@@ -1034,7 +1084,7 @@ func TestRun_WhenIPColumnListsSubset_ScansOnlyListedIPs(t *testing.T) {
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -1102,7 +1152,7 @@ func TestRun_WhenCIDRColumnNamesBlank_UsesDefaultInputColumns(t *testing.T) {
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -1164,7 +1214,7 @@ func TestRun_WhenScanCompletes_WritesOpenRecordsToOpenedResultsCSV(t *testing.T)
 		PreScanPingTimeout: 100 * time.Millisecond,
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -1230,7 +1280,7 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 		LogLevel:         "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeFile,
 	}); err != nil {
@@ -1283,7 +1333,7 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 	// not pre-exist, so its presence proves the cancel path wrote resume state.
 	// (Decision B removed the implicit default-location fallback for scan: scan
 	// always has an input -resume, so persistence targets ResumeStatePath here.)
-	err := Run(ctx, cfg, stdout, stderr, RunOptions{DisableKeyboard: true, ResumeStatePath: resumeFile})
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ResumeStatePath: resumeFile})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled error, got %v", err)
 	}
@@ -1375,7 +1425,7 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	}()
 
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	_ = Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	_ = Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeFile,
 		Dial: func(dialCtx context.Context, network, address string) (net.Conn, error) {
