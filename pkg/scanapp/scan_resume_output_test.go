@@ -32,7 +32,7 @@ func TestRun_WhenResumed_EmitsBucketParsePhaseLogs(t *testing.T) {
 	dial := func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("connection refused")
 	}
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &stderr, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:  true,
 		Dial:             dial,
 		ProgressInterval: 1, // tick every chunk/result so progress lines always emit
@@ -144,7 +144,7 @@ func TestRun_WhenCanceledMidScan_DeliversRowsToFinalPath(t *testing.T) {
 		return nil, errors.New("forced dial failure")
 	}
 
-	err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial})
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial})
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled from interrupted scan, got: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRun_WhenResumed_AppendsToSameOutputFile(t *testing.T) {
 		once.Do(cancel)
 		return nil, errors.New("forced dial failure")
 	}
-	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
+	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("run 1: expected context.Canceled, got: %v", err)
 	}
 	cancel()
@@ -208,7 +208,7 @@ func TestRun_WhenResumed_AppendsToSameOutputFile(t *testing.T) {
 	}
 
 	// Run 2: resume to completion; must append to the SAME file.
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {
@@ -249,7 +249,7 @@ func TestRun_WhenResumedWithPriorOutputDeleted_RecreatesWithHeader(t *testing.T)
 		once.Do(cancel)
 		return nil, errors.New("forced dial failure")
 	}
-	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
+	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("run 1: expected context.Canceled, got: %v", err)
 	}
 	cancel()
@@ -267,7 +267,7 @@ func TestRun_WhenResumedWithPriorOutputDeleted_RecreatesWithHeader(t *testing.T)
 		t.Fatalf("remove open file: %v", err)
 	}
 
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {

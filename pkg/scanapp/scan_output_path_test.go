@@ -84,7 +84,7 @@ func TestRun_WhenResumedFromDifferentWorkingDirectory_AppendsToOriginalOutputs(t
 	// Run 1 from directory A: interrupted with work still pending.
 	t.Chdir(dirA)
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -106,7 +106,7 @@ func TestRun_WhenResumedFromDifferentWorkingDirectory_AppendsToOriginalOutputs(t
 
 	// Run 2 from directory B: same snapshot, different cwd.
 	t.Chdir(dirB)
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("closed") },
 	}); err != nil {
@@ -181,7 +181,7 @@ func TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
 
 	t.Chdir(workDir)
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -208,7 +208,7 @@ func TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
 
 	// Resume from the SAME directory, interrupted again so a snapshot is saved.
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	if err := Run(ctx2, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx2, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel2),
 	}); !errors.Is(err, context.Canceled) {
@@ -287,7 +287,7 @@ func TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchor
 	// holds the original output pair.
 	t.Chdir(dirA)
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -315,7 +315,7 @@ func TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchor
 	// Resume from directory B, interrupted again so a snapshot is saved.
 	t.Chdir(dirB)
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	if err := Run(ctx2, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx2, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel2),
 	}); !errors.Is(err, context.Canceled) {

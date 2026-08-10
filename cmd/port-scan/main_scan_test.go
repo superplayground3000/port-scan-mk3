@@ -138,20 +138,24 @@ func TestScanApp_CancelSavesResumeState(t *testing.T) {
 		t.Fatalf("generate buckets: %v", err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          50 * time.Millisecond,
-		Delay:            5 * time.Millisecond,
-		BucketRate:       1,
-		BucketCapacity:   1,
-		Workers:          1,
-		PressureAPI:      "http://127.0.0.1:1",
-		PressureInterval: 10 * time.Second,
-		DisableAPI:       true,
-		Resume:           bucketsOut,
-		LogLevel:         "error",
+	cfg, err := config.NewScan(config.ScanValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		Output:         outFile,
+		DialTimeout:    50 * time.Millisecond,
+		DispatchDelay:  5 * time.Millisecond,
+		BucketRate:     1,
+		BucketCapacity: 1,
+		Workers:        1,
+		Pressure:       config.PressureDisabled(),
+		ResumeInput:    bucketsOut,
+		LogLevel:       "error",
+		Format:         "human",
+	})
+	if err != nil {
+		t.Fatalf("NewScan() error = %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

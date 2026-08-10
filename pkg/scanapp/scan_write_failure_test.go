@@ -135,7 +135,7 @@ func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
 	secondChunkDialed := make(chan struct{})
 	var signalSecondChunk sync.Once
 
-	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeOut,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
@@ -183,7 +183,7 @@ func TestRun_WhenOutputWriteFails_KeepsCursorForFullyPersistedChunk(t *testing.T
 	resumeOut := filepath.Join(tmp, "resume-out.json")
 	releaseSecondDial := make(chan struct{})
 
-	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		ResumeStatePath: resumeOut,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
@@ -238,7 +238,7 @@ func TestRun_WhenOutputWriteFails_AlignsScannedCountWithRewoundCursor(t *testing
 	}
 	resumeOut := filepath.Join(tmp, "resume-out.json")
 
-	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		ResumeStatePath:    resumeOut,
@@ -264,7 +264,7 @@ func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPers
 	cfg.Workers = 2
 	releaseFirstDial := make(chan struct{})
 
-	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
 			if strings.HasPrefix(address, "10.9.0.0:") {
@@ -309,7 +309,7 @@ func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPers
 		t.Fatalf("failed run wrote %d rows, want 1 persisted row", len(partialRows))
 	}
 
-	if err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            refusingDial,
 	}); err != nil {
@@ -350,7 +350,7 @@ func TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot(t *testing.T) {
 		cfg, tmp, _ := newInterruptibleScanConfig(t)
 		resumeOut := filepath.Join(tmp, "resume-out.json")
 
-		err := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 			DisableKeyboard:    true,
 			Dial:               refusingDial,
 			ResumeStatePath:    resumeOut,
@@ -380,7 +380,7 @@ func TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot(t *testing.T) {
 
 	t.Run("input bucket path", func(t *testing.T) {
 		cfg, _, bucketsFile := newInterruptibleScanConfig(t)
-		runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 			DisableKeyboard:    true,
 			Dial:               refusingDial,
 			batchOutputsOpener: failingScanWriterOpener(3),
@@ -413,7 +413,7 @@ func TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows(t *test
 	const failOn = 3
 
 	var stderr bytes.Buffer
-	err := Run(context.Background(), cfg, &bytes.Buffer{}, &stderr, RunOptions{
+	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		ResumeStatePath:    filepath.Join(tmp, "resume-out.json"),
@@ -446,7 +446,7 @@ func TestRun_WhenOutputWriteFails_LogsCorrectedResumeSnapshot(t *testing.T) {
 	resumeOut := filepath.Join(tmp, "resume-out.json")
 	var stderr bytes.Buffer
 
-	runErr := Run(context.Background(), cfg, &bytes.Buffer{}, &stderr, RunOptions{
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		ResumeStatePath:    resumeOut,
@@ -518,7 +518,7 @@ func TestRun_WhenCanceledWithoutWriteFailure_StillPersistsResumeSnapshot(t *test
 		return nil, errors.New("connection refused")
 	}
 
-	err := Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dial,
 		ResumeStatePath: resumeOut,

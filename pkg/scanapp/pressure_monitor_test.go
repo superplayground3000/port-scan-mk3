@@ -1,6 +1,7 @@
 package scanapp
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,8 +11,44 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
+
+type contextPressureSource struct {
+	started chan struct{}
+}
+
+func (s contextPressureSource) Sample(ctx context.Context) (pressure.Sample, error) {
+	close(s.started)
+	<-ctx.Done()
+	return pressure.Sample{}, ctx.Err()
+}
+
+func TestPollPressureAPI_ContextCancellationDuringSampleDoesNotRecordFailure(t *testing.T) {
+	observer := &pressureTelemetryRecorder{}
+	started := make(chan struct{})
+	poller := startTestPressurePoller(t, config.Config{
+		PressureInterval: time.Millisecond,
+	}, RunOptions{
+		PressureSource:   contextPressureSource{started: started},
+		pressureObserver: observer,
+	}, speedctrl.NewController(), newTestLogger())
+
+	select {
+	case <-started:
+	case <-time.After(pressureTestTimeout):
+		t.Fatal("timed out waiting for pressure sample")
+	}
+	poller.stop(t)
+	poller.makeSureNoError(t)
+
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if len(observer.polls) != 0 {
+		t.Fatalf("pressure polls = %#v, want no failure after context cancellation", observer.polls)
+	}
+}
 
 func TestPollPressureAPI_ThreeConsecutiveFailures_SendsErrorAndExits(t *testing.T) {
 	server := newScriptedPressureServer(t)

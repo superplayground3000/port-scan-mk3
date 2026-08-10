@@ -8,9 +8,10 @@ As of **2.0.0**, `port-scan` is a three-step pipeline. Each subcommand calls a
 dedicated `pkg/scanapp` entry point. The pre-ping command uses
 `config.ParsePrePing`, which returns an opaque `config.PrePingConfig` value.
 The bucket command uses `config.ParseGenerateBuckets`, which returns an opaque
-`config.GenerateBucketsConfig` value. The other commands still use legacy
-configuration functions during the active migration. Durable files connect
-the three stages. The `scan` command only consumes a bucket snapshot.
+`config.GenerateBucketsConfig` value. The scan command uses `config.ParseScan`,
+which returns an opaque `config.ScanConfig` value. The validate command still
+uses a legacy configuration function. Durable files connect the three stages.
+The `scan` command only consumes a bucket snapshot.
 
 ```
 CLI entry point (main.go)
@@ -34,11 +35,13 @@ CLI entry point (main.go)
     │           └── state.SaveSnapshot(-buckets-out)   (== resume Snapshot JSON)
     │
     └── handleScanCommand → runScan
-            ParseFor("scan")   (-resume REQUIRED; no ping flags)
+            config.ParseScan() → config.ScanConfig
                    │
                    ▼
-            scanapp.Run()   (loads the bucket snapshot; NO reachability checker)
+            scanapp.Run(ScanConfiguration)
                    │
+                   ├── resolve configuration before file and network work
+                   ├── create pressure adapter from the validated policy
                    ├── reachable predicate from snapshot blocklist (never pings)
                    ├── build group runtimes with leaky-bucket rate control
                    ├── start pressure API poller (unless -disable-api)
@@ -78,6 +81,23 @@ rules as the parser. An uninitialized `config.GenerateBucketsConfig` returns
 
 The bucket configuration does not contain a pre-ping timeout. Bucket
 generation writes `timeout_ms=0` as explicit snapshot metadata.
+
+### Scan configuration
+
+`scanapp.Run` accepts the consumer-owned `ScanConfiguration` interface. The
+workflow resolves this interface before file or network work.
+`config.ScanConfig` implements the interface.
+
+`config.NewScan` gives tests and non-CLI callers the same input rules as the
+parser. An uninitialized `config.ScanConfig` returns
+`config.ErrUninitializedConfiguration`.
+
+The scan configuration contains one opaque `PressurePolicy`. This policy has a
+disabled, simple HTTP, or authenticated OAuth variant. Partial OAuth values
+cannot leave `pkg/config`.
+
+The scan parser accepts `-progress-interval` for compatibility. The parsed
+value does not cross the scan configuration seam and does not change behavior.
 
 ### Stage 1: Input Loading (`input_loader.go`)
 
@@ -241,20 +261,23 @@ Both constructors require an explicit `http.Client` and valid HTTP endpoints.
 Each OAuth endpoint owns a separate token cache and mutex. Each sample returns
 a new source-result slice.
 
-The scan monitor still uses the legacy `PressureFetcher` seam during the active
-configuration migration. The new adapters do not change current CLI behavior.
+`scanapp` owns the one-method `PressureSource` interface. `RunOptions` accepts
+an optional source for tests. Otherwise, a private factory creates the adapter
+from the validated policy. The command handler does not inspect pressure
+variants or create HTTP clients.
 
 ### Polling Loop (`pressure_monitor.go`)
 
 ```
 every PressureInterval:
-    pressure, err := PressureFetcher.Fetch(ctx)
+    sample, err := PressureSource.Sample(ctx)
+    record every source result
     if err != nil:
         record failure
         stop after the third consecutive failure
         continue
-    update controller with pressure value
-    if pressure >= limit:
+    update controller with sample.Maximum
+    if sample.Maximum >= limit:
         controller.PauseFromAPI()
     else:
         controller.ResumeFromAPI()
@@ -262,11 +285,12 @@ every PressureInterval:
 
 ### Dashboard Telemetry
 
-Pressure monitor observes:
-- `pressureTelemetryObserver.OnPressureSample(percent, time)`
-- `pressureTelemetryObserver.OnPressureFailure(streak, time)`
-- Per-source samples and failures when the fetcher supplies source results
-- `controllerTelemetryObserver.OnControllerStatusChange(status)`
+The pressure monitor sends one `pressurePoll` to
+`pressureTelemetryObserver.OnPressurePoll`. The poll contains the sample,
+aggregate error, failure count, and sample time. The dashboard records source
+results before aggregate status.
+
+The controller observer receives manual and API pause changes separately.
 
 ## Dashboard Architecture
 

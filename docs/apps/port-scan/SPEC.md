@@ -1,6 +1,6 @@
 # port-scan Specification
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-07-22
+**Tool**: `cmd/port-scan` | **Revised**: 2026-08-10
 
 ## Overview
 
@@ -8,12 +8,13 @@
 and rich), pressure-aware pacing via a configurable API, resumable scans, and
 real-time dashboard display.
 
-As of **2.0.0** it is a **three-step pipeline** — `pre-ping` →
-`generate-buckets` → `scan` — with durable file hand-offs between steps. Each
-subcommand parses only its own flag surface (`config.ParseFor`). `scan` requires
-a bucket snapshot via `-resume`, constructs no reachability checker, and never
-pings. See [2.0.0 release notes](../../release-notes/2.0.0.md) for the flag
-relocation table and migration.
+As of **2.0.0** it is a **three-step pipeline**. Durable file hand-offs connect
+`pre-ping`, `generate-buckets`, and `scan`. Each pipeline command uses a
+dedicated configuration parser. The validate command still uses the legacy
+parser. `scan` requires a bucket snapshot through `-resume`. It constructs no
+reachability checker and never pings. See the
+[2.0.0 release notes](../../release-notes/2.0.0.md) for the flag relocation
+table and migration.
 
 ## Commands
 
@@ -83,15 +84,15 @@ own it. Required flags: `-cidr-file` (all), `-buckets-out` (`generate-buckets`),
 | `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `pre-ping` output) whose `ip` column is subtracted. |
 | `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
 | `-resume` | (required) | `scan` only. Bucket snapshot to scan; updated in place on cancel/error. |
-| `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. Progress-line cadence (count of processed units); emitted to stderr. |
+| `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. The scan parser accepts this compatibility flag but does not use its value. |
 | `-port-file` | (basic mode) | `generate-buckets` (primary; required in basic mode, ignored in rich mode) and `scan` (fallback, normally ignored — chunks carry ports). |
 | `-output` | `scan_results.csv` | `pre-ping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
 | `-timeout` | `100ms` | `scan` only. Per-scan TCP connection timeout (Go duration string). |
-| `-delay` | `10ms` | `scan` only. Pause between dispatching consecutive tasks |
+| `-delay` | `10ms` | `scan` only. Pause between dispatching consecutive tasks. |
 | `-bucket-rate` | `100` | `scan` only. Leaky-bucket token refill rate (tokens/second) |
 | `-bucket-capacity` | `100` | `scan` only. Leaky-bucket maximum burst size |
 | `-workers` | `10` | `pre-ping`, `generate-buckets`, `scan`. Concurrent workers (also parallelizes bucket generation) |
-| `-pressure-api` | `http://localhost:8080/api/pressure` | `scan` only. URL of the pressure API endpoint (plain HTTP) |
+| `-pressure-api` | `http://localhost:8080/api/pressure` | `scan` only. URL of the pressure API endpoint. |
 | `-disable-api` | `false` | `scan` only. Disable pressure API polling; use only local rate control |
 | `-pressure-interval` | `5s` | `scan` only. Pressure poll interval (Go duration string or integer seconds) |
 | `-pressure-auth-url` | (empty) | `scan` only. OAuth token endpoint URL (required with `-pressure-use-auth`) |
@@ -230,8 +231,8 @@ in configuration order. A successful sample returns the maximum pressure
 across all sources. If one source fails, the aggregate value is zero and the
 sample returns an error with all source results.
 
-The scan monitor uses the legacy fetcher seam during the active configuration
-migration. Both implementations use the same wire formats.
+The scan monitor uses the consumer-owned `PressureSource` seam. A private
+factory maps the opaque pressure policy to a `pkg/pressure` adapter.
 
 ### Pressure Response Parsing
 
@@ -296,7 +297,8 @@ pkg/scanapp/
 ├── scan_logger.go             # Logging
 ├── dispatch_observer.go       # Dispatch events
 ├── pressure_monitor.go        # Pressure API polling
-├── pressure.go                # Legacy PressureFetcher during migration
+├── pressure_source.go         # Validated policy to pressure adapter
+├── pressure.go                # Legacy adapters retained during migration
 ├── dashboard_state.go         # Dashboard state management
 ├── dashboard_renderer.go      # ANSI rendering
 ├── dashboard_runtime.go       # Lifecycle management
