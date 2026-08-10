@@ -232,7 +232,6 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "out.csv")
-	resumeFile := filepath.Join(tmp, "resume_state.json")
 
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/24,127.0.0.0/24,loopback\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -254,13 +253,11 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 		DisableAPI:       false,
 		LogLevel:         "error",
 	}
-	// Decision B: scan requires a bucket file. ResumeStatePath still directs where
-	// the fatal-error resume snapshot is written (it wins over cfg.Resume).
+	// Scan uses the bucket file as both the input and the resume snapshot.
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
 	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		ResumeStatePath: resumeFile,
 		PressureSource: pressureSourceFunc(func(context.Context) (pressure.Sample, error) {
 			return pressure.Sample{}, errors.New("scripted pressure failure")
 		}),
@@ -271,12 +268,12 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	if !strings.Contains(err.Error(), "pressure api failed 3 times") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, statErr := os.Stat(resumeFile); statErr != nil {
+	if _, statErr := os.Stat(cfg.Resume); statErr != nil {
 		t.Fatalf("expected resume state on fatal api error, got: %v", statErr)
 	}
 	// Decision B: scan persists the snapshot's pre-scan-ping metadata (stamped by
 	// generate-buckets) unchanged, so a subsequent resume keeps the blocklist.
-	persisted, loadErr := state.LoadSnapshot(resumeFile)
+	persisted, loadErr := state.LoadSnapshot(cfg.Resume)
 	if loadErr != nil {
 		t.Fatalf("expected loadable persisted snapshot, got: %v", loadErr)
 	}
@@ -759,10 +756,10 @@ func TestBuildRuntime_WhenChunkPortsEmpty_UsesDefaultInputPorts(t *testing.T) {
 	}}
 	ports := []input.PortSpec{{Number: 80, Proto: "tcp", Raw: "80/tcp"}}
 
-	rts, err := buildRuntime(chunks, records, ports, runtimePolicy{
+	rts, err := buildRuntimeWithPredicate(chunks, records, ports, runtimePolicy{
 		bucketRate:     10,
 		bucketCapacity: 10,
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -787,102 +784,6 @@ func TestShouldSaveOnDispatchErr_WhenDispatchErrorVaries_ReturnsExpectedDecision
 	}
 	if shouldSaveOnDispatchErr(errors.New("other")) {
 		t.Fatal("expected false for other err")
-	}
-}
-
-func TestPersistResumeState_WhenRuntimeIncomplete_SavesResumeSnapshot(t *testing.T) {
-	tmp := t.TempDir()
-	resumeFile := filepath.Join(tmp, "resume.json")
-	logger := newLogger("error", false, &bytes.Buffer{})
-	ch := &task.Chunk{
-		CIDR:         "10.0.0.0/24",
-		NextIndex:    2,
-		ScannedCount: 2,
-		TotalCount:   4,
-		Status:       "scanning",
-	}
-	runtimes := []*chunkRuntime{{
-		state:   ch,
-		tracker: newChunkStateTracker(ch),
-	}}
-
-	if err := persistResumeState(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger, runtimes, nil, nil); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	chunks, err := state.Load(resumeFile)
-	if err != nil {
-		t.Fatalf("expected saved resume state, got %v", err)
-	}
-	if len(chunks) != 1 {
-		t.Fatalf("expected 1 saved chunk, got %d", len(chunks))
-	}
-	if chunks[0].NextIndex != 2 || chunks[0].ScannedCount != 2 || chunks[0].Status != "scanning" {
-		t.Fatalf("unexpected saved chunk state: %+v", chunks[0])
-	}
-}
-
-func TestPersistResumeSnapshot_WhenPreScanStateProvided_SavesEnvelope(t *testing.T) {
-	tmp := t.TempDir()
-	resumeFile := filepath.Join(tmp, "resume.json")
-	logger := newLogger("error", false, &bytes.Buffer{})
-	ch := &task.Chunk{
-		CIDR:         "10.0.0.0/24",
-		NextIndex:    1,
-		ScannedCount: 1,
-		TotalCount:   4,
-		Status:       "scanning",
-	}
-	runtimes := []*chunkRuntime{{
-		state:   ch,
-		tracker: newChunkStateTracker(ch),
-	}}
-
-	preScanPing := state.PreScanPingState{
-		Enabled:            true,
-		TimeoutMS:          100,
-		UnreachableIPv4U32: []uint32{ipv4ToUint32("10.0.0.7")},
-	}
-	if err := persistResumeSnapshot(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger, runtimes, preScanPing, nil, nil, nil); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	snapshot, err := state.LoadSnapshot(resumeFile)
-	if err != nil {
-		t.Fatalf("expected saved snapshot, got %v", err)
-	}
-	if len(snapshot.Chunks) != 1 || snapshot.Chunks[0].NextIndex != 1 {
-		t.Fatalf("unexpected saved chunks: %+v", snapshot.Chunks)
-	}
-	if !snapshot.PreScanPing.Enabled || snapshot.PreScanPing.TimeoutMS != 100 {
-		t.Fatalf("unexpected pre-scan ping metadata: %+v", snapshot.PreScanPing)
-	}
-	if len(snapshot.PreScanPing.UnreachableIPv4U32) != 1 || snapshot.PreScanPing.UnreachableIPv4U32[0] != ipv4ToUint32("10.0.0.7") {
-		t.Fatalf("unexpected unreachable ip list: %+v", snapshot.PreScanPing.UnreachableIPv4U32)
-	}
-}
-
-func TestPersistResumeState_WhenRunCompletesCleanly_SkipsWrite(t *testing.T) {
-	tmp := t.TempDir()
-	resumeFile := filepath.Join(tmp, "resume.json")
-	logger := newLogger("error", false, &bytes.Buffer{})
-	ch := &task.Chunk{
-		CIDR:         "10.0.0.0/24",
-		NextIndex:    4,
-		ScannedCount: 4,
-		TotalCount:   4,
-		Status:       "completed",
-	}
-	runtimes := []*chunkRuntime{{
-		state:   ch,
-		tracker: newChunkStateTracker(ch),
-	}}
-
-	if err := persistResumeState(config.Config{}, RunOptions{ResumeStatePath: resumeFile}, logger, runtimes, nil, nil); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, err := os.Stat(resumeFile); !os.IsNotExist(err) {
-		t.Fatalf("expected no resume file on clean completion, got err=%v", err)
 	}
 }
 
@@ -1254,7 +1155,6 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "scan_results.csv")
-	resumeFile := filepath.Join(tmp, "resume_state.json")
 
 	if err := os.WriteFile(cidrFile, []byte(
 		"fab_name,ip,ip_cidr,cidr_name\n"+
@@ -1280,14 +1180,21 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 		LogLevel:         "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
+	before, err := os.ReadFile(cfg.Resume)
+	if err != nil {
+		t.Fatalf("read initial snapshot: %v", err)
+	}
 	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		ResumeStatePath: resumeFile,
 	}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if _, statErr := os.Stat(resumeFile); !os.IsNotExist(statErr) {
-		t.Fatalf("expected no resume file on successful completion, got err=%v", statErr)
+	after, err := os.ReadFile(cfg.Resume)
+	if err != nil {
+		t.Fatalf("read final snapshot: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("successful scan rewrote the resume snapshot")
 	}
 }
 
@@ -1296,7 +1203,6 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "scan_results.csv")
-	resumeFile := filepath.Join(tmp, "resume_state.json")
 
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/24,127.0.0.0/24,loopback\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1329,11 +1235,7 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 		cancel()
 	}()
 
-	// A separate ResumeStatePath receives the persisted resume snapshot; it does
-	// not pre-exist, so its presence proves the cancel path wrote resume state.
-	// (Decision B removed the implicit default-location fallback for scan: scan
-	// always has an input -resume, so persistence targets ResumeStatePath here.)
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ResumeStatePath: resumeFile})
+	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled error, got %v", err)
 	}
@@ -1346,8 +1248,8 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 	if count := strings.Count(stderr.String(), `"msg":"scan_completion"`); count != 1 {
 		t.Fatalf("expected one completion summary, got %d in %s", count, stderr.String())
 	}
-	if _, statErr := os.Stat(resumeFile); statErr != nil {
-		t.Fatalf("expected persisted resume file %s, got err=%v", resumeFile, statErr)
+	if _, statErr := os.Stat(cfg.Resume); statErr != nil {
+		t.Fatalf("expected persisted resume file %s, got err=%v", cfg.Resume, statErr)
 	}
 }
 
@@ -1356,7 +1258,6 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "scan_results.csv")
-	resumeFile := filepath.Join(tmp, "resume.json")
 
 	// A real local listener makes the first probe's outcome deterministic on
 	// every platform. The previous target, 127.0.0.0/30, relied on Linux
@@ -1430,7 +1331,6 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	_ = Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		ResumeStatePath: resumeFile,
 		Dial: func(dialCtx context.Context, network, address string) (net.Conn, error) {
 			conn, dialErr := dialer.DialContext(dialCtx, network, address)
 			dialOnce.Do(func() { close(firstDialDone) })
@@ -1438,7 +1338,7 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 		},
 	})
 
-	chunks, err := state.Load(resumeFile)
+	chunks, err := state.Load(cfg.Resume)
 	if err != nil {
 		t.Fatalf("expected resume state, got: %v", err)
 	}

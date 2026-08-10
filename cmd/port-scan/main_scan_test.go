@@ -111,7 +111,6 @@ func TestScanApp_CancelSavesResumeState(t *testing.T) {
 	cidrFile := filepath.Join(tmp, "cidr.csv")
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "out.csv")
-	resumeFile := filepath.Join(tmp, "resume_state.json")
 
 	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1/24,127.0.0.1/24,loopback\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -164,11 +163,11 @@ func TestScanApp_CancelSavesResumeState(t *testing.T) {
 		cancel()
 	}()
 
-	err = scanapp.Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, scanapp.RunOptions{ResumeStatePath: resumeFile})
+	err = scanapp.Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, scanapp.RunOptions{})
 	if err == nil {
 		t.Fatal("expected cancellation error")
 	}
-	if _, statErr := os.Stat(resumeFile); statErr != nil {
+	if _, statErr := os.Stat(bucketsOut); statErr != nil {
 		t.Fatalf("expected resume state file, got err=%v", statErr)
 	}
 }

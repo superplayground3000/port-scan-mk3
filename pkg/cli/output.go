@@ -1,11 +1,8 @@
-// Package cli provides CLI composition utilities for the port-scan command.
-// It bridges domain types to concrete writers and formats. This split obeys the
-// SOLID principle that domain packages must not depend on transport details.
+// Package cli provides output formatting for command handlers.
 //
 // # Responsibilities
 //
 //   - Output formatting (human vs JSON) for validation results
-//   - RecordWriter adapters that bridge writer.CSVWriter → scanapp.RecordWriter
 package cli
 
 import (

@@ -53,7 +53,7 @@ func TestStartScanExecutor_WhenLocalResourceFailure_DoesNotRecordCloseStatus(t *
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	got := results[0].record.Status()
+	got := results[0].record.Status
 	if got == "close" || got == "close(timeout)" {
 		t.Fatalf("local resource failure recorded as a confirmed closed port: status %q", got)
 	}
@@ -98,7 +98,7 @@ func TestStartScanExecutor_WhenConnectionRefused_StillRecordsClose(t *testing.T)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if got := results[0].record.Status(); got != "close" {
+	if got := results[0].record.Status; got != "close" {
 		t.Fatalf("expected status close for a refused connection, got %q", got)
 	}
 }

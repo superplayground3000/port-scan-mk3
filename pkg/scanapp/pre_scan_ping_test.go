@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 )
 
@@ -263,7 +262,7 @@ func TestLoadOrBuildChunksWithPredicate_SkipsUnreachableTargetsFromChunkTotals(t
 		{CIDR: "10.0.0.0/24", Selector: mustSelectorNet(t, "10.0.0.2/32"), CIDRName: "web"},
 	}
 
-	chunks, err := loadOrBuildChunksWithPredicate(config.Config{}, rows, []input.PortSpec{
+	chunks, err := buildFreshChunksForTest(rows, []input.PortSpec{
 		{Number: 80, Proto: "tcp", Raw: "80/tcp"},
 		{Number: 443, Proto: "tcp", Raw: "443/tcp"},
 	}, reachablePredicate([]uint32{ipv4ToUint32("10.0.0.2")}))

@@ -16,7 +16,6 @@ type scanRuntimeInput struct {
 	cfg                      config.Config
 	stdout                   io.Writer
 	stderr                   io.Writer
-	resumeStatePath          string
 	pressureLimit            int
 	disableKeyboard          bool
 	progressInterval         int
@@ -64,7 +63,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		return err
 	}
 
-	snapshot, err := loadResumeSnapshot(cfg)
+	snapshot, err := state.LoadSnapshot(cfg.Resume)
 	if err != nil {
 		return err
 	}
@@ -131,12 +130,10 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		parseReporter = bucketProgress.Inc
 	}
 
-	plan, err := prepareRuntimePlan(cfg, inputs, r.adapters.deps, reachable, snapshot.Chunks, true, parseReporter)
+	plan, err := prepareRuntimePlan(cfg, inputs, reachable, snapshot.Chunks, parseReporter)
 	if err != nil {
 		return err
 	}
-	plan.scanOutputPath = scanPath
-	plan.openOnlyPath = openPath
 
 	if bucketProgress != nil {
 		bucketProgress.Done()
@@ -250,8 +247,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
-	resumeOptions := RunOptions{ResumeStatePath: r.input.resumeStatePath}
-	if err := persistResumeSnapshot(cfg, resumeOptions, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
+	if err := persistResumeSnapshot(cfg, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
 		emitCompletionSummary(logger, summary, startedAt, err)
 		return err
 	}

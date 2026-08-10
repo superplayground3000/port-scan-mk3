@@ -12,8 +12,6 @@ import (
 )
 
 // batchOutputs holds file handles and writers for scan result output.
-// The writer fields use the RecordWriter interface to decouple from concrete types.
-//
 // Scan and open-only results are written DIRECTLY to their final paths (no
 // intermediate ".tmp"): rows already written survive a graceful Ctrl+C
 // (design §3.6) and a -resume run reopens the same files in append mode
@@ -21,8 +19,8 @@ import (
 type batchOutputs struct {
 	scanFile       *os.File
 	openOnlyFile   *os.File
-	scanWriter     RecordWriter
-	openOnlyWriter RecordWriter
+	scanWriter     recordWriter
+	openOnlyWriter recordWriter
 }
 
 type unreachableOutput struct {
@@ -234,15 +232,4 @@ func (u *unreachableOutput) Finalize(success bool) error {
 		}
 	}
 	return nil
-}
-
-func openBatchOutputsAfterUnreachable(paths batchOutputPaths) (*batchOutputs, error) {
-	output, err := openUnreachableOutput(paths.unreachablePath)
-	if err != nil {
-		return nil, err
-	}
-	if err := output.Finalize(true); err != nil {
-		return nil, err
-	}
-	return openBatchOutputs(paths.scanPath, paths.openPath, false)
 }

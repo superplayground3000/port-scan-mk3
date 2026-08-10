@@ -9,7 +9,6 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
-	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
@@ -48,38 +47,6 @@ func collectChunkStates(runtimes []*chunkRuntime) []task.Chunk {
 		out = append(out, rt.tracker.Snapshot())
 	}
 	return out
-}
-
-func loadOrBuildChunks(cfg config.Config, cidrRecords []input.CIDRRecord, portSpecs []input.PortSpec) ([]task.Chunk, error) {
-	return loadOrBuildChunksWithPredicate(cfg, cidrRecords, portSpecs, nil)
-}
-
-func loadOrBuildChunksWithPredicate(cfg config.Config, cidrRecords []input.CIDRRecord, portSpecs []input.PortSpec, reachable func(string) bool) ([]task.Chunk, error) {
-	if cfg.Resume != "" {
-		return state.Load(cfg.Resume)
-	}
-	if hasRichRecords(cidrRecords) {
-		return buildRichChunksWithPredicate(cidrRecords, reachable)
-	}
-	groups, err := buildCIDRGroupsWithPredicate(cidrRecords, reachable)
-	if err != nil {
-		return nil, err
-	}
-	rawPorts := make([]string, 0, len(portSpecs))
-	for _, p := range portSpecs {
-		rawPorts = append(rawPorts, p.Raw)
-	}
-	cidrs := make([]string, 0, len(groups))
-	for cidr := range groups {
-		cidrs = append(cidrs, cidr)
-	}
-	sort.Strings(cidrs)
-
-	out := make([]task.Chunk, 0, len(cidrs))
-	for _, cidr := range cidrs {
-		out = append(out, basicChunkFromGroup(cidr, groups[cidr], rawPorts))
-	}
-	return out, nil
 }
 
 // basicChunkFromGroup builds the basic-mode chunk for a single CIDR group. Each
@@ -121,10 +88,6 @@ func countIncompleteChunks(chunks []task.Chunk) int {
 		}
 	}
 	return n
-}
-
-func buildRuntime(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy) ([]*chunkRuntime, error) {
-	return buildRuntimeWithPredicate(chunks, cidrRecords, defaultPorts, policy, nil, nil)
 }
 
 // buildRuntimeWithPredicate re-derives the in-memory runtime plan for a set of

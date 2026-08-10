@@ -54,7 +54,6 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	portFile := filepath.Join(tmp, "ports.csv")
 	outFile := filepath.Join(tmp, "out.csv")
 	bucketsPath := filepath.Join(tmp, "buckets.json")
-	resumeStatePath := filepath.Join(tmp, "resume_state.json")
 
 	// 127.0.0.2 is never dialed: pre-ping reports it unreachable, so
 	// generate-buckets subtracts it and no chunk ever contains it. This keeps the
@@ -179,11 +178,6 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	if bucketSnap.Output != nil {
 		t.Fatalf("step 2 (generate-buckets): a fresh bucket snapshot must not record output paths, got %+v", bucketSnap.Output)
 	}
-	bucketBytesBefore, err := os.ReadFile(bucketsPath)
-	if err != nil {
-		t.Fatalf("read bucket snapshot: %v", err)
-	}
-
 	// ---------------------------------------------------------------- step 3.
 	// Scan, first pass, interrupted mid-flight. Dials are real TCP dials against
 	// the loopback listener; the cancel fires once the first of them has
@@ -202,12 +196,9 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 		return conn, dialErr
 	}
 
-	// ResumeStatePath keeps the resume snapshot in its own file (resume_path.go:9-11)
-	// so the step-2 artifact stays intact and each artifact can be asserted apart.
 	firstOpts := RunOptions{
 		DisableKeyboard: true,
 		Dial:            interruptingDial,
-		ResumeStatePath: resumeStatePath,
 	}
 	var firstStderr bytes.Buffer
 	firstErr := Run(ctx, testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &firstStderr, firstOpts)
@@ -217,17 +208,9 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	}
 	cancel()
 
-	bucketBytesAfter, err := os.ReadFile(bucketsPath)
-	if err != nil {
-		t.Fatalf("re-read bucket snapshot: %v", err)
-	}
-	if !bytes.Equal(bucketBytesBefore, bucketBytesAfter) {
-		t.Fatal("step 3 (scan, first pass): the step-2 bucket snapshot must not be rewritten when ResumeStatePath is set")
-	}
-
 	// The resume snapshot is the artifact the resume pass consumes. It must name
 	// the files already written (scan.go:107, resume_manager.go:32-36).
-	firstSnap, err := state.LoadSnapshot(resumeStatePath)
+	firstSnap, err := state.LoadSnapshot(bucketsPath)
 	if err != nil {
 		t.Fatalf("step 3 (scan, first pass): load resume state: %v", err)
 	}
@@ -281,12 +264,10 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	// Windows-sensitive part: a leaked handle from the first pass would fail the
 	// reopen with a sharing violation (output_files.go:66-72).
 	resumeCfg := scanCfg
-	resumeCfg.Resume = resumeStatePath
 	var resumeStderr bytes.Buffer
 	resumeErr := Run(context.Background(), testScanConfigurationFromLegacy(t, resumeCfg), &bytes.Buffer{}, &resumeStderr, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dialer.DialContext,
-		ResumeStatePath: resumeStatePath,
 	})
 	if resumeErr != nil {
 		t.Fatalf("step 4 (scan, resume pass) failed: %v\nstderr: %s", resumeErr, resumeStderr.String())

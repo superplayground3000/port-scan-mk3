@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	defaultResumeStateFile = "resume_state.json"
-	defaultPressureLimit   = 60
+	defaultPressureLimit = 60
 )
 
 // errScanRequiresResume is returned by Run when no bucket file is supplied.
@@ -41,7 +40,6 @@ type ScanConfiguration interface {
 // RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
 	Dial                DialFunc
-	ResumeStatePath     string
 	PressureLimit       int
 	DisableKeyboard     bool
 	PressureSource      PressureSource
@@ -103,7 +101,6 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		cfg:                      cfg,
 		stdout:                   stdout,
 		stderr:                   stderr,
-		resumeStatePath:          opts.ResumeStatePath,
 		pressureLimit:            opts.PressureLimit,
 		disableKeyboard:          opts.DisableKeyboard,
 		progressInterval:         opts.ProgressInterval,
