@@ -1,5 +1,9 @@
 # Design Spec — port-scan-mk3 CLI Matrix Lab
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 **Date:** 2026-06-23
 **Topic slug:** `port-scan-mk3-cli-matrix`
 **Lab location:** `labs/port-scan-mk3-cli-matrix/`
@@ -53,7 +57,8 @@ Source of truth: `pkg/config/config.go:112-134` (port-scan) and `cmd/*/main.go` 
 | `pressure-auth-1` | mock-pressure | .24 | `USE_AUTH=true`, OAuth + `/data` | auth single-source |
 | `pressure-auth-2` | mock-pressure | .25 | `USE_AUTH=true`, OAuth + `/data` | auth **multi-source** (with -1) |
 
-> **Why two auth containers:** the mock exposes a single `/data` path (`mock-pressure-api/main.go:212-217,399-430`). `MultiSourcePressureFetcher` only activates when `-pressure-data-url` is comma-separated with **distinct** URLs, so two containers are required to exercise that code path and its max-aggregation + per-source health behavior.
+> **Why two auth containers:** The mock exposes one `/data` path (`mock-pressure-api/main.go:212-217,399-430`).
+> `pressure.OAuthMulti` needs distinct URLs for concurrent sources, maximum aggregation, and per-source health.
 
 ---
 

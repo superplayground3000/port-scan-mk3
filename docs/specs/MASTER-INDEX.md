@@ -15,7 +15,7 @@ This index provides a comprehensive map of the port-scan-mk3 implementation spec
 | ID | Document | Responsibility | Key Files |
 |----|----------|----------------|-----------|
 | **SPEC-01** | [CLI Layer](SPEC-01-CLI-LAYER.md) | CLI entry point, command routing, exit codes | `cmd/port-scan/main.go`, `cmd/port-scan/command_handlers.go` |
-| **SPEC-02** | [Config System](SPEC-02-CONFIG-SYSTEM.md) | Flag parsing, configuration | `pkg/config/config.go` |
+| **SPEC-02** | [Config System](SPEC-02-CONFIG-SYSTEM.md) | Flag parsing, configuration | `pkg/config/*_config.go`, `pkg/config/pre_ping.go`, `pkg/config/generate_buckets.go` |
 | **SPEC-03** | [Input System](SPEC-03-INPUT-SYSTEM.md) | CIDR/Rich CSV parsing | `pkg/input/*.go` |
 | **SPEC-04** | [Task System](SPEC-04-TASK-SYSTEM.md) | Task modeling, selector expansion | `pkg/task/*.go` |
 | **SPEC-05** | [Scanner System](SPEC-05-SCANNER-SYSTEM.md) | TCP probe primitive | `pkg/scanner/scanner.go` |

@@ -78,10 +78,14 @@ type testPressurePoller struct {
 	once   sync.Once
 }
 
-func startTestPressurePoller(t *testing.T, cfg scanConfigFixture, opts RunOptions, ctrl *speedctrl.Controller, logger *scanLogger) *testPressurePoller {
+type pressurePollFixture struct {
+	Pressure pressureConfigFixture
+}
+
+func startTestPressurePoller(t *testing.T, cfg pressurePollFixture, opts RunOptions, ctrl *speedctrl.Controller, logger *scanLogger) *testPressurePoller {
 	t.Helper()
 	if opts.PressureSource == nil {
-		source, err := pressure.NewSimpleHTTP(cfg.PressureAPI, &http.Client{Timeout: 2 * time.Second})
+		source, err := pressure.NewSimpleHTTP(cfg.Pressure.API, &http.Client{Timeout: 2 * time.Second})
 		if err != nil {
 			t.Fatalf("create pressure source: %v", err)
 		}
@@ -96,7 +100,7 @@ func startTestPressurePoller(t *testing.T, cfg scanConfigFixture, opts RunOption
 	}
 	go func() {
 		defer close(poller.done)
-		pollPressureAPI(ctx, cfg.PressureInterval, opts.PressureSource, opts, ctrl, logger, poller.errCh)
+		pollPressureAPI(ctx, cfg.Pressure.Interval, opts.PressureSource, opts, ctrl, logger, poller.errCh)
 	}()
 	t.Cleanup(func() {
 		poller.stop(t)

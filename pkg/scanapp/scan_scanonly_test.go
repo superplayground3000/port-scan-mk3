@@ -43,10 +43,6 @@ func (f *failIfCalledChecker) CheckDetailed(_ context.Context, ip string, _ time
 // snapshot unchanged. Returns bucketsOut for convenience.
 func generateBucketFile(t *testing.T, cfg scanConfigFixture, bucketsOut, unreachableFile string) string {
 	t.Helper()
-	progressInterval := cfg.ProgressInterval
-	if progressInterval <= 0 {
-		progressInterval = 100
-	}
 	ipColumn := cfg.CIDRIPCol
 	if ipColumn == "" {
 		ipColumn = "ip"
@@ -63,7 +59,7 @@ func generateBucketFile(t *testing.T, cfg scanConfigFixture, bucketsOut, unreach
 		BlocklistFile:    unreachableFile,
 		SnapshotOutput:   bucketsOut,
 		Workers:          cfg.Workers,
-		ProgressInterval: progressInterval,
+		ProgressInterval: 100,
 	})
 	if err := GenerateBuckets(context.Background(), genCfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("generate buckets: %v", err)
@@ -120,16 +116,15 @@ func TestRun_RequiresResume(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 		// Resume intentionally empty.
 	}
 
@@ -161,16 +156,15 @@ func TestRun_NeverConstructsChecker(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, "")
 	cfg.Resume = bucketsFile
@@ -223,15 +217,14 @@ func TestRun_ProducesEnrichedRowsFromRichCSVAndSnapshot(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, unreachableFile)
 	cfg.Resume = bucketsFile
@@ -280,16 +273,15 @@ func TestRun_BasicResumeWithoutPortFile_Succeeds(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile, // needed to BUILD the bucket (basic mode)
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile, // needed to BUILD the bucket (basic mode)
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, "")
 
@@ -325,16 +317,15 @@ func TestRun_DoesNotWriteUnreachableCSV(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, "")
 	cfg.Resume = bucketsFile

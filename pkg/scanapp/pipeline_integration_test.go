@@ -26,24 +26,21 @@ const richPipelineCSV = "src_ip,src_network_segment,dst_ip,dst_network_segment,s
 
 // pipelineBaseConfig returns a config wired for the in-process pipeline: a rich
 // CIDR CSV at cidrFile, no PortFile (rich mode), fast timeouts, pressure API
-// disabled. Callers set Resume / BucketsOut / UnreachableFile as each step needs.
+// disabled. Callers set the resume path when the scan step starts.
 func pipelineBaseConfig(t *testing.T, cidrFile, outFile string) scanConfigFixture {
 	t.Helper()
 	if err := os.WriteFile(cidrFile, []byte(richPipelineCSV), 0o644); err != nil {
 		t.Fatalf("write rich csv: %v", err)
 	}
 	return scanConfigFixture{
-		CIDRFile:           cidrFile,
-		Output:             outFile,
-		Timeout:            20 * time.Millisecond,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            2,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		PreScanPingTimeout: 300 * time.Millisecond,
-		ProgressInterval:   1,
+		CIDRFile:       cidrFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        2,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 }
 
@@ -103,8 +100,8 @@ func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 		CIDRIPCidrCol:    "ip_cidr",
 		Output:           baseCfg.Output,
 		Workers:          baseCfg.Workers,
-		PingTimeout:      baseCfg.PreScanPingTimeout,
-		ProgressInterval: baseCfg.ProgressInterval,
+		PingTimeout:      300 * time.Millisecond,
+		ProgressInterval: 1,
 	}), &prePingStdout, &bytes.Buffer{}, RunOptions{
 		ReachabilityChecker: checker,
 	}); err != nil {

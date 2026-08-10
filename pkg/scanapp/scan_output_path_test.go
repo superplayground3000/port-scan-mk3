@@ -34,15 +34,14 @@ func newRelativeOutputScanConfig(t *testing.T, inputsDir string) (scanConfigFixt
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		Output:           "scan_results.csv", // relative on purpose: this is the default
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       1000,
-		BucketCapacity:   1000,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		Output:         "scan_results.csv", // relative on purpose: this is the default
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     1000,
+		BucketCapacity: 1000,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, "")
 	cfg.Resume = bucketsFile

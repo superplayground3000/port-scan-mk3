@@ -1,5 +1,9 @@
 # Issue 79 Pressure Poll Test Determinism Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 ## Status
 
 The user approved this design on 2026-08-09. This design implements GitHub issue #79.

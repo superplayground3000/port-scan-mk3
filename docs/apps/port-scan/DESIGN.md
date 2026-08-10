@@ -251,6 +251,7 @@ type scanTarget struct {
 ```go
 type scanTask struct {
     chunkIdx int
+    taskIdx  int
     ipCidr   string
     ip       string
     port     int
@@ -285,12 +286,14 @@ type chunkRuntime struct {
 
 ```go
 type chunkStateTracker struct {
-    NextIndex    int
-    ScannedCount int
-    TotalCount   int
-    Status       string  // "pending" | "in_progress" | "completed"
+    mu             sync.Mutex
+    chunk          *task.Chunk
+    firstUnwritten int
 }
 ```
+
+The tracker serializes cursor and count updates. `firstUnwritten` is `-1` when
+the runtime has no output-failure rewind to apply.
 
 ## Rate Control
 

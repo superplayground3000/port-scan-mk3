@@ -86,16 +86,15 @@ func newOutputLifecycleFixture(t *testing.T, closedPorts int) outputLifecycleFix
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           filepath.Join(dir, "out.csv"),
-		Timeout:          50 * time.Millisecond,
-		BucketRate:       1000,
-		BucketCapacity:   1000,
-		Workers:          1,
-		PressureInterval: 10 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(dir, "out.csv"),
+		Timeout:        50 * time.Millisecond,
+		BucketRate:     1000,
+		BucketCapacity: 1000,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	bucketFile := generateBucketFile(t, cfg, filepath.Join(dir, "buckets.json"), "")
 	cfg.Resume = bucketFile

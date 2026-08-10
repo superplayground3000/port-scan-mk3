@@ -1,5 +1,9 @@
 # Pre-Scan Ping Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 ## Summary
 
 Add a default-on pre-scan ping phase before TCP task planning and dispatch.

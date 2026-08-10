@@ -11,35 +11,35 @@ type testScanConfiguration struct {
 	values config.ScanValues
 }
 
-// scanConfigFixture is a package-local builder input for workflow tests. It
-// keeps test setup concise while production callers use config.ScanValues.
+// pressureConfigFixture contains only the pressure policy for a scan test.
+type pressureConfigFixture struct {
+	API          string
+	Interval     time.Duration
+	Disabled     bool
+	AuthURL      string
+	DataURLs     []string
+	ClientID     string
+	ClientSecret string
+	UseAuth      bool
+}
+
+// scanConfigFixture contains only values for the scan workflow.
 type scanConfigFixture struct {
-	CIDRFile             string
-	CIDRIPCol            string
-	CIDRIPCidrCol        string
-	PortFile             string
-	Output               string
-	Timeout              time.Duration
-	Delay                time.Duration
-	BucketRate           int
-	BucketCapacity       int
-	Workers              int
-	PressureAPI          string
-	PressureInterval     time.Duration
-	DisableAPI           bool
-	PressureAuthURL      string
-	PressureDataURLs     []string
-	PressureClientID     string
-	PressureClientSecret string
-	PressureUseAuth      bool
-	PreScanPingTimeout   time.Duration
-	Resume               string
-	LogLevel             string
-	Format               string
-	Quiet                bool
-	BucketsOut           string
-	UnreachableFile      string
-	ProgressInterval     int
+	CIDRFile       string
+	CIDRIPCol      string
+	CIDRIPCidrCol  string
+	PortFile       string
+	Output         string
+	Timeout        time.Duration
+	Delay          time.Duration
+	BucketRate     int
+	BucketCapacity int
+	Workers        int
+	Pressure       pressureConfigFixture
+	Resume         string
+	LogLevel       string
+	Format         string
+	Quiet          bool
 }
 
 func (c testScanConfiguration) Resolve() (config.ScanValues, error) {
@@ -49,7 +49,7 @@ func (c testScanConfiguration) Resolve() (config.ScanValues, error) {
 func scanConfigurationFromFixture(t *testing.T, fixture scanConfigFixture) testScanConfiguration {
 	t.Helper()
 
-	interval := fixture.PressureInterval
+	interval := fixture.Pressure.Interval
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
@@ -58,18 +58,18 @@ func scanConfigurationFromFixture(t *testing.T, fixture scanConfigFixture) testS
 		err    error
 	)
 	switch {
-	case fixture.DisableAPI:
+	case fixture.Pressure.Disabled:
 		policy = config.PressureDisabled()
-	case fixture.PressureUseAuth:
+	case fixture.Pressure.UseAuth:
 		policy, err = config.AuthenticatedPressure(
-			fixture.PressureAuthURL,
-			fixture.PressureDataURLs,
-			fixture.PressureClientID,
-			fixture.PressureClientSecret,
+			fixture.Pressure.AuthURL,
+			fixture.Pressure.DataURLs,
+			fixture.Pressure.ClientID,
+			fixture.Pressure.ClientSecret,
 			interval,
 		)
 	default:
-		endpoint := fixture.PressureAPI
+		endpoint := fixture.Pressure.API
 		if endpoint == "" {
 			endpoint = "http://localhost:8080/api/pressure"
 		}

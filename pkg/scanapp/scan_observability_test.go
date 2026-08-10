@@ -56,12 +56,12 @@ type scriptedPressureResult struct {
 	err      error
 }
 
-type scriptedPressureFetcher struct {
+type scriptedPressureSource struct {
 	mu      sync.Mutex
 	results []scriptedPressureResult
 }
 
-func (f *scriptedPressureFetcher) Sample(context.Context) (pressure.Sample, error) {
+func (f *scriptedPressureSource) Sample(context.Context) (pressure.Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -81,12 +81,12 @@ type scriptedSourcePressureResult struct {
 	err      error
 }
 
-type scriptedSourcePressureFetcher struct {
+type scriptedMultiPressureSource struct {
 	mu      sync.Mutex
 	results []scriptedSourcePressureResult
 }
 
-func (f *scriptedSourcePressureFetcher) Sample(context.Context) (pressure.Sample, error) {
+func (f *scriptedMultiPressureSource) Sample(context.Context) (pressure.Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -156,19 +156,17 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "info",
-		Format:             "json",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -210,19 +208,17 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "info",
-		Format:             "json",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 
 	stderr := &bytes.Buffer{}
@@ -258,19 +254,17 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "info",
-		Format:             "json",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -310,19 +304,17 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              10 * time.Millisecond,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   10 * time.Millisecond,
-		DisableAPI:         false,
-		LogLevel:           "error",
-		Format:             "human",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          10 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Interval: 10 * time.Millisecond},
+		LogLevel:       "error",
+		Format:         "human",
 	}
 
 	recorder := &dashboardSnapshotRecorder{}
@@ -334,7 +326,7 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 			return nil, errors.New("dial refused for test")
 		},
 		PressureLimit: 90,
-		PressureSource: &scriptedSourcePressureFetcher{results: []scriptedSourcePressureResult{
+		PressureSource: &scriptedMultiPressureSource{results: []scriptedSourcePressureResult{
 			{
 				pressure: 95,
 				sources: []pressure.SourceResult{
@@ -462,20 +454,18 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   10 * time.Millisecond,
-		DisableAPI:         true,
-		Resume:             resumeFile,
-		LogLevel:           "error",
-		Format:             "human",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
+		Format:         "human",
 	}
 
 	firstSnapshotSeen := make(chan struct{})
@@ -530,9 +520,8 @@ func TestPollPressureAPI_WhenJSONLoggerEnabled_EmitsPauseResumeMessages(t *testi
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", true, logOut)
-	poller := startTestPressurePoller(t, scanConfigFixture{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 5 * time.Millisecond},
 	}, RunOptions{
 		PressureLimit: 90,
 	}, ctrl, logger)
@@ -576,11 +565,11 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	boom1 := errors.New("boom-1")
 	boom2 := errors.New("boom-2")
 
-	poller := startTestPressurePoller(t, scanConfigFixture{
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{Interval: 5 * time.Millisecond},
 	}, RunOptions{
 		PressureLimit:      90,
-		PressureSource:     &scriptedPressureFetcher{results: []scriptedPressureResult{{err: boom1}, {err: boom2}, {pressure: 42}}},
+		PressureSource:     &scriptedPressureSource{results: []scriptedPressureResult{{err: boom1}, {err: boom2}, {pressure: 42}}},
 		pressureObserver:   observer,
 		controllerObserver: controllerObserver,
 	}, ctrl, logger)

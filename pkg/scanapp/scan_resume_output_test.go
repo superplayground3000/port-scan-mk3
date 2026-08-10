@@ -94,15 +94,14 @@ func newInterruptibleScanConfig(t *testing.T) (scanConfigFixture, string, string
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       1000,
-		BucketCapacity:   1000,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     1000,
+		BucketCapacity: 1000,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, "")
 	cfg.Resume = bucketsFile

@@ -1,5 +1,9 @@
 # Configurable Pre-Scan Ping Timeout — Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 **Date:** 2026-06-30
 **Status:** Approved
 

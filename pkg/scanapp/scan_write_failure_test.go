@@ -114,16 +114,15 @@ func newTwoChunkWriteFailureConfig(t *testing.T) (scanConfigFixture, string) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           filepath.Join(tmp, "out.csv"),
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          2,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        2,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	return cfg, tmp

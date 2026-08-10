@@ -3,16 +3,24 @@
 This document is the complete CLI flag reference for `port-scan-mk3`. It comes
 from the current parser behavior in:
 
-- `pkg/config/parse_for.go` (`ParseFor`, per-subcommand flag registration)
+- `pkg/config/pre_ping.go` (`ParsePrePing`)
+- `pkg/config/generate_buckets.go` (`ParseGenerateBuckets`)
+- `pkg/config/scan_config.go` (`ParseScan`)
+- `pkg/config/validate_config.go` (`ParseValidate`)
 - `cmd/port-scan/main.go` and `cmd/port-scan/command_handlers.go` (dispatch, usage)
 
 ## Command Scope
 
-`port-scan` is a three-step pipeline plus a `validate` helper. **Each subcommand
-registers only the flags it owns** (`ParseFor(command, args)`). A flag that a
-subcommand does not register is an unknown-flag error (exit `2`). This structure
-makes "`scan` never pings" a property of the code, not a convention — `scan` does
-not register `-disable-pre-scan-ping` or `-pre-scan-ping-timeout` at all.
+`port-scan` is a three-step pipeline plus a `validate` helper. The three
+pipeline commands register only their workflow flags. An unregistered flag is
+an unknown-flag error (exit `2`).
+
+`validate` is a compatibility exception. It accepts and verifies all 24 flags
+from the removed shared parser. It discards values that input validation does
+not use.
+
+This structure makes "`scan` never pings" a property of the code. `scan` does
+not register `-disable-pre-scan-ping` or `-pre-scan-ping-timeout`.
 
 | Subcommand | Purpose | Required flags |
 |------------|---------|----------------|
@@ -89,9 +97,23 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 
 ### `port-scan validate`
 
-`-cidr-file` (required) · `-port-file` (optional) · `-cidr-ip-col` ·
-`-cidr-ip-cidr-col` · `-format` · `-log-level` · `-quiet`. The command parses and
-validates the inputs only. It never scans and never pings.
+The command uses these values: `-cidr-file` (required), `-port-file` (optional),
+`-cidr-ip-col`, `-cidr-ip-cidr-col`, and `-format`.
+
+For compatibility, it also accepts and verifies these values:
+
+- `-workers`, `-bucket-rate`, and `-bucket-capacity`
+- `-pressure-interval`, `-pressure-auth-url`, and `-pressure-data-url`
+- `-pressure-client-id`, `-pressure-client-secret`, and `-pressure-use-auth`
+- `-pre-scan-ping-timeout`
+
+It accepts and discards these values after flag parsing:
+
+- `-output`, `-timeout`, `-delay`, and `-resume`
+- `-pressure-api`, `-disable-api`, and `-disable-pre-scan-ping`
+- `-log-level` and `-quiet`
+
+The command validates input files only. It never scans and never pings.
 
 ## Interaction Rules and Behavior Notes
 

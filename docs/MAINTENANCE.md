@@ -364,10 +364,9 @@ them:
   disagree with the code. The fix compares `filepath.ToSlash(got)` against the
   literal expectation, which keeps an independent source of truth.
 - The `/tmp/resume_state.json` expectation was **only in the test**. Production
-  was already portable — `defaultResumeStateFile` is a bare filename
-  (`pkg/scanapp/scan.go:19`) joined via `filepath.Join`
-  (`pkg/scanapp/resume_path.go:20`). The earlier advice to make production
-  `os.TempDir()`-based changes working code for no reason.
+  was already portable. The current scan configuration supplies the required
+  snapshot path, and the runtime uses that exact path. The earlier advice to
+  use `os.TempDir()` changed working code for no reason.
 - `TestEnsureFDLimit_WhenWorkersExceedLimit_ReturnsError` relies on Unix
   `RLIMIT_NOFILE`. **Do not fix this with `t.Skip` on Windows** (the earlier
   advice here): a skip deletes the contract instead of a test of it. The fix

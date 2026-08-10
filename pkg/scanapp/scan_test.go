@@ -193,19 +193,17 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		Resume:             resumeFile,
-		LogLevel:           "error",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
@@ -239,17 +237,16 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       1,
-		BucketCapacity:   1,
-		Workers:          1,
-		PressureInterval: 5 * time.Millisecond,
-		DisableAPI:       false,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     1,
+		BucketCapacity: 1,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Interval: 5 * time.Millisecond},
+		LogLevel:       "error",
 	}
 	// Scan uses the bucket file as both the input and the resume snapshot.
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
@@ -312,18 +309,17 @@ func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *
 
 	checker := &fakeRunReachabilityChecker{}
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
 	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
@@ -394,18 +390,17 @@ func TestRun_WhenResumeSnapshotPreScanStateAndContextCanceled_AbortsWithoutWriti
 	dialCount := 0
 	checker := &fakeRunReachabilityChecker{}
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
 	err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
@@ -467,17 +462,16 @@ func TestRun_WhenResumeReusesChunksAndBroadcastExclusionChangesTotal_FailsWithCl
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           filepath.Join(tmp, "out.csv"),
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
 	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
@@ -522,17 +516,16 @@ func TestRun_WhenResumeCIDRIsEntirelyBroadcast_FailsWithClearError(t *testing.T)
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           filepath.Join(tmp, "out.csv"),
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
 	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
@@ -568,17 +561,16 @@ func TestRun_WhenAllTargetsBlocklisted_SucceedsWithHeaderOnlyScanOutputs(t *test
 
 	dialCount := 0
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
@@ -639,16 +631,15 @@ func TestRun_WhenRichAllTargetsBlocklisted_SucceedsWithoutDispatchingTCP(t *test
 
 	dialCount := 0
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
@@ -771,9 +762,8 @@ func TestPollPressureAPI_WhenPressureCrossesThreshold_TogglesPauseAndLogsTransit
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	poller := startTestPressurePoller(t, scanConfigFixture{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 5 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, logger)
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -934,18 +924,16 @@ func TestRun_WhenIPColumnListsSubset_ScansOnlyListedIPs(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
@@ -1000,20 +988,18 @@ func TestRun_WhenCIDRColumnNamesBlank_UsesDefaultInputColumns(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		CIDRIPCol:          "",
-		CIDRIPCidrCol:      "",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
+		CIDRIPCol:      "",
+		CIDRIPCidrCol:  "",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
@@ -1064,18 +1050,16 @@ func TestRun_WhenScanCompletes_WritesOpenRecordsToOpenedResultsCSV(t *testing.T)
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		PreScanPingTimeout: 100 * time.Millisecond,
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
@@ -1130,17 +1114,16 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	before, err := os.ReadFile(cfg.Resume)
@@ -1175,18 +1158,17 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          50 * time.Millisecond,
-		Delay:            5 * time.Millisecond,
-		BucketRate:       1,
-		BucketCapacity:   1,
-		Workers:          1,
-		PressureInterval: 10 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "info",
-		Format:           "json",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          5 * time.Millisecond,
+		BucketRate:     1,
+		BucketCapacity: 1,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
@@ -1259,17 +1241,16 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          50 * time.Millisecond,
-		Delay:            10 * time.Millisecond,
-		BucketRate:       2,
-		BucketCapacity:   2,
-		Workers:          2,
-		PressureInterval: 10 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          10 * time.Millisecond,
+		BucketRate:     2,
+		BucketCapacity: 2,
+		Workers:        2,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 
 	// Cancel on an observed event rather than after a fixed sleep: the first

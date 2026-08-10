@@ -629,9 +629,8 @@ func TestPollPressureAPI_WhenFirstTwoRequestsFail_DoesNotReturnFatalError(t *tes
 	ctrl.SetAPIPaused(true)
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	poller := startTestPressurePoller(t, scanConfigFixture{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 5 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, logger)
 
 	for range 2 {

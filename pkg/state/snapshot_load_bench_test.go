@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	benchmarkSnapshotChunks     = 4000
-	benchmarkUnreachableIPv4U32 = 42587
+	benchmarkSnapshotChunks       = 4000
+	benchmarkUnreachableIPv4Count = 42587
 )
 
 func benchmarkChunks() []task.Chunk {
@@ -32,7 +32,7 @@ func benchmarkChunks() []task.Chunk {
 }
 
 func benchmarkUnreachableIPv4() []uint32 {
-	values := make([]uint32, benchmarkUnreachableIPv4U32)
+	values := make([]uint32, benchmarkUnreachableIPv4Count)
 	for i := range values {
 		values[i] = uint32(i + 1)
 	}
