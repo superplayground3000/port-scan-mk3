@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
@@ -12,25 +11,34 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
-// RunPrePing runs the standalone pre-scan ping phase. It loads the target
-// inputs. It pings every unique target IP concurrently (cfg.Workers,
-// cfg.PreScanPingTimeout). It reports percentage progress over the unique-IP
-// count to stderr. It writes the fixed-schema unreachable_results-<ts>.csv into
-// the -output directory. It then prints the resolved output path to stdout, so
-// a caller can chain the file into generate-buckets.
+// PrePingConfiguration supplies validated values to the pre-ping workflow.
+type PrePingConfiguration interface {
+	Resolve() (config.PrePingValues, error)
+}
+
+// RunPrePing runs the standalone pre-ping phase. It resolves the configuration
+// before file, process, or network work. It loads the target input and pings
+// each unique IP. It writes the fixed unreachable-results CSV schema to the
+// output directory. It writes the resolved path to stdout for the next stage.
 //
 // RunPrePing builds no chunk, writes no snapshot, and scans no port. Its
-// signature is the same as the signature of Run, so the CLI wiring can dispatch
-// either entry point in the same way. A test injects a ReachabilityChecker
-// through opts.ReachabilityChecker.
-func RunPrePing(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, opts RunOptions) error {
+// caller can supply a ReachabilityChecker through opts.ReachabilityChecker.
+func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout, stderr io.Writer, opts RunOptions) error {
+	values, err := configuration.Resolve()
+	if err != nil {
+		return fmt.Errorf("resolve pre-ping configuration: %w", err)
+	}
+	cfg := config.Config{
+		CIDRFile:           values.CIDRFile,
+		CIDRIPCol:          values.CIDRIPCol,
+		CIDRIPCidrCol:      values.CIDRIPCidrCol,
+		Output:             values.Output,
+		Workers:            values.Workers,
+		PreScanPingTimeout: values.PingTimeout,
+		ProgressInterval:   values.ProgressInterval,
+	}
+
 	deps := defaultRunDependencies()
-	if strings.TrimSpace(cfg.CIDRIPCol) == "" {
-		cfg.CIDRIPCol = "ip"
-	}
-	if strings.TrimSpace(cfg.CIDRIPCidrCol) == "" {
-		cfg.CIDRIPCidrCol = "ip_cidr"
-	}
 
 	if err := ctx.Err(); err != nil {
 		return err

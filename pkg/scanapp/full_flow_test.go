@@ -98,7 +98,15 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	// by our fixture rather than by whether ICMP works on the CI runner.
 	prepCfg := baseCfg
 	var prepStdout, prepStderr bytes.Buffer
-	prepErr := RunPrePing(context.Background(), prepCfg, &prepStdout, &prepStderr, RunOptions{
+	prepErr := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:         prepCfg.CIDRFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		Output:           prepCfg.Output,
+		Workers:          prepCfg.Workers,
+		PingTimeout:      prepCfg.PreScanPingTimeout,
+		ProgressInterval: prepCfg.ProgressInterval,
+	}), &prepStdout, &prepStderr, RunOptions{
 		ReachabilityChecker: fullFlowChecker{unreachable: map[string]bool{unreachableIP: true}},
 	})
 	if prepErr != nil {
