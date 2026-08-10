@@ -69,7 +69,7 @@ func handlePrePingCommand(args []string, stdout, stderr io.Writer) int {
 // It performs no network I/O. Exit codes: parse error (including missing
 // -buckets-out) → 2, SIGINT/cancel → 130, any other error → 1.
 func handleGenerateBucketsCommand(args []string, stdout, stderr io.Writer) int {
-	cfg, err := config.ParseFor("generate-buckets", args)
+	cfg, err := config.ParseGenerateBuckets(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2

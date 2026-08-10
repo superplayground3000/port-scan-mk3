@@ -7,9 +7,10 @@
 As of **2.0.0**, `port-scan` is a three-step pipeline. Each subcommand calls a
 dedicated `pkg/scanapp` entry point. The pre-ping command uses
 `config.ParsePrePing`, which returns an opaque `config.PrePingConfig` value.
-The other commands still use the legacy configuration functions during the
-active configuration migration. Durable files connect the three stages.
-The `scan` command is a pure scanner that consumes a bucket snapshot.
+The bucket command uses `config.ParseGenerateBuckets`, which returns an opaque
+`config.GenerateBucketsConfig` value. The other commands still use legacy
+configuration functions during the active migration. Durable files connect
+the three stages. The `scan` command only consumes a bucket snapshot.
 
 ```
 CLI entry point (main.go)
@@ -25,10 +26,11 @@ CLI entry point (main.go)
     │           └── writer.UnreachableWriter → unreachable_results-<ts>.csv (path → stdout)
     │
     ├── handleGenerateBucketsCommand
-    │       ParseFor("generate-buckets") → scanapp.GenerateBuckets()
+    │       config.ParseGenerateBuckets() → config.GenerateBucketsConfig
+    │           └── scanapp.GenerateBuckets(GenerateBucketsConfiguration)
     │           ├── load records + ports; parse -unreachable-file blocklist
     │           ├── subtract blocklist; group per CIDR; build chunks (parallel over -workers)
-    │           ├── stamp pre_scan_ping.enabled=true
+    │           ├── stamp pre_scan_ping.enabled=true and timeout_ms=0
     │           └── state.SaveSnapshot(-buckets-out)   (== resume Snapshot JSON)
     │
     └── handleScanCommand → runScan
@@ -62,6 +64,20 @@ network work. `config.PrePingConfig` implements the interface.
 `config.NewPrePing` gives tests and non-CLI callers the same input rules as the
 parser. An uninitialized `config.PrePingConfig` returns
 `config.ErrUninitializedConfiguration`.
+
+### Bucket generation configuration
+
+`scanapp.GenerateBuckets` accepts the consumer-owned
+`GenerateBucketsConfiguration` interface. The workflow resolves this
+interface before it reads or writes files. `config.GenerateBucketsConfig`
+implements the interface.
+
+`config.NewGenerateBuckets` gives tests and non-CLI callers the same input
+rules as the parser. An uninitialized `config.GenerateBucketsConfig` returns
+`config.ErrUninitializedConfiguration`.
+
+The bucket configuration does not contain a pre-ping timeout. Bucket
+generation writes `timeout_ms=0` as explicit snapshot metadata.
 
 ### Stage 1: Input Loading (`input_loader.go`)
 

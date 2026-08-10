@@ -48,15 +48,16 @@ func writeUnreachableCSV(t *testing.T, dir string, ips ...string) string {
 	return path
 }
 
-func bucketConfig(cidrFile, blocklist, bucketsOut string, workers int) config.Config {
-	return config.Config{
-		CIDRFile:        cidrFile,
-		UnreachableFile: blocklist,
-		BucketsOut:      bucketsOut,
-		Workers:         workers,
-		CIDRIPCol:       "ip",
-		CIDRIPCidrCol:   "ip_cidr",
-	}
+func bucketConfig(t *testing.T, cidrFile, blocklist, bucketsOut string, workers int) config.GenerateBucketsConfig {
+	t.Helper()
+	return mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		BlocklistFile:  blocklist,
+		SnapshotOutput: bucketsOut,
+		Workers:        workers,
+	})
 }
 
 type spyReporter struct {
@@ -107,7 +108,7 @@ func TestGenerateBuckets_SubtractsBlocklist(t *testing.T) {
 	blocklist := writeUnreachableCSV(t, tmp, "10.0.0.10", "10.2.0.6")
 	out := filepath.Join(tmp, "buckets.json")
 
-	cfg := bucketConfig(cidrFile, blocklist, out, 4)
+	cfg := bucketConfig(t, cidrFile, blocklist, out, 4)
 	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("GenerateBuckets failed: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestGenerateBuckets_NoBlocklist_ScansAll(t *testing.T) {
 	cidrFile := writeRichBucketCSV(t, tmp)
 	out := filepath.Join(tmp, "buckets.json")
 
-	cfg := bucketConfig(cidrFile, "", out, 4)
+	cfg := bucketConfig(t, cidrFile, "", out, 4)
 	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("GenerateBuckets failed: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestGenerateBuckets_StampsEnabledTrue(t *testing.T) {
 	blocklist := writeUnreachableCSV(t, tmp)
 	out := filepath.Join(tmp, "buckets.json")
 
-	cfg := bucketConfig(cidrFile, blocklist, out, 2)
+	cfg := bucketConfig(t, cidrFile, blocklist, out, 2)
 	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("GenerateBuckets failed: %v", err)
 	}
@@ -176,6 +177,9 @@ func TestGenerateBuckets_StampsEnabledTrue(t *testing.T) {
 	if !snap.PreScanPing.Enabled {
 		t.Fatalf("expected Snapshot.PreScanPing.Enabled == true with zero unreachable")
 	}
+	if snap.PreScanPing.TimeoutMS != 0 {
+		t.Fatalf("expected explicit pre-ping timeout metadata 0, got %d", snap.PreScanPing.TimeoutMS)
+	}
 }
 
 func TestGenerateBuckets_Deterministic_AcrossWorkers(t *testing.T) {
@@ -186,8 +190,8 @@ func TestGenerateBuckets_Deterministic_AcrossWorkers(t *testing.T) {
 	out1 := filepath.Join(tmp, "buckets-w1.json")
 	out8 := filepath.Join(tmp, "buckets-w8.json")
 
-	cfg1 := bucketConfig(cidrFile, blocklist, out1, 1)
-	cfg8 := bucketConfig(cidrFile, blocklist, out8, 8)
+	cfg1 := bucketConfig(t, cidrFile, blocklist, out1, 1)
+	cfg8 := bucketConfig(t, cidrFile, blocklist, out8, 8)
 	if err := GenerateBuckets(context.Background(), cfg1, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("workers=1: %v", err)
 	}
@@ -214,7 +218,7 @@ func TestGenerateBuckets_RaceFree(t *testing.T) {
 	blocklist := writeUnreachableCSV(t, tmp, "10.2.0.6")
 	out := filepath.Join(tmp, "buckets.json")
 
-	cfg := bucketConfig(cidrFile, blocklist, out, 32)
+	cfg := bucketConfig(t, cidrFile, blocklist, out, 32)
 	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("GenerateBuckets failed under high worker count: %v", err)
 	}
@@ -229,7 +233,7 @@ func TestGenerateBuckets_ReportsProgressOverGroups(t *testing.T) {
 	out := filepath.Join(tmp, "buckets.json")
 
 	spy := &spyReporter{}
-	cfg := bucketConfig(cidrFile, "", out, 4)
+	cfg := bucketConfig(t, cidrFile, "", out, 4)
 	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{Reporter: spy}); err != nil {
 		t.Fatalf("GenerateBuckets failed: %v", err)
 	}
@@ -248,7 +252,7 @@ func TestGenerateBuckets_SnapshotAcceptedByRuntime(t *testing.T) {
 	blocklist := writeUnreachableCSV(t, tmp, "10.0.0.10", "10.2.0.6")
 	out := filepath.Join(tmp, "buckets.json")
 
-	cfg := bucketConfig(cidrFile, blocklist, out, 8)
+	cfg := bucketConfig(t, cidrFile, blocklist, out, 8)
 	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("GenerateBuckets failed: %v", err)
 	}
@@ -261,12 +265,12 @@ func TestGenerateBuckets_SnapshotAcceptedByRuntime(t *testing.T) {
 	// Re-derive runtimes the SAME way scan does, with the SAME records and the
 	// reachable predicate reconstructed from the snapshot blocklist. This is the
 	// invariant: no total_count mismatch is raised.
-	records, err := readCIDRFile(cfg.CIDRFile, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)
+	records, err := readCIDRFile(cidrFile, "ip", "ip_cidr")
 	if err != nil {
 		t.Fatalf("read records: %v", err)
 	}
 	reachable := reachablePredicate(snap.PreScanPing.UnreachableIPv4U32)
-	if _, err := buildRuntimeWithPredicate(snap.Chunks, records, nil, runtimePolicyFromConfig(cfg), reachable, nil); err != nil {
+	if _, err := buildRuntimeWithPredicate(snap.Chunks, records, nil, runtimePolicyFromConfig(config.Config{}), reachable, nil); err != nil {
 		t.Fatalf("snapshot rejected by runtime (invariant violated): %v", err)
 	}
 }
@@ -305,8 +309,8 @@ func TestGenerateBuckets_Deterministic_LargeFanOut(t *testing.T) {
 	out1 := filepath.Join(tmp, "large-w1.json")
 	out16 := filepath.Join(tmp, "large-w16.json")
 
-	cfg1 := bucketConfig(cidrFile, "", out1, 1)
-	cfg16 := bucketConfig(cidrFile, "", out16, 16)
+	cfg1 := bucketConfig(t, cidrFile, "", out1, 1)
+	cfg16 := bucketConfig(t, cidrFile, "", out16, 16)
 	if err := GenerateBuckets(context.Background(), cfg1, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("workers=1: %v", err)
 	}

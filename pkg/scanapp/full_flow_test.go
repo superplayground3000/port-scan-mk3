@@ -137,9 +137,16 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	// ---------------------------------------------------------------- step 2.
 	// GenerateBuckets consumes step 1's file as the blocklist and writes the
 	// snapshot scan will resume from.
-	genCfg := baseCfg
-	genCfg.BucketsOut = bucketsPath
-	genCfg.UnreachableFile = unreachablePath
+	genCfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:         baseCfg.CIDRFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		PortFile:         baseCfg.PortFile,
+		BlocklistFile:    unreachablePath,
+		SnapshotOutput:   bucketsPath,
+		Workers:          baseCfg.Workers,
+		ProgressInterval: baseCfg.ProgressInterval,
+	})
 	var genStderr bytes.Buffer
 	if err := GenerateBuckets(context.Background(), genCfg, &genStderr, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("step 2 (generate-buckets) failed: %v\nstderr: %s", err, genStderr.String())

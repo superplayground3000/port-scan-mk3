@@ -43,13 +43,28 @@ func (f *failIfCalledChecker) CheckDetailed(_ context.Context, ip string, _ time
 // snapshot unchanged. Returns bucketsOut for convenience.
 func generateBucketFile(t *testing.T, cfg config.Config, bucketsOut, unreachableFile string) string {
 	t.Helper()
-	genCfg := cfg
-	genCfg.Resume = ""
-	genCfg.BucketsOut = bucketsOut
-	genCfg.UnreachableFile = unreachableFile
-	if genCfg.ProgressInterval <= 0 {
-		genCfg.ProgressInterval = 100
+	progressInterval := cfg.ProgressInterval
+	if progressInterval <= 0 {
+		progressInterval = 100
 	}
+	ipColumn := cfg.CIDRIPCol
+	if ipColumn == "" {
+		ipColumn = "ip"
+	}
+	cidrColumn := cfg.CIDRIPCidrCol
+	if cidrColumn == "" {
+		cidrColumn = "ip_cidr"
+	}
+	genCfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:         cfg.CIDRFile,
+		CIDRIPCol:        ipColumn,
+		CIDRIPCidrCol:    cidrColumn,
+		PortFile:         cfg.PortFile,
+		BlocklistFile:    unreachableFile,
+		SnapshotOutput:   bucketsOut,
+		Workers:          cfg.Workers,
+		ProgressInterval: progressInterval,
+	})
 	if err := GenerateBuckets(context.Background(), genCfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("generate buckets: %v", err)
 	}

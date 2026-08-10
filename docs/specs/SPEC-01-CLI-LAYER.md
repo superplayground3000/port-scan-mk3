@@ -80,7 +80,8 @@ func handlePrePingCommand(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse via `config.ParseFor("pre-ping", args)` (rejects scan/bucket flags)
+1. Parse via `config.ParsePrePing(args)`, which returns an opaque
+   `config.PrePingConfig` value
 2. Wrap context with `state.WithSIGINTCancel(ctx)`
 3. Call `scanapp.RunPrePing(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`,
    which writes `unreachable_results-<ts>.csv` and prints its resolved path to
@@ -94,10 +95,11 @@ func handleGenerateBucketsCommand(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse via `config.ParseFor("generate-buckets", args)` (requires `-buckets-out`)
+1. Parse via `config.ParseGenerateBuckets(args)`, which requires
+   `-buckets-out` and returns an opaque `config.GenerateBucketsConfig` value
 2. Wrap context with `state.WithSIGINTCancel(ctx)`
-3. Call `scanapp.GenerateBuckets(ctx, cfg, stderr, scanapp.GenerateBucketsOptions{})`;
-   performs no network I/O
+3. Call `scanapp.GenerateBuckets(ctx, cfg, stderr, scanapp.GenerateBucketsOptions{})`.
+   The function performs no network I/O.
 4. Map errors to exit codes (parse / missing `-buckets-out` → 2, cancel → 130,
    else → 1)
 
