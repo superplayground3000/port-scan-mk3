@@ -41,7 +41,7 @@ func (f *failIfCalledChecker) CheckDetailed(_ context.Context, ip string, _ time
 // bucketsOut over cfg's inputs minus the optional unreachableFile blocklist. It
 // guarantees the total_count invariant scan re-derives, so scan accepts the
 // snapshot unchanged. Returns bucketsOut for convenience.
-func generateBucketFile(t *testing.T, cfg config.Config, bucketsOut, unreachableFile string) string {
+func generateBucketFile(t *testing.T, cfg scanConfigFixture, bucketsOut, unreachableFile string) string {
 	t.Helper()
 	progressInterval := cfg.ProgressInterval
 	if progressInterval <= 0 {
@@ -119,7 +119,7 @@ func TestRun_RequiresResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:         cidrFile,
 		PortFile:         portFile,
 		Output:           outFile,
@@ -133,7 +133,7 @@ func TestRun_RequiresResume(t *testing.T) {
 		// Resume intentionally empty.
 	}
 
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true})
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true})
 	if err == nil {
 		t.Fatal("expected error when -resume is missing, got nil")
 	}
@@ -160,7 +160,7 @@ func TestRun_NeverConstructsChecker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:         cidrFile,
 		PortFile:         portFile,
 		Output:           outFile,
@@ -176,7 +176,7 @@ func TestRun_NeverConstructsChecker(t *testing.T) {
 	cfg.Resume = bucketsFile
 
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		ReachabilityChecker: spy,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
@@ -222,7 +222,7 @@ func TestRun_ProducesEnrichedRowsFromRichCSVAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:         cidrFile,
 		Output:           outFile,
 		Timeout:          20 * time.Millisecond,
@@ -236,7 +236,7 @@ func TestRun_ProducesEnrichedRowsFromRichCSVAndSnapshot(t *testing.T) {
 	generateBucketFile(t, cfg, bucketsFile, unreachableFile)
 	cfg.Resume = bucketsFile
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {
@@ -279,7 +279,7 @@ func TestRun_BasicResumeWithoutPortFile_Succeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:         cidrFile,
 		PortFile:         portFile, // needed to BUILD the bucket (basic mode)
 		Output:           outFile,
@@ -296,7 +296,7 @@ func TestRun_BasicResumeWithoutPortFile_Succeeds(t *testing.T) {
 	// Now scan WITHOUT a port file — the chunks carry the ports.
 	cfg.Resume = bucketsFile
 	cfg.PortFile = ""
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {
@@ -324,7 +324,7 @@ func TestRun_DoesNotWriteUnreachableCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:         cidrFile,
 		PortFile:         portFile,
 		Output:           outFile,
@@ -339,7 +339,7 @@ func TestRun_DoesNotWriteUnreachableCSV(t *testing.T) {
 	generateBucketFile(t, cfg, bucketsFile, "")
 	cfg.Resume = bucketsFile
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {

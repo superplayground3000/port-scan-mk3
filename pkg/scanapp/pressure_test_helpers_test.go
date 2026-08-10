@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
@@ -79,7 +78,7 @@ type testPressurePoller struct {
 	once   sync.Once
 }
 
-func startTestPressurePoller(t *testing.T, cfg config.Config, opts RunOptions, ctrl *speedctrl.Controller, logger *scanLogger) *testPressurePoller {
+func startTestPressurePoller(t *testing.T, cfg scanConfigFixture, opts RunOptions, ctrl *speedctrl.Controller, logger *scanLogger) *testPressurePoller {
 	t.Helper()
 	if opts.PressureSource == nil {
 		source, err := pressure.NewSimpleHTTP(cfg.PressureAPI, &http.Client{Timeout: 2 * time.Second})

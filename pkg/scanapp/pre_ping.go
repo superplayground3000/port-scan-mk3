@@ -28,29 +28,19 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 	if err != nil {
 		return fmt.Errorf("resolve pre-ping configuration: %w", err)
 	}
-	cfg := config.Config{
-		CIDRFile:           values.CIDRFile,
-		CIDRIPCol:          values.CIDRIPCol,
-		CIDRIPCidrCol:      values.CIDRIPCidrCol,
-		Output:             values.Output,
-		Workers:            values.Workers,
-		PreScanPingTimeout: values.PingTimeout,
-		ProgressInterval:   values.ProgressInterval,
-	}
-
 	deps := defaultRunDependencies()
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	inputs, err := loadPrePingInputs(cfg, deps)
+	inputs, err := loadPrePingInputs(values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, deps)
 	if err != nil {
 		return err
 	}
 
 	now := time.Now()
-	outputPaths, err := resolveRunOutputPaths(cfg, deps, now)
+	outputPaths, err := resolveRunOutputPaths(values.Output, deps, now)
 	if err != nil {
 		return err
 	}
@@ -60,15 +50,15 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 		return err
 	}
 
-	timeout := cfg.PreScanPingTimeout
+	timeout := values.PingTimeout
 	reason := fmt.Sprintf("ping failed within %s", timeout)
 
-	reporter := progress.New("pre-ping", len(uniqueIPs), cfg.ProgressInterval, stderr)
+	reporter := progress.New("pre-ping", len(uniqueIPs), values.ProgressInterval, stderr)
 	unreachable, err := runReachabilityChecksWithProgress(
 		ctx,
 		resolvePrePingChecker(opts),
 		uniqueIPs,
-		cfg.Workers,
+		values.Workers,
 		timeout,
 		reporter.Inc,
 	)

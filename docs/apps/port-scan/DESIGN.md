@@ -4,7 +4,7 @@
 
 ## Architecture Overview
 
-As of **2.0.0**, `port-scan` is a three-step pipeline. Each subcommand calls a
+As of **4.0.0**, `port-scan` is a three-step pipeline. Each subcommand calls a
 dedicated `pkg/scanapp` entry point. The pre-ping command uses
 `config.ParsePrePing`, which returns an opaque `config.PrePingConfig` value.
 The bucket command uses `config.ParseGenerateBuckets`, which returns an opaque
@@ -126,12 +126,19 @@ The runtime accepts the existing dial, pressure, terminal, renderer, and
 output-fault adapters. It does not add interfaces for the dispatcher,
 executor, filesystem, result loop, or output session.
 
+`RunOptions` contains only optional runtime seams. `Dial` replaces TCP dialing.
+`PressureSource` replaces pressure sampling. `ReachabilityChecker` applies only
+to pre-ping. `PressureLimit`, `DisableKeyboard`, and `ProgressInterval` adjust
+runtime control without adding CLI flags.
+
 ### Stage 1: Input Loading (`input_loader.go`)
 
-`loadRunInputs(cfg, deps)` returns `runInputs{cidrRecords, portSpecs}`.
+`loadRunInputs(inputConfiguration, deps)` returns
+`runInputs{cidrRecords, portSpecs}`. `inputConfiguration` is private and
+contains only paths, column names, and the missing-port rule.
 
-1. `readCIDRFile(cfg.CIDRFile)` → `input.LoadCIDRsWithColumns()` — auto-detects basic vs rich mode
-2. `readPortFile(cfg.PortFile)` → `input.LoadPorts()` (if port file provided)
+1. `readCIDRFile(cidrFile)` → `input.LoadCIDRsWithColumns()` — auto-detects basic or rich mode
+2. `readPortFile(portFile)` → `input.LoadPorts()` when a port file is present
 
 ### Stage 2: Plan Building (`runtime_builder.go`, `group_builder.go`, `chunk_lifecycle.go`)
 

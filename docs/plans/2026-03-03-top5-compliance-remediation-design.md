@@ -1,5 +1,9 @@
 # Top 5 Compliance Remediation Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 Date: 2026-03-03
 Feature: 001-enhance-input-parser
 

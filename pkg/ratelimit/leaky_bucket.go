@@ -71,9 +71,9 @@ type LeakyBucket struct {
 // MaxCapacity. A rate of 0 or less becomes 1, and a rate of more than MaxRate
 // becomes MaxRate. The clamp keeps this function total, because its callers
 // already depend on that. Command-line input is a separate matter:
-// config.ParseFor rejects out-of-range -bucket-rate and -bucket-capacity values
-// with an actionable error, and does not clamp them silently. These constants
-// are the range that config.ParseFor enforces.
+// config.ParseScan rejects out-of-range -bucket-rate and -bucket-capacity
+// values with an actionable error. It does not clamp them silently. These
+// constants are the range that config.ParseScan enforces.
 //
 // # Parameters
 //

@@ -299,7 +299,6 @@ pkg/scanapp/
 ├── dispatch_observer.go       # Dispatch events
 ├── pressure_monitor.go        # Pressure API polling
 ├── pressure_source.go         # Validated policy to pressure adapter
-├── pressure.go                # Legacy adapters retained during migration
 ├── dashboard_state.go         # Dashboard state management
 ├── dashboard_renderer.go      # ANSI rendering
 ├── dashboard_runtime.go       # Lifecycle management

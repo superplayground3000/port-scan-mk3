@@ -1,5 +1,9 @@
 # Implementation Plan: Split Preping and Port Scan (Test-First)
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 - **Date:** 2026-07-22
 - **Design:** `docs/plans/2026-07-22-split-preping-and-port-scan-design.md`
 - **Request:** `docs/requests/split-preping-and-port-scan.md`

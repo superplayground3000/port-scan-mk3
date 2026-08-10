@@ -1,5 +1,9 @@
 # Robustness, E2E Enhancement, and Maintainability Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 **Date:** 2026-03-17
 **Approach:** Incremental Fix-First (Approach A)
 **Constitution:** v1.2.0 compliance required

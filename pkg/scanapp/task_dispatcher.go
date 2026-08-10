@@ -5,20 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
 
 type dispatchPolicy struct {
 	delay    time.Duration
 	observer dispatchObserver
-}
-
-func dispatchPolicyFromConfig(cfg config.Config) dispatchPolicy {
-	return dispatchPolicy{
-		delay:    cfg.Delay,
-		observer: noopDispatchObserver{},
-	}
 }
 
 // dispatchTasks iterates over runtimes and dispatches scan tasks through taskCh.

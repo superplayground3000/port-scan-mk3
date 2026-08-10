@@ -1,5 +1,9 @@
 # Speed Control Testing Framework Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 **Date:** 2026-03-18
 **Approach:** Hybrid Verification (Deterministic Integration + Scenario E2E + Explainable Report)
 **Constitution:** v1.2.0 compliance required

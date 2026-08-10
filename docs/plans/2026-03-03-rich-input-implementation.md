@@ -1,5 +1,9 @@
 # Rich Input Parsing and Pipeline Mapping Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Support rich CIDR input rows with 10 required fields, row-level validation summary, execution-key dedup mapping, and writer contract preservation.

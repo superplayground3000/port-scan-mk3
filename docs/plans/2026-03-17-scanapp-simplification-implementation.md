@@ -1,5 +1,9 @@
 # Scanapp Simplification Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Reduce orchestration complexity in `pkg/scanapp` and `cmd/port-scan` without changing CLI contracts, while aligning the runtime structure with the constitution's SOLID and TDD requirements.

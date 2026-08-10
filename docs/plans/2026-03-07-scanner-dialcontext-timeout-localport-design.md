@@ -1,5 +1,9 @@
 # Scanner DialContext + Local Ephemeral Port Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 背景
 
 目前 `pkg/scanner/ScanTCP` 依賴 `net.DialTimeout` 風格的注入函式（`dial(network, address, timeout)`），而 `pkg/scanapp` 預設也是使用 `net.DialTimeout`。新需求是改為使用 `net.Dialer` + `DialContext`，並且：

@@ -33,7 +33,7 @@ func TestRun_AfterWriteFailure_ResumeCoversEveryTarget(t *testing.T) {
 	}
 
 	// The third record write stops run 1.
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		batchOutputsOpener: failingScanWriterOpener(3),
@@ -43,7 +43,7 @@ func TestRun_AfterWriteFailure_ResumeCoversEveryTarget(t *testing.T) {
 	}
 
 	// Run 2 uses the corrected snapshot from the first run.
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            refusingDial,
 	}); err != nil {

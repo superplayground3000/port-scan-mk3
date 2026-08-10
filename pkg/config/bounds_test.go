@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -22,16 +23,32 @@ func baseArgs(command string, extra ...string) []string {
 	return append(args, extra...)
 }
 
-func TestParseFor_RejectsOutOfRangeWorkers(t *testing.T) {
+func parseCommand(command string, args []string) error {
+	switch command {
+	case "pre-ping":
+		_, err := ParsePrePing(args)
+		return err
+	case "generate-buckets":
+		_, err := ParseGenerateBuckets(args)
+		return err
+	case "scan":
+		_, err := ParseScan(args)
+		return err
+	default:
+		return fmt.Errorf("unknown command: %s", command)
+	}
+}
+
+func TestCommandParsers_RejectOutOfRangeWorkers(t *testing.T) {
 	maxInt := strconv.Itoa(math.MaxInt)
 	overCeiling := strconv.Itoa(MaxWorkers + 1)
 
 	for _, command := range []string{"pre-ping", "generate-buckets", "scan"} {
 		for _, value := range []string{"0", "-1", maxInt, overCeiling} {
 			t.Run(command+"/"+value, func(t *testing.T) {
-				_, err := ParseFor(command, baseArgs(command, "-workers", value))
+				err := parseCommand(command, baseArgs(command, "-workers", value))
 				if err == nil {
-					t.Fatalf("ParseFor(%q, -workers %s) = nil error, want a rejection", command, value)
+					t.Fatalf("parser %q with -workers %s returned nil error", command, value)
 				}
 				assertActionable(t, err, "-workers", value, 1, MaxWorkers)
 			})
@@ -39,26 +56,26 @@ func TestParseFor_RejectsOutOfRangeWorkers(t *testing.T) {
 	}
 }
 
-func TestParseFor_RejectsOutOfRangeBucketRate(t *testing.T) {
+func TestParseScan_RejectsOutOfRangeBucketRate(t *testing.T) {
 	values := []string{"0", "-1", strconv.Itoa(math.MaxInt), strconv.Itoa(ratelimit.MaxRate + 1)}
 	for _, value := range values {
 		t.Run(value, func(t *testing.T) {
-			_, err := ParseFor("scan", baseArgs("scan", "-bucket-rate", value))
+			_, err := ParseScan(baseArgs("scan", "-bucket-rate", value))
 			if err == nil {
-				t.Fatalf("ParseFor(scan, -bucket-rate %s) = nil error, want a rejection", value)
+				t.Fatalf("ParseScan(-bucket-rate %s) = nil error, want a rejection", value)
 			}
 			assertActionable(t, err, "-bucket-rate", value, 1, ratelimit.MaxRate)
 		})
 	}
 }
 
-func TestParseFor_RejectsOutOfRangeBucketCapacity(t *testing.T) {
+func TestParseScan_RejectsOutOfRangeBucketCapacity(t *testing.T) {
 	values := []string{"0", "-1", strconv.Itoa(math.MaxInt), strconv.Itoa(ratelimit.MaxCapacity + 1)}
 	for _, value := range values {
 		t.Run(value, func(t *testing.T) {
-			_, err := ParseFor("scan", baseArgs("scan", "-bucket-capacity", value))
+			_, err := ParseScan(baseArgs("scan", "-bucket-capacity", value))
 			if err == nil {
-				t.Fatalf("ParseFor(scan, -bucket-capacity %s) = nil error, want a rejection", value)
+				t.Fatalf("ParseScan(-bucket-capacity %s) = nil error, want a rejection", value)
 			}
 			assertActionable(t, err, "-bucket-capacity", value, 1, ratelimit.MaxCapacity)
 		})
@@ -81,7 +98,7 @@ func assertActionable(t *testing.T, err error, flag, given string, low, high int
 // exercises: e2e/run_e2e.sh runs -workers 1..2, the largest -workers in the docs
 // is 64, and docs/specs/SPEC-07-RATE-LIMIT-SYSTEM.md:153 documents
 // -bucket-rate 1000 -bucket-capacity 500.
-func TestParseFor_AcceptsEveryDocumentedConfiguration(t *testing.T) {
+func TestParseScan_AcceptsEveryDocumentedConfiguration(t *testing.T) {
 	documented := [][]string{
 		{"-workers", "1", "-bucket-rate", "1", "-bucket-capacity", "1"},
 		{"-workers", "2"},
@@ -94,8 +111,8 @@ func TestParseFor_AcceptsEveryDocumentedConfiguration(t *testing.T) {
 	}
 	for _, extra := range documented {
 		t.Run(strings.Join(extra, " "), func(t *testing.T) {
-			if _, err := ParseFor("scan", baseArgs("scan", extra...)); err != nil {
-				t.Fatalf("ParseFor(scan, %v) = %v, want accepted", extra, err)
+			if _, err := ParseScan(baseArgs("scan", extra...)); err != nil {
+				t.Fatalf("ParseScan(%v) = %v, want accepted", extra, err)
 			}
 		})
 	}
@@ -103,43 +120,22 @@ func TestParseFor_AcceptsEveryDocumentedConfiguration(t *testing.T) {
 
 // The defaults must sit inside the accepted range, or the flags become
 // mandatory by accident.
-func TestParseFor_DefaultsAreWithinBounds(t *testing.T) {
-	cfg, err := ParseFor("scan", baseArgs("scan"))
+func TestParseScan_DefaultsAreWithinBounds(t *testing.T) {
+	cfg, err := ParseScan(baseArgs("scan"))
 	if err != nil {
-		t.Fatalf("ParseFor(scan) with defaults = %v, want accepted", err)
+		t.Fatalf("ParseScan() with defaults = %v, want accepted", err)
 	}
-	if cfg.Workers < 1 || cfg.Workers > MaxWorkers {
-		t.Errorf("default workers %d is outside 1..%d", cfg.Workers, MaxWorkers)
+	values, err := cfg.Resolve()
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
 	}
-	if cfg.BucketRate < 1 || cfg.BucketRate > ratelimit.MaxRate {
-		t.Errorf("default bucket rate %d is outside 1..%d", cfg.BucketRate, ratelimit.MaxRate)
+	if values.Workers < 1 || values.Workers > MaxWorkers {
+		t.Errorf("default workers %d is outside 1..%d", values.Workers, MaxWorkers)
 	}
-	if cfg.BucketCapacity < 1 || cfg.BucketCapacity > ratelimit.MaxCapacity {
-		t.Errorf("default bucket capacity %d is outside 1..%d", cfg.BucketCapacity, ratelimit.MaxCapacity)
+	if values.BucketRate < 1 || values.BucketRate > ratelimit.MaxRate {
+		t.Errorf("default bucket rate %d is outside 1..%d", values.BucketRate, ratelimit.MaxRate)
 	}
-}
-
-// Until Slice 8 removes Parse, it must enforce the same range for these
-// resource flags.
-func TestParse_RejectsOutOfRangeResourceFlags(t *testing.T) {
-	cases := []struct {
-		flag  string
-		value string
-	}{
-		{"-workers", "0"},
-		{"-workers", strconv.Itoa(math.MaxInt)},
-		{"-bucket-rate", strconv.Itoa(ratelimit.MaxRate + 1)},
-		{"-bucket-capacity", "-1"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.flag+"="+tc.value, func(t *testing.T) {
-			_, err := Parse([]string{"-cidr-file", "in.csv", tc.flag, tc.value})
-			if err == nil {
-				t.Fatalf("Parse(%s %s) = nil error, want a rejection", tc.flag, tc.value)
-			}
-			if !strings.Contains(err.Error(), tc.flag) {
-				t.Errorf("error %q does not mention %q", err.Error(), tc.flag)
-			}
-		})
+	if values.BucketCapacity < 1 || values.BucketCapacity > ratelimit.MaxCapacity {
+		t.Errorf("default bucket capacity %d is outside 1..%d", values.BucketCapacity, ratelimit.MaxCapacity)
 	}
 }

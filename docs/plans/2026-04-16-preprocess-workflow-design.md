@@ -1,5 +1,9 @@
 # Preprocess Workflow Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 **Date**: 2026-04-16
 **Status**: Approved
 

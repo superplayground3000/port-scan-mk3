@@ -3,7 +3,6 @@ package scanapp
 import (
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
@@ -26,12 +25,12 @@ func defaultRunDependencies() runDependencies {
 	}
 }
 
-func resolveRunOutputPaths(cfg config.Config, deps runDependencies, now time.Time) (batchOutputPaths, error) {
-	return deps.resolveOutputPaths(cfg.Output, now)
+func resolveRunOutputPaths(output string, deps runDependencies, now time.Time) (batchOutputPaths, error) {
+	return deps.resolveOutputPaths(output, now)
 }
 
-func prepareRuntimePlan(cfg config.Config, inputs runInputs, reachable func(string) bool, chunks []task.Chunk, report chunkExpandReporter) (runPlan, error) {
-	runtimes, err := buildRuntimeWithPredicate(chunks, inputs.cidrRecords, inputs.portSpecs, runtimePolicyFromConfig(cfg), reachable, report)
+func prepareRuntimePlan(policy runtimePolicy, inputs runInputs, reachable func(string) bool, chunks []task.Chunk, report chunkExpandReporter) (runPlan, error) {
+	runtimes, err := buildRuntimeWithPredicate(chunks, inputs.cidrRecords, inputs.portSpecs, policy, reachable, report)
 	if err != nil {
 		return runPlan{}, err
 	}

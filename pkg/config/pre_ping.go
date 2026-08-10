@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"flag"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -38,7 +40,7 @@ func NewPrePing(values PrePingValues) (PrePingConfig, error) {
 		return PrePingConfig{}, errors.New("-cidr-ip-col and -cidr-ip-cidr-col must be non-empty")
 	}
 	if err := validateWorkers(values.Workers); err != nil {
-		return PrePingConfig{}, err
+		return PrePingConfig{}, fmt.Errorf("validate workers: %w", err)
 	}
 	if values.PingTimeout <= 0 {
 		return PrePingConfig{}, errors.New("-pre-scan-ping-timeout must be > 0")
@@ -48,20 +50,29 @@ func NewPrePing(values PrePingValues) (PrePingConfig, error) {
 
 // ParsePrePing parses and verifies the arguments for the pre-ping command.
 func ParsePrePing(args []string) (PrePingConfig, error) {
-	cfg, err := ParseFor("pre-ping", args)
-	if err != nil {
-		return PrePingConfig{}, err
-	}
+	fs := flag.NewFlagSet("port-scan pre-ping", flag.ContinueOnError)
+	common := commonCLIValues{}
+	values := PrePingValues{}
+	registerCommonFlags(fs, &common)
+	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
+	fs.IntVar(&values.ProgressInterval, "progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
+	fs.StringVar(&values.Output, "output", "scan_results.csv", "output csv")
+	fs.DurationVar(&values.PingTimeout, "pre-scan-ping-timeout", 100*time.Millisecond, "pre-scan ping timeout (duration like 100ms or 2s)")
 
-	return NewPrePing(PrePingValues{
-		CIDRFile:         cfg.CIDRFile,
-		CIDRIPCol:        cfg.CIDRIPCol,
-		CIDRIPCidrCol:    cfg.CIDRIPCidrCol,
-		Output:           cfg.Output,
-		Workers:          cfg.Workers,
-		PingTimeout:      cfg.PreScanPingTimeout,
-		ProgressInterval: cfg.ProgressInterval,
-	})
+	if err := fs.Parse(args); err != nil {
+		return PrePingConfig{}, fmt.Errorf("parse pre-ping flags: %w", err)
+	}
+	if err := common.validate(); err != nil {
+		return PrePingConfig{}, fmt.Errorf("validate pre-ping flags: %w", err)
+	}
+	values.CIDRFile = common.cidrFile
+	values.CIDRIPCol = common.cidrIPCol
+	values.CIDRIPCidrCol = common.cidrIPCidrCol
+	cfg, err := NewPrePing(values)
+	if err != nil {
+		return PrePingConfig{}, fmt.Errorf("validate pre-ping arguments: %w", err)
+	}
+	return cfg, nil
 }
 
 // Resolve returns the validated values for the pre-ping workflow.

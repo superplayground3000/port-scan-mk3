@@ -1,5 +1,9 @@
 # Scanapp Simplification Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 背景
 
 這次工作的目標不是新增功能，而是基於現有程式碼提出一條更簡潔、且嚴格符合

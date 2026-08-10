@@ -1,5 +1,9 @@
 # port-scan-mk3 CLI Matrix Lab — Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Errata (2026-06-30):** this plan documents the original 36-case build. The shipped lab was

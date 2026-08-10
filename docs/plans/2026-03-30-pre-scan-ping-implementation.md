@@ -1,5 +1,9 @@
 # Pre-Scan Ping Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 為 `scan` 增加預設啟用的 pre-scan ping；若 IP 在 ping 階段不可達，先完整落檔 `unreachable_results-<suffix>.csv`，再進入 TCP scanning，且流程必須支援 Windows、resume 相容與 `-disable-pre-scan-ping` 關閉開關。

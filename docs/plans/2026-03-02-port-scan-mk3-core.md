@@ -1,5 +1,9 @@
 # Port Scan MK3 Core Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 建立符合 `plan/design.md` 與 `.specify/memory/constitution.md` 的 TCP Port Scanner CLI，支援 fail-fast 驗證、速率限制、全域壓力控制、SIGINT 斷點續掃、整合測試與 e2e 測試。

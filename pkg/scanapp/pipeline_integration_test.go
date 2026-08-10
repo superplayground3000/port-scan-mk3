@@ -27,12 +27,12 @@ const richPipelineCSV = "src_ip,src_network_segment,dst_ip,dst_network_segment,s
 // pipelineBaseConfig returns a config wired for the in-process pipeline: a rich
 // CIDR CSV at cidrFile, no PortFile (rich mode), fast timeouts, pressure API
 // disabled. Callers set Resume / BucketsOut / UnreachableFile as each step needs.
-func pipelineBaseConfig(t *testing.T, cidrFile, outFile string) config.Config {
+func pipelineBaseConfig(t *testing.T, cidrFile, outFile string) scanConfigFixture {
 	t.Helper()
 	if err := os.WriteFile(cidrFile, []byte(richPipelineCSV), 0o644); err != nil {
 		t.Fatalf("write rich csv: %v", err)
 	}
-	return config.Config{
+	return scanConfigFixture{
 		CIDRFile:           cidrFile,
 		Output:             outFile,
 		Timeout:            20 * time.Millisecond,
@@ -129,7 +129,7 @@ func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		Dial:                dialOpenFor("127.0.0.1"),
 		ReachabilityChecker: spy,
@@ -178,7 +178,7 @@ func TestPipeline_NoPrePing_ScansAll(t *testing.T) {
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		Dial:                dialOpenFor("127.0.0.1"),
 		ReachabilityChecker: spy,
@@ -229,7 +229,7 @@ func TestPipeline_TamperedTotalCount_Rejected(t *testing.T) {
 
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
-	err = Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err = Run(context.Background(), scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dialOpenFor("127.0.0.1"),
 	})

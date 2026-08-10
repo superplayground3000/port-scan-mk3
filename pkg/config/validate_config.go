@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -70,8 +69,10 @@ func NewValidate(values ValidateValues) (ValidateConfig, error) {
 // compatibility value.
 func ParseValidate(args []string) (ValidateConfig, error) {
 	fs := flag.NewFlagSet("port-scan", flag.ContinueOnError)
+	common := commonCLIValues{}
 	values := ValidateValues{}
 	compatibility := validateCompatibilityValues{}
+	registerCommonFlags(fs, &common)
 	fs.IntVar(&compatibility.workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&compatibility.bucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
 	fs.IntVar(&compatibility.bucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
@@ -83,11 +84,7 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	fs.BoolVar(&compatibility.pressureUseAuth, "pressure-use-auth", false, "use authenticated pressure fetcher")
 	fs.DurationVar(&compatibility.preScanPingTimeout, "pre-scan-ping-timeout", 100*time.Millisecond, "pre-scan ping timeout")
 
-	fs.StringVar(&values.CIDRFile, "cidr-file", "", "CIDR CSV path")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path")
-	fs.StringVar(&values.Format, "format", "human", "human|json")
-	fs.StringVar(&values.CIDRIPCol, "cidr-ip-col", "ip", "cidr csv ip column name")
-	fs.StringVar(&values.CIDRIPCidrCol, "cidr-ip-cidr-col", "ip_cidr", "cidr csv ip_cidr column name")
 
 	// Validate keeps these flags for CLI compatibility. The workflow does not
 	// use their values.
@@ -98,15 +95,20 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	fs.Bool("disable-api", false, "disable pressure api")
 	fs.Bool("disable-pre-scan-ping", false, "disable pre-scan ping")
 	fs.String("resume", "", "resume state file")
-	fs.String("log-level", "info", "debug|info|error")
-	fs.Bool("quiet", false, "suppress console logs, keep pressure API logs")
 
 	if err := fs.Parse(args); err != nil {
 		return ValidateConfig{}, fmt.Errorf("parse validate flags: %w", err)
 	}
+	if err := common.validate(); err != nil {
+		return ValidateConfig{}, fmt.Errorf("validate common flags: %w", err)
+	}
 	if err := compatibility.validate(); err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate compatibility flags: %w", err)
 	}
+	values.CIDRFile = common.cidrFile
+	values.CIDRIPCol = common.cidrIPCol
+	values.CIDRIPCidrCol = common.cidrIPCidrCol
+	values.Format = common.format
 	cfg, err := NewValidate(values)
 	if err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate arguments: %w", err)
@@ -125,7 +127,7 @@ func (v validateCompatibilityValues) validate() error {
 		return errors.New("-pre-scan-ping-timeout must be > 0")
 	}
 
-	pressureInterval, err := parseValidatePressureInterval(v.pressureIntervalRaw)
+	pressureInterval, err := parsePressureInterval(v.pressureIntervalRaw)
 	if err != nil {
 		return fmt.Errorf("parse pressure interval: %w", err)
 	}
@@ -133,16 +135,9 @@ func (v validateCompatibilityValues) validate() error {
 		return errors.New("-pressure-interval must be > 0")
 	}
 
-	dataURLCount := 0
-	if v.pressureDataURLRaw != "" {
-		for _, endpoint := range strings.Split(v.pressureDataURLRaw, ",") {
-			if strings.TrimSpace(endpoint) != "" {
-				dataURLCount++
-			}
-		}
-		if dataURLCount == 0 {
-			return errors.New("-pressure-data-url contains only empty values after trimming")
-		}
+	dataURLs, err := parsePressureDataURLs(v.pressureDataURLRaw)
+	if err != nil {
+		return fmt.Errorf("parse pressure data URLs: %w", err)
 	}
 	if !v.pressureUseAuth {
 		return nil
@@ -150,7 +145,7 @@ func (v validateCompatibilityValues) validate() error {
 	if v.pressureAuthURL == "" {
 		return errors.New("-pressure-auth-url is required when -pressure-use-auth is set")
 	}
-	if dataURLCount == 0 {
+	if len(dataURLs) == 0 {
 		return errors.New("-pressure-data-url is required when -pressure-use-auth is set")
 	}
 	if v.pressureClientID == "" {
@@ -160,17 +155,6 @@ func (v validateCompatibilityValues) validate() error {
 		return errors.New("-pressure-client-secret is required when -pressure-use-auth is set")
 	}
 	return nil
-}
-
-func parseValidatePressureInterval(raw string) (time.Duration, error) {
-	if seconds, err := strconv.Atoi(raw); err == nil {
-		return time.Duration(seconds) * time.Second, nil
-	}
-	interval, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("-pressure-interval must be duration like 5s or integer seconds: %w", err)
-	}
-	return interval, nil
 }
 
 // Resolve returns the verified values for the validate workflow.

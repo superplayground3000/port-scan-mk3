@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
@@ -32,7 +31,7 @@ func TestRun_WhenResumed_EmitsBucketParsePhaseLogs(t *testing.T) {
 	dial := func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("connection refused")
 	}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:  true,
 		Dial:             dial,
 		ProgressInterval: 1, // tick every chunk/result so progress lines always emit
@@ -77,7 +76,7 @@ func TestRun_WhenResumed_EmitsBucketParsePhaseLogs(t *testing.T) {
 // richCancelBucketConfig builds a basic-mode config whose single /29 chunk
 // expands to several targets, so a scan can be interrupted with work still
 // pending. Returns the config (with Resume set) and the temp dir.
-func newInterruptibleScanConfig(t *testing.T) (config.Config, string, string) {
+func newInterruptibleScanConfig(t *testing.T) (scanConfigFixture, string, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "rich.csv")
@@ -94,7 +93,7 @@ func newInterruptibleScanConfig(t *testing.T) (config.Config, string, string) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:         cidrFile,
 		Output:           outFile,
 		Timeout:          20 * time.Millisecond,
@@ -144,7 +143,7 @@ func TestRun_WhenCanceledMidScan_DeliversRowsToFinalPath(t *testing.T) {
 		return nil, errors.New("forced dial failure")
 	}
 
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial})
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial})
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled from interrupted scan, got: %v", err)
 	}
@@ -193,7 +192,7 @@ func TestRun_WhenResumed_AppendsToSameOutputFile(t *testing.T) {
 		once.Do(cancel)
 		return nil, errors.New("forced dial failure")
 	}
-	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
+	if err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("run 1: expected context.Canceled, got: %v", err)
 	}
 	cancel()
@@ -208,7 +207,7 @@ func TestRun_WhenResumed_AppendsToSameOutputFile(t *testing.T) {
 	}
 
 	// Run 2: resume to completion; must append to the SAME file.
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {
@@ -249,7 +248,7 @@ func TestRun_WhenResumedWithPriorOutputDeleted_RecreatesWithHeader(t *testing.T)
 		once.Do(cancel)
 		return nil, errors.New("forced dial failure")
 	}
-	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
+	if err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true, Dial: dial}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("run 1: expected context.Canceled, got: %v", err)
 	}
 	cancel()
@@ -267,7 +266,7 @@ func TestRun_WhenResumedWithPriorOutputDeleted_RecreatesWithHeader(t *testing.T)
 		t.Fatalf("remove open file: %v", err)
 	}
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("forced dial failure") },
 	}); err != nil {

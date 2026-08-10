@@ -1,5 +1,9 @@
 # Speed Control Testing Framework Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 建立可驗證 Global speed control 與 CIDR speed control 的測試框架，並輸出具完整文字解釋的人類可讀報告。

@@ -1,5 +1,9 @@
 # Makefile Update: Build All Commands
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Update Makefile to compile all Go binaries in `cmd/` and output them to the `dist/` folder.

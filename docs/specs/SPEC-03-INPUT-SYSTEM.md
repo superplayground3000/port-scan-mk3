@@ -220,14 +220,11 @@ const (
 ### Usage
 
 ```go
-cfg := config.Config{
-    CIDRIPCol:     "SourceIP",      // Custom column name
-    CIDRIPCidrCol: "Network",       // Custom column name
-}
-
-// Load with custom columns
-records, err := input.LoadCIDRsWithColumns(file, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)
+records, err := input.LoadCIDRsWithColumns(file, "SourceIP", "Network")
 ```
+
+CLI workflows get these column names from their workflow-specific
+configuration values.
 
 ## 6. Adding New Input Formats
 
@@ -281,7 +278,8 @@ default:
 
 ## 8. Integration Points
 
-- **Config**: Column names from `config.Config`
+- **Config**: Column names from `PrePingValues`, `GenerateBucketsValues`,
+  `ScanValues`, or `ValidateValues`
 - **Validation**: `validate.Inputs(cfg)` calls `LoadCIDRsWithColumns()`
 - **Scan**: `input_loader.go` calls `LoadCIDRsWithColumns()` and `LoadPorts()`
 - **Writer**: Rich fields flow through to output CSV

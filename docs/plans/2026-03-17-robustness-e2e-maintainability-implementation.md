@@ -1,5 +1,9 @@
 # Robustness, E2E, and Maintainability Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Fix concurrency bugs, add atomic CSV writes, consolidate duplicated group builders, decompose scan.go, decouple CSV contract, and build a comprehensive e2e HTML report with per-scenario checklists.

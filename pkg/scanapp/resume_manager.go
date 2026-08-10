@@ -3,7 +3,6 @@ package scanapp
 import (
 	"errors"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
@@ -18,7 +17,7 @@ import (
 // that did not reach all output writers. The trackers rewind to the first such
 // task before this function saves the snapshot. A resumed run can write some
 // rows again, but it cannot skip an unwritten row.
-func persistResumeSnapshot(cfg config.Config, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, dispatchErr, runErr error) error {
+func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, dispatchErr, runErr error) error {
 	rewoundChunks := 0
 	if errors.Is(runErr, errScanOutputWrite) {
 		for _, rt := range runtimes {
@@ -32,7 +31,6 @@ func persistResumeSnapshot(cfg config.Config, logger *scanLogger, runtimes []*ch
 		return nil
 	}
 
-	savePath := cfg.Resume
 	if err := state.SaveSnapshot(savePath, state.Snapshot{
 		Chunks:      collectChunkStates(runtimes),
 		PreScanPing: preScanPing,

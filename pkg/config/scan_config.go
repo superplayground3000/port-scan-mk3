@@ -2,8 +2,12 @@ package config
 
 import (
 	"errors"
+	"flag"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
 // PressureKind identifies one validated pressure policy variant.
@@ -140,16 +144,16 @@ func NewScan(values ScanValues) (ScanConfig, error) {
 		return ScanConfig{}, errors.New("-resume is required")
 	}
 	if err := validateWorkers(values.Workers); err != nil {
-		return ScanConfig{}, err
+		return ScanConfig{}, fmt.Errorf("validate workers: %w", err)
 	}
 	if err := validateBucketBounds(values.BucketRate, values.BucketCapacity); err != nil {
-		return ScanConfig{}, err
+		return ScanConfig{}, fmt.Errorf("validate bucket bounds: %w", err)
 	}
 	if values.Format != "human" && values.Format != "json" {
 		return ScanConfig{}, errors.New("-format must be human or json")
 	}
 	if _, err := values.Pressure.Resolve(); err != nil {
-		return ScanConfig{}, err
+		return ScanConfig{}, fmt.Errorf("resolve pressure policy: %w", err)
 	}
 	return ScanConfig{state: &scanState{values: values}}, nil
 }
@@ -157,45 +161,101 @@ func NewScan(values ScanValues) (ScanConfig, error) {
 // ParseScan parses and verifies the arguments for the scan command.
 // It returns an error for an invalid flag or value.
 func ParseScan(args []string) (ScanConfig, error) {
-	cfg, err := ParseFor("scan", args)
-	if err != nil {
-		return ScanConfig{}, err
+	fs := flag.NewFlagSet("port-scan scan", flag.ContinueOnError)
+	common := commonCLIValues{}
+	values := ScanValues{}
+	var (
+		pressureAPI          string
+		pressureIntervalRaw  string
+		disableAPI           bool
+		pressureAuthURL      string
+		pressureDataURLRaw   string
+		pressureClientID     string
+		pressureClientSecret string
+		pressureUseAuth      bool
+	)
+	registerCommonFlags(fs, &common)
+	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
+	fs.Int("progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
+	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path (optional fallback; chunks carry ports)")
+	fs.StringVar(&values.Output, "output", "scan_results.csv", "output csv")
+	fs.StringVar(&values.ResumeInput, "resume", "", "resume/bucket snapshot file (required)")
+	fs.DurationVar(&values.DialTimeout, "timeout", 100*time.Millisecond, "dial timeout")
+	fs.DurationVar(&values.DispatchDelay, "delay", 10*time.Millisecond, "dispatch delay")
+	fs.IntVar(&values.BucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
+	fs.IntVar(&values.BucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
+	fs.StringVar(&pressureAPI, "pressure-api", "http://localhost:8080/api/pressure", "pressure api")
+	fs.StringVar(&pressureIntervalRaw, "pressure-interval", "5s", "pressure poll interval (duration or seconds)")
+	fs.BoolVar(&disableAPI, "disable-api", false, "disable pressure api")
+	fs.StringVar(&pressureAuthURL, "pressure-auth-url", "", "pressure auth endpoint URL")
+	fs.StringVar(&pressureDataURLRaw, "pressure-data-url", "", "pressure data endpoint URLs (comma-separated)")
+	fs.StringVar(&pressureClientID, "pressure-client-id", "", "pressure API client ID")
+	fs.StringVar(&pressureClientSecret, "pressure-client-secret", "", "pressure API client secret")
+	fs.BoolVar(&pressureUseAuth, "pressure-use-auth", false, "use authenticated pressure fetcher")
+
+	if err := fs.Parse(args); err != nil {
+		return ScanConfig{}, fmt.Errorf("parse scan flags: %w", err)
 	}
+	if err := common.validate(); err != nil {
+		return ScanConfig{}, fmt.Errorf("validate scan flags: %w", err)
+	}
+	interval, err := parsePressureInterval(pressureIntervalRaw)
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("parse scan pressure interval: %w", err)
+	}
+	dataURLs, err := parsePressureDataURLs(pressureDataURLRaw)
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("parse scan pressure data URLs: %w", err)
+	}
+	if interval <= 0 {
+		return ScanConfig{}, errors.New("-pressure-interval must be > 0")
+	}
+	if pressureUseAuth {
+		if pressureAuthURL == "" {
+			return ScanConfig{}, errors.New("-pressure-auth-url is required when -pressure-use-auth is set")
+		}
+		if len(dataURLs) == 0 {
+			return ScanConfig{}, errors.New("-pressure-data-url is required when -pressure-use-auth is set")
+		}
+		if pressureClientID == "" {
+			return ScanConfig{}, errors.New("-pressure-client-id is required when -pressure-use-auth is set")
+		}
+		if pressureClientSecret == "" {
+			return ScanConfig{}, errors.New("-pressure-client-secret is required when -pressure-use-auth is set")
+		}
+	}
+
 	var policy PressurePolicy
 	switch {
-	case cfg.DisableAPI:
+	case disableAPI:
 		policy = PressureDisabled()
-	case cfg.PressureUseAuth:
+	case pressureUseAuth:
 		policy, err = AuthenticatedPressure(
-			cfg.PressureAuthURL,
-			cfg.PressureDataURLs,
-			cfg.PressureClientID,
-			cfg.PressureClientSecret,
-			cfg.PressureInterval,
+			pressureAuthURL,
+			dataURLs,
+			pressureClientID,
+			pressureClientSecret,
+			interval,
 		)
 	default:
-		policy, err = SimplePressure(cfg.PressureAPI, cfg.PressureInterval)
+		policy, err = SimplePressure(pressureAPI, interval)
 	}
 	if err != nil {
-		return ScanConfig{}, err
+		return ScanConfig{}, fmt.Errorf("construct scan pressure policy: %w", err)
 	}
-	return NewScan(ScanValues{
-		CIDRFile:       cfg.CIDRFile,
-		CIDRIPCol:      cfg.CIDRIPCol,
-		CIDRIPCidrCol:  cfg.CIDRIPCidrCol,
-		PortFile:       cfg.PortFile,
-		ResumeInput:    cfg.Resume,
-		Output:         cfg.Output,
-		Workers:        cfg.Workers,
-		DialTimeout:    cfg.Timeout,
-		DispatchDelay:  cfg.Delay,
-		BucketRate:     cfg.BucketRate,
-		BucketCapacity: cfg.BucketCapacity,
-		LogLevel:       cfg.LogLevel,
-		Format:         cfg.Format,
-		Quiet:          cfg.Quiet,
-		Pressure:       policy,
-	})
+
+	values.CIDRFile = common.cidrFile
+	values.CIDRIPCol = common.cidrIPCol
+	values.CIDRIPCidrCol = common.cidrIPCidrCol
+	values.LogLevel = common.logLevel
+	values.Format = common.format
+	values.Quiet = common.quiet
+	values.Pressure = policy
+	cfg, err := NewScan(values)
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("validate scan arguments: %w", err)
+	}
+	return cfg, nil
 }
 
 // Resolve returns the validated values for the scan workflow.

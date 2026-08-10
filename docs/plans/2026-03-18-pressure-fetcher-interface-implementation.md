@@ -1,5 +1,9 @@
 # Pressure Fetcher Interface Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Refactor `fetchPressure` into an interface with two implementations (simple and authenticated) to allow swappable fetching logic.

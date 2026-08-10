@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 )
 
@@ -13,16 +12,24 @@ type runInputs struct {
 	portSpecs   []input.PortSpec
 }
 
-func loadRunInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
-	cidrRecords, err := deps.loadCIDRRecords(cfg.CIDRFile, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)
+type inputConfiguration struct {
+	cidrFile         string
+	cidrIPCol        string
+	cidrIPCidrCol    string
+	portFile         string
+	allowMissingPort bool
+}
+
+func loadRunInputs(cfg inputConfiguration, deps runDependencies) (runInputs, error) {
+	cidrRecords, err := deps.loadCIDRRecords(cfg.cidrFile, cfg.cidrIPCol, cfg.cidrIPCidrCol)
 	if err != nil {
 		return runInputs{}, err
 	}
-	if cfg.PortFile == "" {
+	if cfg.portFile == "" {
 		// Rich input carries its port per record. When resuming, the bucket's
 		// chunks already carry the ports, so scan needs no -port-file either;
 		// only a fresh basic build (e.g. generate-buckets) requires it.
-		if hasRichRecords(cidrRecords) || cfg.Resume != "" {
+		if hasRichRecords(cidrRecords) || cfg.allowMissingPort {
 			return runInputs{
 				cidrRecords: cidrRecords,
 				portSpecs:   nil,
@@ -30,7 +37,7 @@ func loadRunInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
 		}
 		return runInputs{}, fmt.Errorf("-port-file is required when cidr input is not rich mode")
 	}
-	portSpecs, err := deps.loadPortSpecs(cfg.PortFile)
+	portSpecs, err := deps.loadPortSpecs(cfg.portFile)
 	if err != nil {
 		return runInputs{}, err
 	}
@@ -44,8 +51,8 @@ func loadRunInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
 // phase. Pre-ping is per-IP and never uses ports, so — unlike loadRunInputs — it
 // does not require a -port-file for basic (non-rich) input. portSpecs is always
 // nil in the result.
-func loadPrePingInputs(cfg config.Config, deps runDependencies) (runInputs, error) {
-	cidrRecords, err := deps.loadCIDRRecords(cfg.CIDRFile, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)
+func loadPrePingInputs(cidrFile, cidrIPCol, cidrIPCidrCol string, deps runDependencies) (runInputs, error) {
+	cidrRecords, err := deps.loadCIDRRecords(cidrFile, cidrIPCol, cidrIPCidrCol)
 	if err != nil {
 		return runInputs{}, err
 	}

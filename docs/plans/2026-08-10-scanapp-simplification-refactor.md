@@ -1,13 +1,13 @@
 # Scanapp Simplification Refactor Specification
 
-- **Status:** Active
+- **Status:** Historical
 - **Date:** 2026-08-10
 - **Decision map:** [Define the scanapp simplification route](https://github.com/superplayground3000/port-scan-mk3/issues/104)
 - **Execution ticket:** [Write the executable scanapp refactor specification](https://github.com/superplayground3000/port-scan-mk3/issues/113)
 - **Current architecture:** [`docs/apps/port-scan/DESIGN.md`](../apps/port-scan/DESIGN.md)
 - **Audit baseline:** `a5061dd76d5dac7fb8ff7c1f22876d13af027235`
 
-This file is an active planning record. It does not define the current implementation architecture.
+This file is a historical planning record. It does not define the current implementation architecture.
 
 `docs/apps/port-scan/DESIGN.md` remains authoritative. Each architecture slice must update that file in the same change.
 

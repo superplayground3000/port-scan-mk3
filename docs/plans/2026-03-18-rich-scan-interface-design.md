@@ -1,5 +1,9 @@
 # Rich Scan Interface Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 背景
 
 目前 `port-scan scan` 在 `stdout` 只輸出簡化 progress line（`progress cidr=...`），

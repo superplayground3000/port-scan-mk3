@@ -2,9 +2,7 @@ package scanapp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
@@ -100,28 +98,4 @@ func pollPressureAPI(ctx context.Context, interval time.Duration, source Pressur
 			}
 		}
 	}
-}
-
-func fetchPressure(client *http.Client, url string) (float64, error) {
-	resp, err := client.Get(url)
-	if err != nil {
-		return 0.0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		return 0.0, fmt.Errorf("pressure api status=%d", resp.StatusCode)
-	}
-	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return 0.0, err
-	}
-	raw, ok := body["pressure"]
-	if !ok {
-		return 0.0, fmt.Errorf("pressure field missing")
-	}
-	n, err := parsePressureValue(raw)
-	if err != nil {
-		return 0.0, err
-	}
-	return n, nil
 }

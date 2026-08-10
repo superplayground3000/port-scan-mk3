@@ -1,5 +1,9 @@
 # Gradual Speed Control Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the binary pause/resume mechanism with proportional speed control driven by pressure API readings. Speed adjusts ±10% per poll toward a target rate, with a 20% floor and full pause at >= 60%.

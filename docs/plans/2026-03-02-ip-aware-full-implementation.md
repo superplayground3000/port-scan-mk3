@@ -1,5 +1,9 @@
 # IP-Aware Full Spec Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 完整實作 `plan/design.md` 與新增需求：`ip/ip_cidr` 欄位模型、欄位名稱指定解析、`opened_results.csv`、Docker e2e 含 API 正常/異常場景。

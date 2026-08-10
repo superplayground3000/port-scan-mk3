@@ -1,5 +1,9 @@
 # CSV Support for xlsx-transform — Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## Overview
 
 Add transparent CSV file support to `xlsx-transform` via a new `pkg/spreadsheet` package that auto-detects `.xlsx` vs `.csv` by content and returns the same `[][]string` output for both.

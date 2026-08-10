@@ -62,23 +62,17 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	if strings.TrimSpace(values.SnapshotOutput) == "" {
 		return fmt.Errorf("generate-buckets requires -buckets-out")
 	}
-	cfg := config.Config{
-		CIDRFile:         values.CIDRFile,
-		CIDRIPCol:        values.CIDRIPCol,
-		CIDRIPCidrCol:    values.CIDRIPCidrCol,
-		PortFile:         values.PortFile,
-		UnreachableFile:  values.BlocklistFile,
-		BucketsOut:       values.SnapshotOutput,
-		Workers:          values.Workers,
-		ProgressInterval: values.ProgressInterval,
-	}
-
-	inputs, err := loadRunInputs(cfg, defaultRunDependencies())
+	inputs, err := loadRunInputs(inputConfiguration{
+		cidrFile:      values.CIDRFile,
+		cidrIPCol:     values.CIDRIPCol,
+		cidrIPCidrCol: values.CIDRIPCidrCol,
+		portFile:      values.PortFile,
+	}, defaultRunDependencies())
 	if err != nil {
 		return fmt.Errorf("generate-buckets: load inputs: %w", err)
 	}
 
-	blocklist, err := parseUnreachableBlocklist(cfg.UnreachableFile)
+	blocklist, err := parseUnreachableBlocklist(values.BlocklistFile)
 	if err != nil {
 		return fmt.Errorf("generate-buckets: parse blocklist: %w", err)
 	}
@@ -105,7 +99,7 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 
 	reporter := opts.Reporter
 	if reporter == nil {
-		reporter = progress.New("generate-buckets", len(keys), cfg.ProgressInterval, stderr)
+		reporter = progress.New("generate-buckets", len(keys), values.ProgressInterval, stderr)
 	}
 
 	var rawPorts []string
@@ -117,7 +111,7 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	}
 
 	chunks := make([]task.Chunk, len(keys))
-	if err := fanOutGroupChunks(ctx, keys, groups, richMode, rawPorts, cfg.Workers, reporter, chunks); err != nil {
+	if err := fanOutGroupChunks(ctx, keys, groups, richMode, rawPorts, values.Workers, reporter, chunks); err != nil {
 		return fmt.Errorf("generate-buckets: build chunks: %w", err)
 	}
 	reporter.Done()
@@ -135,8 +129,8 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 			UnreachableIPv4U32: blocklist,
 		},
 	}
-	if err := state.SaveSnapshot(cfg.BucketsOut, snap); err != nil {
-		return fmt.Errorf("generate-buckets: write snapshot %s: %w", cfg.BucketsOut, err)
+	if err := state.SaveSnapshot(values.SnapshotOutput, snap); err != nil {
+		return fmt.Errorf("generate-buckets: write snapshot %s: %w", values.SnapshotOutput, err)
 	}
 	return nil
 }

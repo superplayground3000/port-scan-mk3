@@ -1,5 +1,9 @@
 # Design: Split Preping and Port Scan into Three Independent Steps
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 - **Date:** 2026-07-22
 - **Request:** `docs/requests/split-preping-and-port-scan.md`
 - **Status:** Design (approved for implementation planning)

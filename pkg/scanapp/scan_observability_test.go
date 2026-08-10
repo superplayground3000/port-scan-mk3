@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
@@ -156,7 +155,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:           cidrFile,
 		PortFile:           portFile,
 		Output:             outFile,
@@ -174,7 +173,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -210,7 +209,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:           cidrFile,
 		PortFile:           portFile,
 		Output:             outFile,
@@ -228,7 +227,7 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), io.Discard, stderr, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, errors.New("dial failed for observability test")
@@ -258,7 +257,7 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:           cidrFile,
 		PortFile:           portFile,
 		Output:             outFile,
@@ -279,7 +278,7 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), io.Discard, stderr, RunOptions{
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			panic("boom in dial")
@@ -310,7 +309,7 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:           cidrFile,
 		PortFile:           portFile,
 		Output:             outFile,
@@ -328,7 +327,7 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 
 	recorder := &dashboardSnapshotRecorder{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			time.Sleep(25 * time.Millisecond)
@@ -462,7 +461,7 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
+	cfg := scanConfigFixture{
 		CIDRFile:           cidrFile,
 		PortFile:           portFile,
 		Output:             outFile,
@@ -489,7 +488,7 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 		},
 	}
 
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			select {
@@ -531,7 +530,7 @@ func TestPollPressureAPI_WhenJSONLoggerEnabled_EmitsPauseResumeMessages(t *testi
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", true, logOut)
-	poller := startTestPressurePoller(t, config.Config{
+	poller := startTestPressurePoller(t, scanConfigFixture{
 		PressureAPI:      server.server.URL,
 		PressureInterval: 5 * time.Millisecond,
 	}, RunOptions{
@@ -577,7 +576,7 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	boom1 := errors.New("boom-1")
 	boom2 := errors.New("boom-2")
 
-	poller := startTestPressurePoller(t, config.Config{
+	poller := startTestPressurePoller(t, scanConfigFixture{
 		PressureInterval: 5 * time.Millisecond,
 	}, RunOptions{
 		PressureLimit:      90,
