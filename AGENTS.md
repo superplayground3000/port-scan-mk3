@@ -16,6 +16,12 @@ their trigger applies.
   (Test-First, Quality Gates, SOLID boundaries, Go 1.24.x + stdlib `net`)
   override convenience. When in doubt, the constitution wins.
 
+## Writing standard
+- Use the `$simple-english` skill for all new or changed documentation and code comments.
+- Use pragmatic mode unless the user requires strict mode.
+- Keep code, identifiers, commands, file paths, and quoted errors unchanged.
+- Run the skill self-check before you finish the writing task.
+
 ## Build & Test Commands
 - Build all binaries (Linux + Windows): `make build` — cross-builds are
   explicit (`GOOS`/`GOARCH`/`CGO_ENABLED=0`), fail-fast, and end with the
