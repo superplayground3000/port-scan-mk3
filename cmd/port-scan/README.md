@@ -38,44 +38,31 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv -format json -log-lev
 CLI entry point (main.go)
     │
     ├── handleValidateCommand
-    │       config.Parse() → validate.Inputs() → cli.WriteValidation()
+    │       config.ParseValidate() → config.ValidateConfig
+    │           └── validate.Inputs(Configuration) → cli.WriteValidation()
     │
     └── handleScanCommand
-            config.Parse()
+            config.ParseScan() → config.ScanConfig
                    │
                    ▼
-            scanapp.Run()
+            scanapp.Run(ScanConfiguration)
                    │
-                   ├── Load CIDR records (basic or rich mode) via input.LoadCIDRsWithColumns
-                   ├── Load port specs via input.LoadPorts (basic mode only)
-                   ├── build group runtimes with leaky-bucket rate control
-                   ├── start pressure API poller (unless -disable-api)
-                   ├── start keyboard-controlled pause loop
-                   ├── start scan executor (N workers, net.Dialer)
-                   │       │
-                   │       └── net.DialTimeout → scan result
-                   │
-                   ├── task dispatcher (orchestrates flow control via speedctrl.Controller)
-                   │       │
-                   │       └── dispatches (IP, port) scanTask to worker queue
-                   │
-                   ├── result writer goroutine
-                   │       │
-                   │       ├── writer.CSVWriter → scan_results-<ts>.csv (all results)
-                   │       └── writer.OpenOnlyWriter → opened_results-<ts>.csv (open only)
-                   │
-                   └── resume state persister (on SIGINT or error)
-                           └── resume_state.json
+                   └── private scanRuntime.execute(context.Context)
+                           ├── load the snapshot and rebuild runtime state
+                           ├── start pressure, control, worker, and dispatch tasks
+                           ├── drain results and errors after cancellation
+                           ├── write results and save resume state
+                           └── stop tasks and close output files
 ```
 
 ### Key Packages
 
 | Package | Responsibility |
 |---------|----------------|
-| `pkg/config` | Flag parsing and Config struct |
+| `pkg/config` | Command-specific flag parsing and opaque configuration values |
 | `pkg/validate` | Input file validation (exists, parseable, correct schema) |
 | `pkg/input` | CIDR CSV and port file loading. It detects basic or rich mode automatically |
-| `pkg/scanapp` | Full scan orchestration: task dispatch, executor, pressure monitor, dashboard, result writer |
+| `pkg/scanapp` | Workflow entry points and the private scan runtime |
 | `pkg/speedctrl` | Rate control through a leaky-bucket controller, plus keyboard pause support |
 | `pkg/scanner` | Low-level TCP scanning via `net.DialTimeout` |
 | `pkg/writer` | CSV output with a fixed 14-column schema, plus the OpenOnlyWriter filter |
@@ -84,7 +71,9 @@ CLI entry point (main.go)
 
 ## CLI Flags
 
-All flags apply to both `validate` and `scan` commands unless noted.
+The pipeline commands accept only the flags in their command usage. The
+`validate` command also accepts the complete legacy flag surface for
+compatibility.
 
 | Flag | Default | Description |
 |------|---------|-------------|

@@ -12,6 +12,11 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 )
 
+// Configuration supplies verified values to the validate workflow.
+type Configuration interface {
+	Resolve() (config.ValidateValues, error)
+}
+
 // Result is the outcome of input validation. Valid is true when all inputs are
 // acceptable. Detail describes the outcome, and it holds an error message when
 // Valid is false.
@@ -28,7 +33,7 @@ type Result struct {
 //
 // # Parameters
 //
-//	cfg: Config with CIDRFile, CIDRIPCol, CIDRIPCidrCol, and PortFile fields.
+//	cfg: Configuration that resolves the input paths and column names.
 //
 // # Returns
 //
@@ -45,23 +50,27 @@ type Result struct {
 //
 // # Example
 //
-//	cfg, _ := config.Parse(os.Args[1:])
+//	cfg, _ := config.ParseValidate(os.Args[1:])
 //	result := validate.Inputs(cfg)
 //	if !result.Valid {
 //	    fmt.Println("validation failed:", result.Detail)
 //	}
-func Inputs(cfg config.Config) Result {
-	cidrFile, err := os.Open(cfg.CIDRFile)
+func Inputs(cfg Configuration) Result {
+	values, err := cfg.Resolve()
+	if err != nil {
+		return Result{Valid: false, Detail: fmt.Sprintf("resolve validate configuration: %v", err)}
+	}
+	cidrFile, err := os.Open(values.CIDRFile)
 	if err != nil {
 		return Result{Valid: false, Detail: fmt.Sprintf("failed to open cidr file: %v", err)}
 	}
 	defer cidrFile.Close()
 
-	cidrRecords, err := input.LoadCIDRsWithColumns(cidrFile, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)
+	cidrRecords, err := input.LoadCIDRsWithColumns(cidrFile, values.CIDRIPCol, values.CIDRIPCidrCol)
 	if err != nil {
 		return Result{Valid: false, Detail: err.Error()}
 	}
-	if cfg.PortFile == "" {
+	if values.PortFile == "" {
 		for _, rec := range cidrRecords {
 			if rec.IsRich {
 				return Result{Valid: true, Detail: "ok"}
@@ -70,7 +79,7 @@ func Inputs(cfg config.Config) Result {
 		return Result{Valid: false, Detail: "-port-file is required when cidr input is not rich mode"}
 	}
 
-	portFile, err := os.Open(cfg.PortFile)
+	portFile, err := os.Open(values.PortFile)
 	if err != nil {
 		return Result{Valid: false, Detail: fmt.Sprintf("failed to open port file: %v", err)}
 	}
