@@ -90,66 +90,6 @@ func TestLoadRunInputs_WhenRichInputsAndPortFileMissing_SkipsPortLoader(t *testi
 	}
 }
 
-func TestPrepareRunPlan_WhenDependenciesInjected_BuildsChunksRuntimesAndOutputPaths(t *testing.T) {
-	wantChunks := []task.Chunk{{CIDR: "10.0.0.0/24", TotalCount: 1}}
-	wantRuntimes := []*chunkRuntime{{state: &task.Chunk{CIDR: "10.0.0.0/24", TotalCount: 1}}}
-	wantNow := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
-
-	deps := runDependencies{
-		loadOrBuildRuntimeChunks: func(cfg config.Config, cidrRecords []input.CIDRRecord, portSpecs []input.PortSpec) ([]task.Chunk, error) {
-			if cfg.Output != "scan_results.csv" {
-				t.Fatalf("unexpected cfg output: %s", cfg.Output)
-			}
-			if len(cidrRecords) != 1 || len(portSpecs) != 1 {
-				t.Fatalf("unexpected inputs: %#v %#v", cidrRecords, portSpecs)
-			}
-			return wantChunks, nil
-		},
-		buildChunkRuntime: func(chunks []task.Chunk, cidrRecords []input.CIDRRecord, portSpecs []input.PortSpec, policy runtimePolicy) ([]*chunkRuntime, error) {
-			if len(chunks) != 1 || chunks[0].CIDR != wantChunks[0].CIDR {
-				t.Fatalf("unexpected chunks: %#v", chunks)
-			}
-			if policy.bucketRate != 0 || policy.bucketCapacity != 0 {
-				t.Fatalf("unexpected runtime policy: %+v", policy)
-			}
-			return wantRuntimes, nil
-		},
-		resolveOutputPaths: func(output string, now time.Time) (batchOutputPaths, error) {
-			if output != "scan_results.csv" {
-				t.Fatalf("unexpected output path: %s", output)
-			}
-			if !now.Equal(wantNow) {
-				t.Fatalf("unexpected time: %s", now)
-			}
-			return batchOutputPaths{
-				scanPath:        "scan_results-20260309T120000Z.csv",
-				openPath:        "opened_results-20260309T120000Z.csv",
-				unreachablePath: "unreachable_results-20260309T120000Z.csv",
-			}, nil
-		},
-	}
-
-	plan, err := prepareRunPlan(config.Config{Output: "scan_results.csv"}, runInputs{
-		cidrRecords: []input.CIDRRecord{{CIDR: "10.0.0.0/24"}},
-		portSpecs:   []input.PortSpec{{Raw: "80/tcp"}},
-	}, deps, wantNow)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(plan.chunks) != 1 || plan.chunks[0].CIDR != "10.0.0.0/24" {
-		t.Fatalf("unexpected chunks in plan: %#v", plan.chunks)
-	}
-	if len(plan.runtimes) != 1 || plan.runtimes[0].state.CIDR != "10.0.0.0/24" {
-		t.Fatalf("unexpected runtimes in plan: %#v", plan.runtimes)
-	}
-	if plan.scanOutputPath != "scan_results-20260309T120000Z.csv" || plan.openOnlyPath != "opened_results-20260309T120000Z.csv" {
-		t.Fatalf("unexpected output paths: %#v", plan)
-	}
-	if plan.outputPaths.unreachablePath != "unreachable_results-20260309T120000Z.csv" {
-		t.Fatalf("unexpected unreachable output path: %#v", plan.outputPaths)
-	}
-}
-
 func TestIndexToRuntimeTarget_WhenInputsInvalid_ReturnsErrors(t *testing.T) {
 	targets := []scanTarget{{ip: "10.0.0.1"}}
 	ports := []int{80}
@@ -258,7 +198,7 @@ func TestBuildRuntime_WhenTotalCountMismatch_ReturnsError(t *testing.T) {
 		Ports:      []string{"80/tcp"},
 		TotalCount: 2, // expected should be 1
 	}}
-	_, err := buildRuntime(chunks, rows, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1})
+	_, err := buildRuntimeWithPredicate(chunks, rows, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
 	if err == nil {
 		t.Fatal("expected total_count mismatch error")
 	}
@@ -509,7 +449,7 @@ func TestLoadOrBuildChunks_WhenRichRecordsProvided_BuildsCIDRScopedChunks(t *tes
 		{IsRich: true, IsValid: true, ExecutionKey: "127.0.0.1:8080/tcp", Port: 8080, CIDRName: "web", DstIP: "127.0.0.1", DstNetworkSegment: "127.0.0.0/24"},
 		{IsRich: true, IsValid: true, ExecutionKey: "127.0.0.1:1/tcp", Port: 1, CIDRName: "web", DstIP: "127.0.0.1", DstNetworkSegment: "127.0.0.0/24"},
 	}
-	chunks, err := loadOrBuildChunks(config.Config{}, rows, nil)
+	chunks, err := buildFreshChunksForTest(rows, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -664,50 +604,20 @@ func TestRecordFromScanTask_WhenMapped_PreservesTaskMetadata(t *testing.T) {
 		ResponseTimeMS: 7,
 	})
 
-	if record.IP() != "10.0.0.8" || record.IPCidr() != "10.0.0.0/24" || record.Port() != 443 {
+	if record.IP != "10.0.0.8" || record.IPCidr != "10.0.0.0/24" || record.Port != 443 {
 		t.Fatalf("unexpected primary fields: %+v", record)
 	}
-	if record.FabName() != "fab-1" || record.CIDRName() != "web-tier" || record.ServiceLabel() != "https" {
+	if record.FabName != "fab-1" || record.CIDRName != "web-tier" || record.ServiceLabel != "https" {
 		t.Fatalf("unexpected metadata fields: %+v", record)
 	}
-	if record.Decision() != "accept" || record.PolicyID() != "P-1" || record.Reason() != "approved" {
+	if record.Decision != "accept" || record.PolicyID != "P-1" || record.Reason != "approved" {
 		t.Fatalf("unexpected policy fields: %+v", record)
 	}
-	if record.ExecutionKey() != "10.0.0.8:443/tcp" || record.SrcIP() != "192.168.1.10" || record.SrcNetworkSegment() != "192.168.1.0/24" {
+	if record.ExecutionKey != "10.0.0.8:443/tcp" || record.SrcIP != "192.168.1.10" || record.SrcNetworkSegment != "192.168.1.0/24" {
 		t.Fatalf("unexpected execution metadata: %+v", record)
 	}
-	if record.Status() != "open" || record.ResponseMS() != 7 {
+	if record.Status != "open" || record.ResponseMS != 7 {
 		t.Fatalf("unexpected scan result mapping: %+v", record)
-	}
-}
-
-func TestLoadOrBuildChunks_WhenResumePathProvided_LoadsStateFromFile(t *testing.T) {
-	dir := t.TempDir()
-	resume := filepath.Join(dir, "resume.json")
-	if err := os.WriteFile(resume, []byte(`[{"cidr":"10.0.0.0/24","next_index":1,"total_count":1}]`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	chunks, err := loadOrBuildChunks(config.Config{Resume: resume}, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(chunks) != 1 || chunks[0].CIDR != "10.0.0.0/24" {
-		t.Fatalf("unexpected chunks: %#v", chunks)
-	}
-}
-
-func TestResumePath_WhenMultipleSourcesProvided_UsesPriorityOrder(t *testing.T) {
-	if got := resumePath(config.Config{Resume: "cfg.json"}, RunOptions{ResumeStatePath: "opt.json"}); got != "opt.json" {
-		t.Fatalf("unexpected resume path: %s", got)
-	}
-	if got := resumePath(config.Config{Resume: "cfg.json"}, RunOptions{}); got != "cfg.json" {
-		t.Fatalf("unexpected resume path: %s", got)
-	}
-	// The derived-from-output case goes through filepath.Dir/Join, so compare in
-	// slash form; the expectation stays a literal rather than a filepath.Join
-	// call, which would make the assertion tautological.
-	if got := filepath.ToSlash(resumePath(config.Config{Output: "/tmp/scan_results.csv"}, RunOptions{})); got != "/tmp/"+defaultResumeStateFile {
-		t.Fatalf("unexpected default resume path: %s", got)
 	}
 }
 

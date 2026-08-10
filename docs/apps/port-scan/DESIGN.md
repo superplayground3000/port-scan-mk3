@@ -195,6 +195,10 @@ error, the loop marks each later result as unwritten.
 then saves incomplete work, canceled work, or fatal work. A clean completed run
 does not save a snapshot.
 
+The configured `-resume` path is the only snapshot path. The runtime loads the
+snapshot from this path. It saves updated state to the same path when the run
+does not finish cleanly.
+
 The runtime saves the snapshot before it selects the final error. A snapshot
 save error replaces a runtime error. A runtime error replaces a dispatcher
 error.
@@ -211,10 +215,11 @@ Output close errors remain best-effort.
 
 ```go
 type scanTarget struct {
-    ip       string
-    ipCidr   *net.IPNet
-    port     int
-    meta     writer.Record  // Rich metadata
+    ip     string
+    ipCidr string
+    ipU32  uint32
+    port   int
+    meta   targetMeta
 }
 ```
 
@@ -226,7 +231,7 @@ type scanTask struct {
     ipCidr   string
     ip       string
     port     int
-    meta     writer.Record
+    meta     targetMeta
 }
 ```
 
@@ -235,6 +240,7 @@ type scanTask struct {
 ```go
 type scanResult struct {
     chunkIdx int
+    taskIdx  int
     record   writer.Record
 }
 ```
@@ -243,8 +249,10 @@ type scanResult struct {
 
 ```go
 type chunkRuntime struct {
-    targets []scanTarget
+    ipCidr  string
     ports   []int
+    targets []scanTarget
+    state   *task.Chunk
     tracker *chunkStateTracker
     bkt     *ratelimit.LeakyBucket
 }
@@ -357,13 +365,11 @@ This is the single source of truth. Changing the schema is a MAJOR version chang
 
 ## Resume Mechanism
 
-On SIGINT or error, `resume_state.json` is written containing:
-- Chunk CIDR
-- NextIndex (next task to execute)
-- ScannedCount
-- Status
-
-On resume: chunks are loaded, tracker `NextIndex` is restored, dispatch picks up where it left off.
+`scan` requires a snapshot through `-resume`. The snapshot contains chunk
+progress, pre-ping metadata, and optional output paths. On cancellation or a
+fatal error, the runtime writes updated progress to the same file. On the next
+run, the runtime rebuilds only incomplete chunks. It reopens recorded output
+files in append mode when output paths are present.
 
 ## Testing Strategy
 

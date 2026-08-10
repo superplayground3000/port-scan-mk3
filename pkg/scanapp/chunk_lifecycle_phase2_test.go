@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
@@ -208,7 +207,7 @@ func TestBuildRuntime_DifferentialGolden_AllIncomplete(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			baseChunks, err := loadOrBuildChunksWithPredicate(config.Config{}, tc.records, tc.ports, tc.reachable)
+			baseChunks, err := buildFreshChunksForTest(tc.records, tc.ports, tc.reachable)
 			if err != nil {
 				t.Fatalf("build chunks: %v", err)
 			}

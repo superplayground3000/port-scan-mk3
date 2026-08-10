@@ -233,14 +233,12 @@ func TestRun_WhenCompleted_ReleasesOutputFileHandles(t *testing.T) {
 // because it reads as coverage.
 func TestRun_WhenCanceled_ReleasesOutputFileHandles(t *testing.T) {
 	fx := newOutputLifecycleFixture(t, 63)
-	resumeStateFile := filepath.Join(fx.dir, "resume_state.json")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	err := Run(ctx, testScanConfigurationFromLegacy(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		ResumeStatePath: resumeStateFile,
 		Dial:            cancelOnFirstDial(cancel),
 	})
 	if !errors.Is(err, context.Canceled) {
@@ -249,8 +247,8 @@ func TestRun_WhenCanceled_ReleasesOutputFileHandles(t *testing.T) {
 
 	scanPath := findSingleOutputFile(t, filepath.Join(fx.dir, "scan_results-*.csv"))
 	openPath := findSingleOutputFile(t, filepath.Join(fx.dir, "opened_results-*.csv"))
-	if _, statErr := os.Stat(resumeStateFile); statErr != nil {
-		t.Fatalf("expected the canceled run to persist resume state at %s: %v", resumeStateFile, statErr)
+	if _, statErr := os.Stat(fx.cfg.Resume); statErr != nil {
+		t.Fatalf("expected the canceled run to persist resume state at %s: %v", fx.cfg.Resume, statErr)
 	}
 
 	assertReleasedHandle(t, "scan results file", scanPath)

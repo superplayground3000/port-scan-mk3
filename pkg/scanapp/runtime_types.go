@@ -3,6 +3,7 @@ package scanapp
 import (
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
+	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
 type targetMeta struct {
@@ -49,5 +50,5 @@ type scanTask struct {
 type scanResult struct {
 	chunkIdx int
 	taskIdx  int
-	record   ScanRecord
+	record   writer.Record
 }

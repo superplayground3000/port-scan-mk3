@@ -14,13 +14,13 @@
 //	collectChunkStates  ── []task.Chunk
 //	  |
 //	  v
-//	state.Save(resume_path)  → JSON file
+//	state.SaveSnapshot(resume_path)  → JSON file
 //	  |
 //	  v (on restart)
-//	state.Load(resume_path)  ← JSON file
+//	state.LoadSnapshot(resume_path)  ← JSON file
 //	  |
 //	  v
-//	loadOrBuildChunks  ── resumes with existing chunks
+//	scanRuntime  ── rebuilds incomplete chunks
 package state
 
 import (

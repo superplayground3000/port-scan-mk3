@@ -94,7 +94,7 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			// disk (issue #51).
 			persisted := false
 			if runErr == nil {
-				if err := writeScanRecord(deps.outputs.scanWriter, deps.outputs.openOnlyWriter, res.record.AsWriterRecord()); err != nil {
+				if err := writeScanRecord(deps.outputs.scanWriter, deps.outputs.openOnlyWriter, res.record); err != nil {
 					runErr = err
 					cancel()
 				} else {

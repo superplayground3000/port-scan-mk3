@@ -3,15 +3,14 @@ package scanapp
 import (
 	"testing"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 )
 
 // These tests lock the primary correctness invariant of the split
 // pre-ping/generate-buckets/scan feature (plan T1, design §5.3, risk R1):
 //
-//	the TotalCount stamped onto a chunk by the fresh-build path
-//	(loadOrBuildChunksWithPredicate) is exactly the value scan's runtime
+//	the TotalCount stamped onto a chunk by the bucket-generation path is exactly
+//	the value scan's runtime
 //	re-derivation (buildRuntimeWithPredicate) expects
 //	(len(group.targets) * len(ports)).
 //
@@ -39,7 +38,7 @@ func assertBuildRuntimeParity(
 ) {
 	t.Helper()
 
-	chunks, err := loadOrBuildChunksWithPredicate(config.Config{}, records, ports, reachable)
+	chunks, err := buildFreshChunksForTest(records, ports, reachable)
 	if err != nil {
 		t.Fatalf("fresh chunk build failed: %v", err)
 	}

@@ -42,7 +42,7 @@ type resultSummary struct {
 var errScanOutputWrite = errors.New("scan output write failed")
 
 // writeScanRecord writes a scan record to both the full-results writer and
-// the open-only writer. Both writers must implement the RecordWriter interface.
+// the open-only writer.
 //
 // A failure from either writer is returned wrapped in errScanOutputWrite. The
 // caller must treat the record as NOT fully persisted: writes are attempted in
@@ -50,7 +50,7 @@ var errScanOutputWrite = errors.New("scan output write failed")
 // full-results CSV. Counting such a record as scanned is still wrong — the
 // dispatch cursor must not be saved either way — so the asymmetry is safe here,
 // but it does mean the two output files can differ by that one row.
-func writeScanRecord(csvWriter, openOnlyWriter RecordWriter, record writer.Record) error {
+func writeScanRecord(csvWriter, openOnlyWriter recordWriter, record writer.Record) error {
 	if err := csvWriter.Write(record); err != nil {
 		return fmt.Errorf("%w: %w", errScanOutputWrite, err)
 	}
@@ -76,7 +76,7 @@ func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSu
 	// default: that means "closed" turns every unforeseen status into a claim
 	// about the remote port. Anything this switch does not recognize is counted
 	// as unknown, which is the honest answer.
-	switch res.record.Status() {
+	switch res.record.Status {
 	case scanner.StatusOpen:
 		summary.openCount++
 	case scanner.StatusCloseTimeout:
@@ -92,10 +92,10 @@ func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSu
 }
 
 func emitScanResultEvents(stdout io.Writer, logger *scanLogger, ctrl *speedctrl.Controller, progressStep int, runtimes []*chunkRuntime, res scanResult, summary *resultSummary, quiet bool) {
-	logger.eventf("scan_result", res.record.IP(), res.record.Port(), "scanned", statusErrorCause(res.record.Status()), map[string]any{
-		"status":           res.record.Status(),
-		"response_time_ms": res.record.ResponseMS(),
-		"cidr":             res.record.IPCidr(),
+	logger.eventf("scan_result", res.record.IP, res.record.Port, "scanned", statusErrorCause(res.record.Status), map[string]any{
+		"status":           res.record.Status,
+		"response_time_ms": res.record.ResponseMS,
+		"cidr":             res.record.IPCidr,
 	})
 	if summary == nil || progressStep <= 0 || summary.written%progressStep != 0 || quiet {
 		return

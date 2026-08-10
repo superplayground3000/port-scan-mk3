@@ -5,7 +5,6 @@ import (
 	"net"
 	"testing"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
@@ -140,7 +139,7 @@ func benchmarkResumeRuntime_IncompleteOfMany(b *testing.B, totalChunks, incomple
 
 	// Build the resume chunk set: every /24 is a chunk; only the first
 	// `incomplete` are still pending, the rest are fully scanned.
-	base, err := loadOrBuildChunksWithPredicate(config.Config{}, records, ports, reachable)
+	base, err := buildFreshChunksForTest(records, ports, reachable)
 	if err != nil {
 		b.Fatal(err)
 	}

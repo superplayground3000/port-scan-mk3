@@ -78,7 +78,7 @@ func TestStartScanExecutor_AtMaxWorkers_ScansLoopbackOnWindows(t *testing.T) {
 		var got outcome
 		for res := range resultCh {
 			got.total++
-			if res.record.Status() == string(scanner.StatusOpen) {
+			if res.record.Status == string(scanner.StatusOpen) {
 				got.open++
 			}
 		}

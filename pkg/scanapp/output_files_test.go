@@ -258,27 +258,3 @@ func TestUnreachableOutput_WhenFinalizeCalledOnSuccess_RenamesTmpToFinal(t *test
 		t.Fatalf("expected no tmp unreachable file, got: %v", err)
 	}
 }
-
-func TestUnreachableOutput_WhenFinalizeFails_DoesNotOpenScanOrOpenOutputs(t *testing.T) {
-	dir := t.TempDir()
-	finalPath := filepath.Join(dir, "unreachable.csv")
-	if err := os.Mkdir(finalPath, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-
-	paths := batchOutputPaths{
-		scanPath:        filepath.Join(dir, "scan.csv"),
-		openPath:        filepath.Join(dir, "open.csv"),
-		unreachablePath: finalPath,
-	}
-	if _, err := openBatchOutputsAfterUnreachable(paths); err == nil {
-		t.Fatal("expected unreachable finalize to fail")
-	}
-
-	if _, err := os.Stat(paths.scanPath + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("expected scan tmp not to be created, got: %v", err)
-	}
-	if _, err := os.Stat(paths.openPath + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("expected open tmp not to be created, got: %v", err)
-	}
-}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ var errInjectedWriteFailure = errors.New("injected disk write failure")
 // (1-based), which fails without writing anything. Run's result loop is the
 // only caller and it is single-goroutine, so no locking is needed.
 type nthWriteFailingRecordWriter struct {
-	inner  RecordWriter
+	inner  recordWriter
 	failOn int
 	writes int
 }
@@ -44,7 +45,7 @@ func (w *nthWriteFailingRecordWriter) Write(record writer.Record) error {
 func (w *nthWriteFailingRecordWriter) WriteHeader() error { return w.inner.WriteHeader() }
 
 type waitingFailingRecordWriter struct {
-	inner RecordWriter
+	inner recordWriter
 	ready <-chan struct{}
 }
 
@@ -56,7 +57,7 @@ func (w *waitingFailingRecordWriter) Write(writer.Record) error {
 func (w *waitingFailingRecordWriter) WriteHeader() error { return w.inner.WriteHeader() }
 
 type releaseThenFailRecordWriter struct {
-	inner   RecordWriter
+	inner   recordWriter
 	release chan struct{}
 	writes  int
 }
@@ -130,14 +131,13 @@ func newTwoChunkWriteFailureConfig(t *testing.T) (config.Config, string) {
 }
 
 func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
-	cfg, tmp := newTwoChunkWriteFailureConfig(t)
-	resumeOut := filepath.Join(tmp, "resume-out.json")
+	cfg, _ := newTwoChunkWriteFailureConfig(t)
+	resumeOut := cfg.Resume
 	secondChunkDialed := make(chan struct{})
 	var signalSecondChunk sync.Once
 
 	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		ResumeStatePath: resumeOut,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
 			if strings.HasPrefix(address, "10.0.0.2:") {
 				signalSecondChunk.Do(func() { close(secondChunkDialed) })
@@ -147,7 +147,7 @@ func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
 		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
 			outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("open batch outputs: %w", err)
 			}
 			outputs.scanWriter = &waitingFailingRecordWriter{
 				inner: outputs.scanWriter,
@@ -179,13 +179,12 @@ func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
 }
 
 func TestRun_WhenOutputWriteFails_KeepsCursorForFullyPersistedChunk(t *testing.T) {
-	cfg, tmp := newTwoChunkWriteFailureConfig(t)
-	resumeOut := filepath.Join(tmp, "resume-out.json")
+	cfg, _ := newTwoChunkWriteFailureConfig(t)
+	resumeOut := cfg.Resume
 	releaseSecondDial := make(chan struct{})
 
 	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
-		ResumeStatePath: resumeOut,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
 			if strings.HasPrefix(address, "10.0.0.2:") {
 				<-releaseSecondDial
@@ -225,7 +224,7 @@ func TestRun_WhenOutputWriteFails_KeepsCursorForFullyPersistedChunk(t *testing.T
 }
 
 func TestRun_WhenOutputWriteFails_AlignsScannedCountWithRewoundCursor(t *testing.T) {
-	cfg, tmp, _ := newInterruptibleScanConfig(t)
+	cfg, _, _ := newInterruptibleScanConfig(t)
 	inputSnapshot, err := state.LoadSnapshot(cfg.Resume)
 	if err != nil {
 		t.Fatalf("load input snapshot: %v", err)
@@ -236,12 +235,11 @@ func TestRun_WhenOutputWriteFails_AlignsScannedCountWithRewoundCursor(t *testing
 	if err := state.SaveSnapshot(cfg.Resume, inputSnapshot); err != nil {
 		t.Fatalf("save input snapshot: %v", err)
 	}
-	resumeOut := filepath.Join(tmp, "resume-out.json")
+	resumeOut := cfg.Resume
 
 	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
-		ResumeStatePath:    resumeOut,
 		batchOutputsOpener: failingScanWriterOpener(3),
 	})
 	if !errors.Is(runErr, errInjectedWriteFailure) {
@@ -343,74 +341,61 @@ func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPers
 	}
 }
 
-// TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot verifies both
-// supported save locations. The corrected cursor preserves safe progress.
+// TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot verifies that the
+// corrected cursor preserves safe progress in the configured snapshot.
 func TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot(t *testing.T) {
-	t.Run("explicit save path", func(t *testing.T) {
-		cfg, tmp, _ := newInterruptibleScanConfig(t)
-		resumeOut := filepath.Join(tmp, "resume-out.json")
-
-		err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-			DisableKeyboard:    true,
-			Dial:               refusingDial,
-			ResumeStatePath:    resumeOut,
-			batchOutputsOpener: failingScanWriterOpener(3),
-		})
-		if err == nil {
-			t.Fatal("expected the run to fail when writing scan output fails")
-		}
-		if !errors.Is(err, errInjectedWriteFailure) {
-			t.Fatalf("run error must identify the write failure, got: %v", err)
-		}
-		snapshot, loadErr := state.LoadSnapshot(resumeOut)
-		if loadErr != nil {
-			t.Fatalf("load corrected snapshot: %v", loadErr)
-		}
-		if len(snapshot.Chunks) != 1 {
-			t.Fatalf("expected one saved chunk, got %d", len(snapshot.Chunks))
-		}
-		chunk := snapshot.Chunks[0]
-		if chunk.NextIndex != 2 || chunk.ScannedCount != 2 {
-			t.Fatalf("saved progress=(cursor %d, scanned %d), want (2, 2)", chunk.NextIndex, chunk.ScannedCount)
-		}
-		if snapshot.Output == nil {
-			t.Fatal("corrected snapshot must record output paths")
-		}
+	cfg, _, bucketsFile := newInterruptibleScanConfig(t)
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard:    true,
+		Dial:               refusingDial,
+		batchOutputsOpener: failingScanWriterOpener(3),
 	})
-
-	t.Run("input bucket path", func(t *testing.T) {
-		cfg, _, bucketsFile := newInterruptibleScanConfig(t)
-		runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-			DisableKeyboard:    true,
-			Dial:               refusingDial,
-			batchOutputsOpener: failingScanWriterOpener(3),
-		})
-		if !errors.Is(runErr, errInjectedWriteFailure) {
-			t.Fatalf("run error must identify the write failure, got: %v", runErr)
-		}
-		snapshot, loadErr := state.LoadSnapshot(bucketsFile)
-		if loadErr != nil {
-			t.Fatalf("load corrected input bucket: %v", loadErr)
-		}
-		if len(snapshot.Chunks) != 1 || snapshot.Chunks[0].NextIndex != 2 {
-			t.Fatalf("unexpected corrected chunks: %+v", snapshot.Chunks)
-		}
-		if snapshot.Output == nil {
-			t.Fatal("corrected input bucket must record output paths")
-		}
-	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error must identify the write failure, got: %v", runErr)
+	}
+	snapshot, loadErr := state.LoadSnapshot(bucketsFile)
+	if loadErr != nil {
+		t.Fatalf("load corrected input bucket: %v", loadErr)
+	}
+	if len(snapshot.Chunks) != 1 || snapshot.Chunks[0].NextIndex != 2 {
+		t.Fatalf("unexpected corrected chunks: %+v", snapshot.Chunks)
+	}
+	if snapshot.Output == nil {
+		t.Fatal("corrected input bucket must record output paths")
+	}
 }
 
 func TestRun_WhenSnapshotSaveFails_ReturnsSaveErrorBeforeRuntimeError(t *testing.T) {
 	cfg, tmp, _ := newInterruptibleScanConfig(t)
-	missingDir := filepath.Join(tmp, "missing")
-	resumeOut := filepath.Join(missingDir, "resume.json")
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.Mkdir(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	resumeOut := filepath.Join(stateDir, "resume.json")
+	if err := os.Rename(cfg.Resume, resumeOut); err != nil {
+		t.Fatalf("move initial snapshot: %v", err)
+	}
+	cfg.Resume = resumeOut
 
 	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
-		DisableKeyboard:    true,
-		Dial:               refusingDial,
-		ResumeStatePath:    resumeOut,
-		batchOutputsOpener: failingScanWriterOpener(1),
+		DisableKeyboard: true,
+		Dial:            refusingDial,
+		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+			outputs, err := openBatchOutputs(scanPath, openPath, appendMode)
+			if err != nil {
+				return nil, fmt.Errorf("open batch outputs: %w", err)
+			}
+			if err := os.Remove(resumeOut); err != nil {
+				_ = outputs.Finalize()
+				return nil, fmt.Errorf("remove loaded snapshot: %w", err)
+			}
+			if err := os.Remove(stateDir); err != nil {
+				_ = outputs.Finalize()
+				return nil, fmt.Errorf("remove state directory: %w", err)
+			}
+			outputs.scanWriter = &nthWriteFailingRecordWriter{inner: outputs.scanWriter, failOn: 1}
+			return outputs, nil
+		},
 	})
 	if runErr == nil {
 		t.Fatal("expected the snapshot save to fail")
@@ -438,7 +423,6 @@ func TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows(t *test
 	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
-		ResumeStatePath:    filepath.Join(tmp, "resume-out.json"),
 		batchOutputsOpener: failingScanWriterOpener(failOn),
 	})
 	if !errors.Is(err, errInjectedWriteFailure) {
@@ -462,16 +446,15 @@ func TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows(t *test
 }
 
 func TestRun_WhenOutputWriteFails_LogsCorrectedResumeSnapshot(t *testing.T) {
-	cfg, tmp, _ := newInterruptibleScanConfig(t)
+	cfg, _, _ := newInterruptibleScanConfig(t)
 	cfg.LogLevel = "info"
 	cfg.Format = "json"
-	resumeOut := filepath.Join(tmp, "resume-out.json")
+	resumeOut := cfg.Resume
 	var stderr bytes.Buffer
 
 	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
-		ResumeStatePath:    resumeOut,
 		batchOutputsOpener: failingScanWriterOpener(3),
 	})
 	if !errors.Is(runErr, errInjectedWriteFailure) {
@@ -529,8 +512,8 @@ func completionTotalTasks(t *testing.T, logOutput string) int {
 // over-reaching: a Ctrl+C style cancellation is NOT an output-write failure, so
 // its snapshot must still be saved with an advanced-but-incomplete cursor.
 func TestRun_WhenCanceledWithoutWriteFailure_StillPersistsResumeSnapshot(t *testing.T) {
-	cfg, tmp, _ := newInterruptibleScanConfig(t)
-	resumeOut := filepath.Join(tmp, "resume-out.json")
+	cfg, _, _ := newInterruptibleScanConfig(t)
+	resumeOut := cfg.Resume
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -543,7 +526,6 @@ func TestRun_WhenCanceledWithoutWriteFailure_StillPersistsResumeSnapshot(t *test
 	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dial,
-		ResumeStatePath: resumeOut,
 		// The writers are wrapped but never fail, so the only difference from the
 		// write-failure test is the origin of the terminating error.
 		batchOutputsOpener: failingScanWriterOpener(0),
