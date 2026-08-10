@@ -123,13 +123,16 @@ func TestScanApp_CancelSavesResumeState(t *testing.T) {
 	// Scan now requires a bucket snapshot via -resume, so build one first (this
 	// used to rely on scan building fresh chunks inline).
 	bucketsOut := filepath.Join(tmp, "buckets.json")
-	genCfg := config.Config{
-		CIDRFile:      cidrFile,
-		PortFile:      portFile,
-		CIDRIPCol:     "ip",
-		CIDRIPCidrCol: "ip_cidr",
-		Workers:       1,
-		BucketsOut:    bucketsOut,
+	genCfg, err := config.NewGenerateBuckets(config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		SnapshotOutput: bucketsOut,
+		Workers:        1,
+	})
+	if err != nil {
+		t.Fatalf("new bucket configuration: %v", err)
 	}
 	if err := scanapp.GenerateBuckets(context.Background(), genCfg, &bytes.Buffer{}, scanapp.GenerateBucketsOptions{}); err != nil {
 		t.Fatalf("generate buckets: %v", err)
@@ -157,7 +160,7 @@ func TestScanApp_CancelSavesResumeState(t *testing.T) {
 		cancel()
 	}()
 
-	err := scanapp.Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, scanapp.RunOptions{ResumeStatePath: resumeFile})
+	err = scanapp.Run(ctx, cfg, &bytes.Buffer{}, &bytes.Buffer{}, scanapp.RunOptions{ResumeStatePath: resumeFile})
 	if err == nil {
 		t.Fatal("expected cancellation error")
 	}

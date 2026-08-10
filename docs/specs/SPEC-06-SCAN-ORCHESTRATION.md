@@ -33,8 +33,8 @@ with durable file hand-offs:
 
 | Stage | Entry point | Input | Output |
 |-------|-------------|-------|--------|
-| `pre-ping` | `RunPrePing(ctx, cfg, stdout, stderr, RunOptions)` | rich/basic CSV | `unreachable_results-<ts>.csv` (path printed to stdout) |
-| `generate-buckets` | `GenerateBuckets(ctx, cfg, stderr, GenerateBucketsOptions)` | CSV + optional unreachable blocklist | bucket `Snapshot` JSON (`-buckets-out`) |
+| `pre-ping` | `RunPrePing(ctx, PrePingConfiguration, stdout, stderr, RunOptions)` | rich/basic CSV | `unreachable_results-<ts>.csv` (path printed to stdout) |
+| `generate-buckets` | `GenerateBuckets(ctx, GenerateBucketsConfiguration, stderr, GenerateBucketsOptions)` | CSV + optional unreachable blocklist | bucket `Snapshot` JSON (`-buckets-out`) |
 | `scan` | `Run(ctx, cfg, stdout, stderr, RunOptions)` | CSV + bucket `Snapshot` (`-resume`, required) | `scan_results-<ts>.csv` / `opened_results-<ts>.csv` |
 
 Key structural facts:
@@ -46,8 +46,8 @@ Key structural facts:
   so "scan never pings" holds by construction, not by a flag.
 - **`generate-buckets`** owns the group -> chunk build (the same builder `scan`'s
   resume path re-derives, so `total_count` matches — the primary invariant),
-  stamps `pre_scan_ping.enabled=true`, and fans chunk building out over
-  `-workers` with deterministic CIDR-sorted output.
+  stamps `pre_scan_ping.enabled=true` and `timeout_ms=0`, and fans chunk
+  building out over `-workers` with deterministic CIDR-sorted output.
 - **`pre-ping`** owns reachability + the unreachable writer, with no chunk/scan
   logic. The "unreachable results finalized before any TCP dial" guarantee is
   now enforced by CLI **sequencing** (pre-ping is a separate step run before

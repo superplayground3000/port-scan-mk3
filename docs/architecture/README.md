@@ -6,7 +6,7 @@ views. Their status shows whether each view matches the current source.
 
 | View | Status | Version | Source | Reason |
 | --- | --- | --- | --- | --- |
-| `diagram.html` | Outdated | 3.0.1 | `docs/apps/port-scan/DESIGN.md` | The view still shows `config.ParseFor` for pre-ping. |
+| `diagram.html` | Outdated | 3.0.1 | `docs/apps/port-scan/DESIGN.md` | The view still shows legacy configuration for pre-ping and bucket generation. |
 | `port-scan-mk3-architecture.drawio` | Outdated | Before 2.0.0 | `docs/apps/port-scan/DESIGN.md` | The view shows the old combined scan workflow. |
 | `port-scan-mk3-architecture.html` | Outdated | Before 2.0.0 | `port-scan-mk3-architecture.drawio` | The export has the same old workflow as its source. |
 | `drawio-assets.html` | Outdated | Before 2.0.0 | `port-scan-mk3-architecture.drawio` | The assets belong to the old draw.io export. |

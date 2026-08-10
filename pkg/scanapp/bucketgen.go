@@ -10,13 +10,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
+
+// GenerateBucketsConfiguration supplies validated values to the bucket workflow.
+type GenerateBucketsConfiguration interface {
+	Resolve() (config.GenerateBucketsValues, error)
+}
 
 // GenerateBucketsOptions customizes bucket generation. All fields are optional.
 type GenerateBucketsOptions struct {
@@ -28,14 +32,12 @@ type GenerateBucketsOptions struct {
 
 // GenerateBuckets builds a resume Snapshot for the "generate-buckets" step.
 //
-// GenerateBuckets reads targets from cfg.CIDRFile. In basic mode it also reads
-// ports from cfg.PortFile. It subtracts the optional blocklist at
-// cfg.UnreachableFile. It
-// builds one task.Chunk for each CIDR group over the reachable target set
-// (targets − blocklist). It stamps pre_scan_ping.enabled=true. It then writes
-// the snapshot JSON to cfg.BucketsOut with state.SaveSnapshot.
+// GenerateBuckets resolves its configuration before it reads any files.
+// It reads targets and optional ports. It removes targets from the optional
+// blocklist. It builds one task.Chunk for each reachable CIDR group.
+// The snapshot records that pre-ping is enabled with no timeout value.
 //
-// The conversion from group to chunk fans out across cfg.Workers goroutines.
+// The conversion from group to chunk uses the configured worker count.
 // Each goroutine writes into its own pre-indexed result slot, so the writes are
 // race-free. GenerateBuckets then sorts the chunks by CIDR before
 // serialization, so the output is byte-identical for every worker count. CSV
@@ -49,18 +51,26 @@ type GenerateBucketsOptions struct {
 //
 // # Returns
 //
-//	nil on success. GenerateBuckets returns an error if it cannot load the
-//	inputs, or if the blocklist is malformed. It also returns an error if
-//	grouping fails, if ctx is canceled, or if it cannot write the snapshot.
-func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, opts GenerateBucketsOptions) error {
-	if strings.TrimSpace(cfg.BucketsOut) == "" {
+//	nil on success. GenerateBuckets returns an error if configuration resolution
+//	fails. It also returns an error for invalid input, cancellation, grouping,
+//	or snapshot output failures.
+func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfiguration, stderr io.Writer, opts GenerateBucketsOptions) error {
+	values, err := configuration.Resolve()
+	if err != nil {
+		return fmt.Errorf("resolve bucket configuration: %w", err)
+	}
+	if strings.TrimSpace(values.SnapshotOutput) == "" {
 		return fmt.Errorf("generate-buckets requires -buckets-out")
 	}
-	if strings.TrimSpace(cfg.CIDRIPCol) == "" {
-		cfg.CIDRIPCol = "ip"
-	}
-	if strings.TrimSpace(cfg.CIDRIPCidrCol) == "" {
-		cfg.CIDRIPCidrCol = "ip_cidr"
+	cfg := config.Config{
+		CIDRFile:         values.CIDRFile,
+		CIDRIPCol:        values.CIDRIPCol,
+		CIDRIPCidrCol:    values.CIDRIPCidrCol,
+		PortFile:         values.PortFile,
+		UnreachableFile:  values.BlocklistFile,
+		BucketsOut:       values.SnapshotOutput,
+		Workers:          values.Workers,
+		ProgressInterval: values.ProgressInterval,
 	}
 
 	inputs, err := loadRunInputs(cfg, defaultRunDependencies())
@@ -121,7 +131,7 @@ func GenerateBuckets(ctx context.Context, cfg config.Config, stderr io.Writer, o
 		Chunks: chunks,
 		PreScanPing: state.PreScanPingState{
 			Enabled:            true,
-			TimeoutMS:          int(cfg.PreScanPingTimeout / time.Millisecond),
+			TimeoutMS:          0,
 			UnreachableIPv4U32: blocklist,
 		},
 	}
