@@ -1,6 +1,6 @@
 # port-scan Design Document
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-08-10
+**Tool**: `cmd/port-scan` | **Revised**: 2026-08-11
 
 ## Architecture Overview
 
@@ -41,19 +41,16 @@ CLI entry point (main.go)
             scanapp.Run(ScanConfiguration)
                    │
                    ├── resolve configuration before file and network work
-                   ├── create pressure adapter from the validated policy
-                   ├── reachable predicate from snapshot blocklist (never pings)
-                   ├── build group runtimes with leaky-bucket rate control
-                   ├── start pressure API poller (unless -disable-api)
-                   ├── start scan executor (N workers, net.Dialer)
-                   │       └── net.DialTimeout → scan result
-                   ├── task dispatcher (flow control via speedctrl.Controller)
-                   ├── result writer goroutine
-                   │       ├── writer.CSVWriter → scan_results-<ts>.csv (all results)
-                   │       └── writer.OpenOnlyWriter → opened_results-<ts>.csv (open only)
-                   ├── dashboard runtime (TTY only)
-                   └── resume state persister (on SIGINT or error)
-                           └── updates the -resume bucket snapshot in place
+                   ├── create pressure, dial, and output adapters
+                   └── scanRuntime.execute(context.Context)
+                           ├── load the snapshot and build chunk runtimes
+                           ├── open output files before worker startup
+                           ├── start pressure, control, worker, and dispatch tasks
+                           ├── drain result and error channels after cancellation
+                           ├── write results and rewind unwritten tasks
+                           ├── save resume state before final error selection
+                           ├── emit one completion summary
+                           └── stop background tasks and close output files
 ```
 
 ## Pipeline Stages
@@ -99,20 +96,38 @@ cannot leave `pkg/config`.
 The scan parser accepts `-progress-interval` for compatibility. The parsed
 value does not cross the scan configuration seam and does not change behavior.
 
+### Scan runtime
+
+`scanapp.Run` is the public facade. It resolves `ScanConfiguration` and creates
+the approved runtime adapters. It then creates one private `scanRuntime` and
+calls `execute`.
+
+`scanRuntime` is a concrete module inside `pkg/scanapp`. It has no public
+interface and no separate package. The module owns preparation, startup,
+channel drain, persistence, completion, and shutdown order.
+
+The runtime accepts the existing dial, pressure, terminal, renderer, and
+output-fault adapters. It does not add interfaces for the dispatcher,
+executor, filesystem, result loop, or output session.
+
 ### Stage 1: Input Loading (`input_loader.go`)
 
-`loadRunInputs(cfg config.Config)` returns `runInputs{cidrRecords, portSpecs}`.
+`loadRunInputs(cfg, deps)` returns `runInputs{cidrRecords, portSpecs}`.
 
 1. `readCIDRFile(cfg.CIDRFile)` → `input.LoadCIDRsWithColumns()` — auto-detects basic vs rich mode
 2. `readPortFile(cfg.PortFile)` → `input.LoadPorts()` (if port file provided)
 
 ### Stage 2: Plan Building (`runtime_builder.go`, `group_builder.go`, `chunk_lifecycle.go`)
 
-`prepareRunPlan(cfg, inputs, deps, now)`:
+`scanRuntime.execute` loads the required bucket snapshot before it builds the
+runtime plan. The scan workflow does not build fresh chunks.
 
-1. **Load or build chunks** — if resume path provided, load from JSON; otherwise build from input records
-2. **Build runtimes** — create `chunkRuntime` per CIDR with state tracker and leaky-bucket rate limiter
-3. **Resolve output paths** — generate timestamped file names
+`prepareRuntimePlan` rebuilds each incomplete snapshot chunk. Each
+`chunkRuntime` contains targets, a state tracker, and a leaky-bucket rate
+limiter. A completed chunk does not produce runtime work.
+
+The snapshot can contain prior output paths. The runtime uses these paths in
+append mode. Otherwise, it creates new timestamped paths.
 
 **CIDR Grouping Strategies:**
 
@@ -121,13 +136,13 @@ value does not cross the scan configuration seam and does not change behavior.
 
 ### Stage 3: Output Setup (`batch_output.go`, `output_files.go`)
 
-`openBatchOutputs(scanPath, openedPath)` creates `.tmp` files:
-- `scan_results-...tmp` (all results)
-- `opened_results-...tmp` (open ports only)
+`openBatchOutputs(scanPath, openPath, appendMode)` writes directly to the final
+CSV paths. A new run creates each file and writes its header. A resumed run
+validates each existing header and appends rows.
 
-On `Finalize(success)`:
-- Success: rename `.tmp` → final names
-- Failure: keep `.tmp` files for debugging
+The runtime opens both output files before it starts workers or the dispatcher.
+`Finalize` only closes the file handles. A close error does not replace the
+selected run error.
 
 ### Stage 4: Executor (`executor.go`)
 
@@ -145,7 +160,8 @@ for w := 0; w < workers; w++ {
 }
 ```
 
-Workers share a bounded task channel; results are serialized by a single writer goroutine.
+Workers share a bounded task channel. The executor closes its result and error
+channels after all workers stop. The runtime result loop serializes output.
 
 ### Stage 5: Dispatch (`task_dispatcher.go`)
 
@@ -157,24 +173,37 @@ Workers share a bounded task channel; results are serialized by a single writer 
 - Creates `scanTask{chunkIdx, ipCidr, ip, port, meta}` and sends to task channel
 - Updates tracker and applies configured delay
 
+The runtime starts dispatch in one goroutine. This goroutine closes the task
+channel after `dispatchTasks` returns.
+
 ### Stage 6: Result Aggregation (`result_aggregator.go`)
 
-Main event loop receives from `resultCh`:
+`runResultLoop` receives from the result, executor-error, dispatcher-error, and
+pressure-error channels. It continues required channel drain after
+cancellation.
+
 - `writeScanRecord()` — writes to both all-results and open-only CSV writers
 - `applyScanResult()` — updates runtime tracker and summary counters
 - `emitScanResultEvents()` — logs to stdout/logger at progress intervals
 
+A result is committed only after all required writes succeed. After an output
+error, the loop marks each later result as unwritten.
+
 ### Stage 7: Resume (`resume_manager.go`)
 
-`persistResumeState(cfg, opts, logger, runtimes, dispatchErr, runErr)`:
+`persistResumeSnapshot` rewinds each affected chunk after an output error. It
+then saves incomplete work, canceled work, or fatal work. A clean completed run
+does not save a snapshot.
 
-Saves chunk states (NextIndex, ScannedCount, Status) when:
-- Incomplete (some tasks not done) AND
-- (Error occurred OR shouldSaveOnDispatchErr)
+The runtime saves the snapshot before it selects the final error. A snapshot
+save error replaces a runtime error. A runtime error replaces a dispatcher
+error.
 
 ### Stage 8: Finalize (`output_files.go`)
 
-`outputs.Finalize(success)` renames or preserves `.tmp` files.
+The runtime emits one completion summary after snapshot persistence. It then
+stops background tasks and closes the output files through deferred cleanup.
+Output close errors remain best-effort.
 
 ## Key Data Structures
 

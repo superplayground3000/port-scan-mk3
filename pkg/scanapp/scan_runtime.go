@@ -1,0 +1,269 @@
+package scanapp
+
+import (
+	"context"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/progress"
+	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
+)
+
+type scanRuntimeInput struct {
+	cfg                      config.Config
+	stdout                   io.Writer
+	stderr                   io.Writer
+	resumeStatePath          string
+	pressureLimit            int
+	disableKeyboard          bool
+	progressInterval         int
+	dashboardRefreshInterval time.Duration
+}
+
+type scanRuntimeAdapters struct {
+	deps                      runDependencies
+	logger                    *scanLogger
+	dial                      DialFunc
+	pressureSource            PressureSource
+	dashboardTerminalDetector func(io.Writer) bool
+	dashboardRenderer         dashboardRenderLoop
+	pressureObserver          pressureTelemetryObserver
+	controllerObserver        controllerTelemetryObserver
+	batchOutputsOpener        batchOutputsOpenFunc
+}
+
+type scanRuntime struct {
+	input    scanRuntimeInput
+	adapters scanRuntimeAdapters
+}
+
+func newScanRuntime(input scanRuntimeInput, adapters scanRuntimeAdapters) *scanRuntime {
+	return &scanRuntime{input: input, adapters: adapters}
+}
+
+func (r *scanRuntime) execute(ctx context.Context) error {
+	cfg := r.input.cfg
+	logger := r.adapters.logger
+
+	// Decision B: scan is a pure scanner. It requires a bucket file via -resume,
+	// constructs no reachability checker, never pings, and never builds fresh
+	// chunks. The "never pings" guarantee is structural — no checker is wired in.
+	if strings.TrimSpace(cfg.Resume) == "" {
+		return errScanRequiresResume
+	}
+
+	if err := ensureFDLimit(cfg.Workers); err != nil {
+		return err
+	}
+
+	inputs, err := loadRunInputs(cfg, r.adapters.deps)
+	if err != nil {
+		return err
+	}
+
+	snapshot, err := loadResumeSnapshot(cfg)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Resolve output paths after the snapshot. A snapshot from an interrupted run
+	// makes this run append to the same files (design §3.7). A new snapshot gets
+	// new timestamped paths for a later resume.
+	//
+	// Resolve recorded paths to absolute paths first (issue #61). An older
+	// snapshot can contain a path relative to the original working directory.
+	// Another working directory can select a second set of files.
+	// resolvePersistedOutputPaths defines the compatibility rule. The runtime
+	// records resolved paths only when it saves a snapshot. A clean run does not
+	// save a snapshot because no work remains.
+	var (
+		scanPath   string
+		openPath   string
+		appendMode bool
+	)
+	if snapshot.Output != nil {
+		recorded, resolveErr := resolvePersistedOutputPaths(*snapshot.Output)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		scanPath = recorded.ScanPath
+		openPath = recorded.OpenPath
+		appendMode = true
+	} else {
+		outputPaths, resolveErr := resolveRunOutputPaths(cfg, r.adapters.deps, time.Now())
+		if resolveErr != nil {
+			return resolveErr
+		}
+		scanPath = outputPaths.scanPath
+		openPath = outputPaths.openPath
+	}
+	outputState := &state.OutputState{ScanPath: scanPath, OpenPath: openPath}
+
+	// The snapshot blocklist supplies the reachable predicate. The scan does not
+	// use ping to calculate reachability. An empty blocklist makes all targets
+	// reachable.
+	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
+
+	progressStep := r.input.progressInterval
+	if progressStep <= 0 {
+		progressStep = 100
+	}
+
+	// Phase 5 (design §3.8) logs the runtime rebuild. bucket_parse_start reports
+	// the number of incomplete chunks. A pkg/progress reporter emits a throttled
+	// bucket_parse_progress tick for each chunk. bucket_parse_complete reports
+	// the totals and elapsed time. emitScanResultEvents keeps the result progress.
+	incompleteChunks := countIncompleteChunks(snapshot.Chunks)
+	logger.eventf("bucket_parse_start", "", 0, "bucket_parse_start", LogEventNone, map[string]any{
+		"incomplete_chunks": incompleteChunks,
+	})
+	parseStart := time.Now()
+	var parseReporter chunkExpandReporter
+	var bucketProgress progress.Reporter
+	if !cfg.Quiet {
+		bucketProgress = progress.New("bucket_parse_progress", incompleteChunks, progressStep, r.input.stderr)
+		parseReporter = bucketProgress.Inc
+	}
+
+	plan, err := prepareRuntimePlan(cfg, inputs, r.adapters.deps, reachable, snapshot.Chunks, true, parseReporter)
+	if err != nil {
+		return err
+	}
+	plan.scanOutputPath = scanPath
+	plan.openOnlyPath = openPath
+
+	if bucketProgress != nil {
+		bucketProgress.Done()
+	}
+	targetsGenerated := 0
+	for _, rt := range plan.runtimes {
+		targetsGenerated += len(rt.targets)
+	}
+	logger.eventf("bucket_parse_complete", "", 0, "bucket_parse_complete", LogEventNone, map[string]any{
+		"chunks_parsed":     incompleteChunks,
+		"targets_generated": targetsGenerated,
+		"elapsed_ms":        time.Since(parseStart).Milliseconds(),
+	})
+
+	outputs, err := r.adapters.batchOutputsOpener(scanPath, openPath, appendMode)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = outputs.Finalize()
+	}()
+
+	workers := effectiveWorkerCount(cfg.Workers)
+	queueSize := queueCapacityFor(workers)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var (
+		dashboardState *dashboardState
+		resultObserver resultTelemetryObserver
+	)
+	if shouldEnableDashboard(cfg, r.input.stderr, RunOptions{
+		dashboardTerminalDetector: r.adapters.dashboardTerminalDetector,
+	}) {
+		dashboardState = newDashboardState(dashboardTotalTasks(plan.runtimes), time.Now)
+		dashboardState.SetScannedTasks(dashboardScannedTasks(plan.runtimes))
+		resultObserver = dashboardState
+		dashboard := newDashboardRuntime(dashboardState, r.input.stderr, dashboardRuntimeOptions{
+			refreshInterval: r.input.dashboardRefreshInterval,
+			renderer:        r.adapters.dashboardRenderer,
+			logger:          logger,
+		})
+		dashboard.Start(runCtx)
+		defer dashboard.Stop()
+
+		r.adapters.pressureObserver = appendPressureTelemetryObservers(r.adapters.pressureObserver, dashboardState)
+		r.adapters.controllerObserver = appendControllerTelemetryObservers(r.adapters.controllerObserver, dashboardState)
+	}
+
+	ctrl := speedctrl.NewController(speedctrl.WithAPIEnabled(!cfg.DisableAPI))
+	startControllerTelemetrySync(runCtx, ctrl, controllerTelemetryInterval(r.input.dashboardRefreshInterval), r.adapters.controllerObserver)
+	if !r.input.disableKeyboard {
+		if err := speedctrl.StartKeyboardLoop(runCtx, ctrl); err != nil {
+			logger.errorf("failed to start keyboard loop: %v", err)
+		}
+	}
+	startManualPauseMonitor(runCtx, ctrl, logger)
+
+	apiErrCh := make(chan error, 1)
+	if !cfg.DisableAPI {
+		go pollPressureAPI(runCtx, cfg.PressureInterval, r.adapters.pressureSource, RunOptions{
+			PressureLimit:    r.input.pressureLimit,
+			pressureObserver: r.adapters.pressureObserver,
+		}, ctrl, logger, apiErrCh)
+	}
+
+	taskCh := make(chan scanTask, queueSize)
+	resultCh, executorErrCh := startScanExecutor(workers, cfg.Timeout, r.adapters.dial, logger, taskCh)
+
+	dispatchPolicy := dispatchPolicyFromConfig(cfg)
+	if dashboardState != nil {
+		dispatchPolicy.observer = newDashboardDispatchObserver(dashboardState)
+	}
+
+	// Phase 5 marks the transition from the runtime rebuild to dialing. The
+	// dispatcher now puts tasks in the queue, and the workers dial the targets.
+	logger.eventf("scan_start", "", 0, "scan_start", LogEventNone, map[string]any{
+		"workers": workers,
+		"chunks":  len(plan.runtimes),
+	})
+
+	dispatchErrCh := make(chan error, 1)
+	go func() {
+		dispatchErrCh <- dispatchTasks(runCtx, dispatchPolicy, ctrl, logger, plan.runtimes, taskCh)
+		close(taskCh)
+	}()
+
+	startedAt := time.Now()
+	summary, dispatchErr, runErr := runResultLoop(cancel, false, resultLoopChannels{
+		apiErrCh:      apiErrCh,
+		executorErrCh: executorErrCh,
+		dispatchErrCh: dispatchErrCh,
+		resultCh:      resultCh,
+	}, resultLoopDeps{
+		outputs:        outputs,
+		runtimes:       plan.runtimes,
+		resultObserver: resultObserver,
+		stdout:         r.input.stdout,
+		logger:         logger,
+		ctrl:           ctrl,
+		progressStep:   progressStep,
+		quiet:          cfg.Quiet,
+	})
+
+	for _, rt := range plan.runtimes {
+		if rt.bkt != nil {
+			rt.bkt.Close()
+		}
+	}
+
+	// A failure to save the snapshot is the run outcome. Therefore, it gets a
+	// completion summary, as constitution VI requires.
+	resumeOptions := RunOptions{ResumeStatePath: r.input.resumeStatePath}
+	if err := persistResumeSnapshot(cfg, resumeOptions, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
+		emitCompletionSummary(logger, summary, startedAt, err)
+		return err
+	}
+
+	if runErr != nil {
+		emitCompletionSummary(logger, summary, startedAt, runErr)
+		return runErr
+	}
+	if dispatchErr != nil {
+		emitCompletionSummary(logger, summary, startedAt, dispatchErr)
+		return dispatchErr
+	}
+	emitCompletionSummary(logger, summary, startedAt, nil)
+	return nil
+}

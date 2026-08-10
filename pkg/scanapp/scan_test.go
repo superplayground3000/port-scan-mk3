@@ -1343,6 +1343,9 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 	if !strings.Contains(stderr.String(), `"error_cause":"canceled"`) {
 		t.Fatalf("expected canceled error cause in logs, got %s", stderr.String())
 	}
+	if count := strings.Count(stderr.String(), `"msg":"scan_completion"`); count != 1 {
+		t.Fatalf("expected one completion summary, got %d in %s", count, stderr.String())
+	}
 	if _, statErr := os.Stat(resumeFile); statErr != nil {
 		t.Fatalf("expected persisted resume file %s, got err=%v", resumeFile, statErr)
 	}
