@@ -11,13 +11,19 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
-// ValidateValues contains the values for the validate workflow.
+// ValidateValues contains input values for the validate workflow.
 type ValidateValues struct {
-	CIDRFile      string
-	CIDRIPCol     string
+	// CIDRFile is the path of the required CIDR or rich CSV file.
+	CIDRFile string
+	// CIDRIPCol is the name of the IP selector column.
+	CIDRIPCol string
+	// CIDRIPCidrCol is the name of the boundary CIDR column.
 	CIDRIPCidrCol string
-	PortFile      string
-	Format        string
+	// PortFile is the optional path of the port file.
+	// Basic input requires this value after the workflow reads the CIDR file.
+	PortFile string
+	// Format is the output format. Its value is human or json.
+	Format string
 }
 
 type validateState struct {
@@ -42,7 +48,9 @@ type ValidateConfig struct {
 	state *validateState
 }
 
-// NewValidate verifies the values and returns a validate configuration.
+// NewValidate verifies values and returns an opaque validate configuration.
+// It returns an error for a missing CIDR path, an empty column name, or an
+// unsupported output format. An empty port path is valid for rich input.
 func NewValidate(values ValidateValues) (ValidateConfig, error) {
 	if values.CIDRFile == "" {
 		return ValidateConfig{}, errors.New("-cidr-file is required")
@@ -56,8 +64,10 @@ func NewValidate(values ValidateValues) (ValidateConfig, error) {
 	return ValidateConfig{state: &validateState{values: values}}, nil
 }
 
-// ParseValidate parses and verifies arguments for the validate command.
-// It accepts the complete legacy flag surface for CLI compatibility.
+// ParseValidate parses arguments and returns an opaque validate configuration.
+// It accepts the complete legacy flag surface for CLI compatibility. It
+// returns an error for an invalid flag, a missing value, or an invalid legacy
+// compatibility value.
 func ParseValidate(args []string) (ValidateConfig, error) {
 	fs := flag.NewFlagSet("port-scan", flag.ContinueOnError)
 	values := ValidateValues{}
@@ -92,20 +102,24 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	fs.Bool("quiet", false, "suppress console logs, keep pressure API logs")
 
 	if err := fs.Parse(args); err != nil {
-		return ValidateConfig{}, err
+		return ValidateConfig{}, fmt.Errorf("parse validate flags: %w", err)
 	}
 	if err := compatibility.validate(); err != nil {
-		return ValidateConfig{}, err
+		return ValidateConfig{}, fmt.Errorf("validate compatibility flags: %w", err)
 	}
-	return NewValidate(values)
+	cfg, err := NewValidate(values)
+	if err != nil {
+		return ValidateConfig{}, fmt.Errorf("validate arguments: %w", err)
+	}
+	return cfg, nil
 }
 
 func (v validateCompatibilityValues) validate() error {
 	if err := validateWorkers(v.workers); err != nil {
-		return err
+		return fmt.Errorf("validate workers: %w", err)
 	}
 	if err := validateBucketBounds(v.bucketRate, v.bucketCapacity); err != nil {
-		return err
+		return fmt.Errorf("validate bucket bounds: %w", err)
 	}
 	if v.preScanPingTimeout <= 0 {
 		return errors.New("-pre-scan-ping-timeout must be > 0")
@@ -113,7 +127,7 @@ func (v validateCompatibilityValues) validate() error {
 
 	pressureInterval, err := parseValidatePressureInterval(v.pressureIntervalRaw)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse pressure interval: %w", err)
 	}
 	if pressureInterval <= 0 {
 		return errors.New("-pressure-interval must be > 0")
@@ -154,7 +168,7 @@ func parseValidatePressureInterval(raw string) (time.Duration, error) {
 	}
 	interval, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, errors.New("-pressure-interval must be duration like 5s or integer seconds")
+		return 0, fmt.Errorf("-pressure-interval must be duration like 5s or integer seconds: %w", err)
 	}
 	return interval, nil
 }

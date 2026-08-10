@@ -10,8 +10,9 @@ real-time dashboard display.
 
 As of **2.0.0** it is a **three-step pipeline**. Durable file hand-offs connect
 `pre-ping`, `generate-buckets`, and `scan`. Each pipeline command uses a
-dedicated configuration parser. The validate command still uses the legacy
-parser. `scan` requires a bucket snapshot through `-resume`. It constructs no
+dedicated configuration parser. The validate command uses
+`config.ParseValidate` and an opaque configuration value. `scan` requires a
+bucket snapshot through `-resume`. It constructs no
 reachability checker and never pings. See the
 [2.0.0 release notes](../../release-notes/2.0.0.md) for the flag relocation
 table and migration.

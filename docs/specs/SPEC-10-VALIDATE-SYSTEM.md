@@ -13,11 +13,15 @@ pkg/validate/
 ### Inputs Function
 
 ```go
-func Inputs(cfg config.Config) Result
+type Configuration interface {
+    Resolve() (config.ValidateValues, error)
+}
+
+func Inputs(cfg Configuration) Result
 ```
 
 **Parameters:**
-- `cfg` - Configuration from CLI (contains file paths and column names)
+- `cfg` - Consumer-owned configuration that resolves file paths and column names.
 
 **Returns:**
 ```go
@@ -43,7 +47,7 @@ Rule: CIDR CSV must be parseable
 Error: "load cidr: <parse error>"
 ```
 
-Uses: `input.LoadCIDRsWithColumns(cfg.CIDRFile, cfg.CIDRIPCol, cfg.CIDRIPCidrCol)`
+Uses: `input.LoadCIDRsWithColumns(values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol)`
 
 ### 2.3 Port File Requirement
 
@@ -67,12 +71,16 @@ Format: <port>/tcp (one per line)
 Error: "load ports: <parse error>"
 ```
 
-Uses: `input.LoadPorts(cfg.PortFile)`
+Uses: `input.LoadPorts(values.PortFile)`
 
 ## 3. Validation Flow
 
 ```
 validate.Inputs(cfg)
+     │
+     ├─► Resolve configuration
+     │      │
+     │      └─► Error: invalid Result before file I/O
      │
      ├─► Open CIDR file
      │      │
@@ -170,14 +178,19 @@ func TestInputs_WhenDefaultCSVAndPortFileMissing_ReturnsInvalidDetail(t *testing
 
 ```go
 func handleValidateCommand(args []string, stdout, stderr io.Writer) int {
-    cfg, err := config.Parse(args)
+    cfg, err := config.ParseValidate(args)
     if err != nil {
         return 2  // CLI error
     }
 
+    values, err := cfg.Resolve()
+    if err != nil {
+        return 2
+    }
+
     result := validate.Inputs(cfg)
-    
-    cli.WriteValidation(stdout, cfg.Format, result.Valid, result.Detail)
+
+    cli.WriteValidation(stdout, values.Format, result.Valid, result.Detail)
     
     if result.Valid {
         return 0
@@ -200,7 +213,7 @@ func handleValidateCommand(args []string, stdout, stderr io.Writer) int {
 ### Step 1: Add validation in Inputs()
 
 ```go
-func Inputs(cfg config.Config) Result {
+func Inputs(cfg Configuration) Result {
     // ... existing validation
     
     // Add new validation
@@ -235,6 +248,6 @@ func TestInputs_WhenNewThingInvalid_ReturnsInvalidDetail(t *testing.T) {
 ## 11. Integration Points
 
 - **CLI**: `validate.Inputs(cfg)` called from `handleValidateCommand()`
-- **Config**: File paths from `config.Config`
+- **Config**: File paths from `config.ValidateValues` through `Configuration`
 - **Input**: Uses `input.LoadCIDRsWithColumns()` and `input.LoadPorts()`
 - **Output**: Uses `cli.WriteValidation()` for formatting

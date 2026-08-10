@@ -119,8 +119,8 @@ func TestParseFor_DefaultsAreWithinBounds(t *testing.T) {
 	}
 }
 
-// Parse is the legacy single-surface parser still used by the validate command;
-// it registers the same three flags and must enforce the same range.
+// Parse is the legacy single-surface parser. It registers these resource flags
+// and must enforce the same range until Slice 8 removes it.
 func TestParse_RejectsOutOfRangeResourceFlags(t *testing.T) {
 	cases := []struct {
 		flag  string

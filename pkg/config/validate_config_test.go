@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"flag"
 	"strconv"
 	"testing"
 
@@ -86,6 +87,12 @@ func TestParseValidate_WhenOnlyRequiredFlagProvided_AppliesValidateDefaults(t *t
 	}
 	if values != want {
 		t.Fatalf("Resolve() = %+v, want %+v", values, want)
+	}
+}
+
+func TestParseValidate_WhenHelpRequested_PreservesHelpErrorClass(t *testing.T) {
+	if _, err := ParseValidate([]string{"-help"}); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("ParseValidate(-help) error = %v, want flag.ErrHelp", err)
 	}
 }
 

@@ -36,10 +36,10 @@ The CLI uses simple switch-based dispatch. `port-scan` is a three-step pipeline
 | `args[0] == "--help"` or `-h` | Help | `handleHelpCommand()` |
 | otherwise | Error | Exit 2 |
 
-Each pipeline subcommand parses its own flag surface via
-`config.ParseFor(command, args)` — only the flags that subcommand owns are
-registered, so a foreign flag (e.g. a ping flag on `scan`) is an unknown-flag
-error. `validate` still uses `config.Parse(args)`.
+Each pipeline subcommand uses a command-specific parser. These parsers are
+`config.ParsePrePing`, `config.ParseGenerateBuckets`, and `config.ParseScan`.
+A foreign flag causes an unknown-flag error. `validate` uses
+`config.ParseValidate` and accepts the complete legacy flag surface.
 
 ### Exit Code Conventions
 
@@ -68,10 +68,11 @@ func handleValidateCommand(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse flags via `config.Parse(args)`
-2. Call `validate.Inputs(cfg)` 
-3. Output result via `cli.WriteValidation(stdout, cfg.Format, result.Valid, result.Detail)`
-4. Return 0 if valid, 1 if invalid
+1. Parse flags with `config.ParseValidate(args)`.
+2. Resolve the output format from the opaque configuration.
+3. Call `validate.Inputs(cfg)`.
+4. Write the result with `cli.WriteValidation`.
+5. Return 0 for valid input or 1 for invalid input.
 
 ### handlePrePingCommand()
 
@@ -119,20 +120,19 @@ func runScan(args []string, stdout, stderr io.Writer) int
 ```
 
 **Flow:**
-1. Parse config via `config.ParseFor("scan", args)` — **`-resume` is required**
-   and no ping flags are registered
+1. Parse configuration with `config.ParseScan(args)`. The `-resume` flag is
+   required, and no ping flags are registered.
 2. Wrap context with SIGINT handling via `state.WithSIGINTCancel(ctx)`
-3. Build `RunOptions` (pressure fetcher wiring lives only here)
-4. Call `scanapp.Run(ctx, cfg, stdout, stderr, opts)`
-5. Map errors to exit codes
+3. Call `scanapp.Run(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`.
+4. Map errors to exit codes.
 
 ## 3. Package Dependencies
 
 ```
 cmd/port-scan (CLI layer)
     │
-    ├── pkg/config       # Parse CLI args → Config struct
-    ├── pkg/validate    # validate.Inputs(cfg) for validation command
+    ├── pkg/config       # Parse CLI args → opaque command configuration
+    ├── pkg/validate     # validate.Inputs(cfg) for validation command
     ├── pkg/cli          # cli.WriteValidation() for output formatting
     ├── pkg/scanapp     # scanapp.Run() for scan command
     └── pkg/state       # state.WithSIGINTCancel() for SIGINT handling
@@ -207,8 +207,8 @@ Errors from scanapp.Run() are mapped to exit codes:
 
 ## 8. Integration Points
 
-- **Config**: `config.Parse(args)` → `Config`
-- **Validation**: `validate.Inputs(cfg)` → `Result{Valid, Detail}`
-- **Scan**: `scanapp.Run(ctx, cfg, stdout, stderr, opts)` → error
+- **Config**: four command-specific parsers return opaque configuration values.
+- **Validation**: `validate.Inputs(Configuration)` returns `Result{Valid, Detail}`.
+- **Scan**: `scanapp.Run(ctx, ScanConfiguration, stdout, stderr, opts)` returns an error.
 - **Signal**: `state.WithSIGINTCancel(ctx)` → context
 - **Output**: `cli.WriteValidation(out, format, valid, detail)` → void

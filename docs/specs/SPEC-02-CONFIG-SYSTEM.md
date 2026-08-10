@@ -2,211 +2,164 @@
 
 ## Overview
 
-```
-pkg/config/
-├── config.go        # Config struct and Parse function
-└── config_test.go  # Unit tests
-```
+`pkg/config` owns CLI parsing, defaults, ranges, and command-specific input
+rules. It does not read files or use the network.
 
-## 1. Config Struct
+The package exposes one opaque configuration type for each command:
 
 ```go
-type Config struct {
-    // Input files
-    CIDRFile string  // Required: CIDR CSV path
-    PortFile string  // Optional: Port list path (required in default mode, optional in rich mode)
+type PrePingConfig struct{ state *prePingState }
+type GenerateBucketsConfig struct{ state *generateBucketsState }
+type ScanConfig struct{ state *scanState }
+type ValidateConfig struct{ state *validateState }
+```
 
-    // Output
-    Output string    // Default: "scan_results.csv"
+Each private state contains a verified values structure. A caller cannot create
+a partial non-zero configuration.
 
-    // Scanning
-    Timeout        time.Duration // Default: 100ms
-    Delay          time.Duration // Default: 10ms
-    BucketRate     int           // Default: 100 (tokens per second)
-    BucketCapacity int           // Default: 100 (burst capacity)
-    Workers        int           // Default: 10
+## 1. Parsers
 
-    // Pressure control
-    PressureAPI      string        // Default: "http://localhost:8080/api/pressure"
-    PressureInterval time.Duration // Default: 5s
-    DisableAPI       bool          // Default: false
+The CLI uses these command-specific parsers:
 
-    // Resume
-    Resume string // Optional: resume state file path
+```go
+func ParsePrePing(args []string) (PrePingConfig, error)
+func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error)
+func ParseScan(args []string) (ScanConfig, error)
+func ParseValidate(args []string) (ValidateConfig, error)
+```
 
-    // Logging/Output
-    LogLevel string // Default: "info"
-    Format   string // Default: "human" (or "json")
+Each parser applies command defaults and input rules. It returns an error for
+an unknown flag, a missing required value, or an invalid value.
 
-    // Column mapping
-    CIDRIPCol     string // Default: "ip"
-    CIDRIPCidrCol string // Default: "ip_cidr"
+`ParseValidate` is a compatibility exception. It accepts and verifies every
+flag that the legacy `config.Parse` function accepts. It discards values that
+the validate workflow does not use.
+
+## 2. Constructors
+
+Tests and non-CLI callers use these constructors:
+
+```go
+func NewPrePing(values PrePingValues) (PrePingConfig, error)
+func NewGenerateBuckets(values GenerateBucketsValues) (GenerateBucketsConfig, error)
+func NewScan(values ScanValues) (ScanConfig, error)
+func NewValidate(values ValidateValues) (ValidateConfig, error)
+```
+
+Each constructor verifies the fields for its command. A constructor returns an
+error for a missing required value, an invalid range, or an invalid variant.
+
+## 3. Resolution
+
+Each opaque type has a `Resolve` method. The method returns the values for one
+workflow.
+
+```go
+func (PrePingConfig) Resolve() (PrePingValues, error)
+func (GenerateBucketsConfig) Resolve() (GenerateBucketsValues, error)
+func (ScanConfig) Resolve() (ScanValues, error)
+func (ValidateConfig) Resolve() (ValidateValues, error)
+```
+
+A zero configuration returns `config.ErrUninitializedConfiguration`. Each
+workflow resolves its configuration before file, process, or network work.
+
+## 4. Consumer Interfaces
+
+The consuming package owns each configuration interface. Each interface has
+one `Resolve` method.
+
+```go
+// package scanapp
+type PrePingConfiguration interface {
+    Resolve() (config.PrePingValues, error)
+}
+
+type GenerateBucketsConfiguration interface {
+    Resolve() (config.GenerateBucketsValues, error)
+}
+
+type ScanConfiguration interface {
+    Resolve() (config.ScanValues, error)
+}
+
+// package validate
+type Configuration interface {
+    Resolve() (config.ValidateValues, error)
 }
 ```
 
-## 2. Parse Function
+This direction keeps workflow packages independent from concrete
+configuration types. A command configuration cannot satisfy the interface of
+another workflow.
 
-### Signature
+## 5. Command Values
 
-```go
-func Parse(args []string) (Config, error)
-```
+`PrePingValues` contains the CIDR input, column names, output path, worker
+count, ping timeout, and progress interval.
 
-### Flag Definitions
+`GenerateBucketsValues` contains the CIDR and port inputs, column names,
+blocklist path, snapshot output, worker count, and progress interval.
 
-| Flag | Type | Default | Required | Notes |
-|------|------|---------|----------|-------|
-| `-cidr-file` | string | "" | YES | Path to CIDR CSV |
-| `-port-file` | string | "" | NO* | *Required in default mode |
-| `-output` | string | "scan_results.csv" | NO | Output directory anchor |
-| `-timeout` | duration | 100ms | NO | TCP connect timeout |
-| `-delay` | duration | 10ms | NO | Inter-task delay |
-| `-bucket-rate` | int | 100 | NO | Tokens per second (1-1000000) |
-| `-bucket-capacity` | int | 100 | NO | Burst allowance (1-1000000) |
-| `-workers` | int | 10 | NO | Worker pool size (1-1024) |
-| `-pressure-api` | string | "http://localhost:8080/api/pressure" | NO | Pressure API URL |
-| `-pressure-interval` | duration/int | 5s | NO | Supports "5" or "5s" |
-| `-disable-api` | bool | false | NO | Disable pressure API |
-| `-resume` | string | "" | NO | Resume state path |
-| `-log-level` | string | "info" | NO | debug/info/warn/error |
-| `-format` | string | "human" | NO | human/json |
-| `-cidr-ip-col` | string | "ip" | NO | Custom IP column name |
-| `-cidr-ip-cidr-col` | string | "ip_cidr" | NO | Custom CIDR column name |
+`ScanValues` contains scan inputs, output paths, concurrency values, time
+limits, rate limits, log values, and an opaque pressure policy.
 
-### Validation Rules
+`ValidateValues` contains the CIDR and port inputs, column names, and output
+format. The port path can be empty because the workflow detects rich input.
 
-| Rule | Error Message | Exit Code |
-|------|---------------|-----------|
-| `-cidr-file` must be non-empty | "-cidr-file is required" | 2 |
-| `-cidr-ip-col` must be non-empty | "-cidr-ip-col is required" | 2 |
-| `-cidr-ip-cidr-col` must be non-empty | "-cidr-ip-cidr-col is required" | 2 |
-| `-format` must be "human" or "json" | "-format must be 'human' or 'json'" | 2 |
-| `-pressure-interval` must be > 0 | "-pressure-interval must be positive" | 2 |
+## 6. Pressure Policy
 
-### Special Parsing
+`ScanValues.Pressure` is an opaque `PressurePolicy`. The policy has one of
+these verified variants:
 
-#### Pressure Interval
+- Disabled pressure polling.
+- One simple HTTP endpoint and a positive interval.
+- OAuth endpoints, credentials, and a positive interval.
 
-Accepts two formats:
-- Duration string: `5s`, `100ms`, `1m30s`
-- Plain integer (seconds): `5`, `10`
+The constructors are `PressureDisabled`, `SimplePressure`, and
+`AuthenticatedPressure`. Invalid OAuth field combinations cannot enter the
+scan workflow.
 
-Implementation in `config.go`:
-```go
-pressureIntervalRaw := fs.String("pressure-interval", "5s", "...")
-var PressureInterval time.Duration
-if i, err := strconv.Atoi(pressureIntervalRaw); err == nil {
-    PressureInterval = time.Duration(i) * time.Second
-} else {
-    PressureInterval, _ = time.ParseDuration(pressureIntervalRaw)
-}
-```
+## 7. Input Rules
 
-## 3. Default Values
+All commands require `-cidr-file` and non-empty CIDR column names. The output
+format is `human` or `json`.
 
-| Field | Default Value | Go Type |
-|-------|--------------|---------|
-| `Output` | "scan_results.csv" | string |
-| `Timeout` | 100ms | time.Duration |
-| `Delay` | 10ms | time.Duration |
-| `BucketRate` | 100 | int |
-| `BucketCapacity` | 100 | int |
-| `Workers` | 10 | int |
-| `PressureAPI` | "http://localhost:8080/api/pressure" | string |
-| `PressureInterval` | 5s | time.Duration |
-| `DisableAPI` | false | bool |
-| `Resume` | "" | string |
-| `LogLevel` | "info" | string |
-| `Format` | "human" | string |
-| `CIDRIPCol` | "ip" | string |
-| `CIDRIPCidrCol` | "ip_cidr" | string |
+The pipeline commands apply these additional rules:
 
-## 4. Error Handling
+- `pre-ping` requires valid workers and a positive ping timeout.
+- `generate-buckets` requires `-buckets-out` and valid workers.
+- `scan` requires `-resume`, valid workers, rate limits, and a valid pressure
+  policy.
 
-### InvalidFlagError
+The validate parser also verifies the legacy worker, rate, pressure, ping, and
+OAuth values. These values do not enter `ValidateValues`.
+
+## 8. Usage
 
 ```go
-var InvalidFlagError = errors.New("invalid flag")
-
-func (e *invalidFlagError) Error() string {
-    return e.message
-}
-```
-
-All validation errors wrap with `InvalidFlagError` and return exit code 2.
-
-## 5. Usage Pattern
-
-### Basic Usage
-
-```go
-cfg, err := config.Parse(os.Args[1:])
+cfg, err := config.ParseValidate(os.Args[1:])
 if err != nil {
-    if errors.Is(err, config.InvalidFlagError) {
-        return 2
-    }
-    return 1
+    return 2
 }
+
+result := validate.Inputs(cfg)
 ```
 
-### With Custom Flags
+## 9. Add a Configuration Field
 
-```go
-fs := flag.NewFlagSet("custom", flag.ContinueOnError)
-fs.String("cidr-file", "", "...")
-fs.String("output", "results.csv", "...")
+1. Add the field to the values type for one command.
+2. Add the flag to that command parser.
+3. Add the input rule to the command constructor.
+4. Add a parser test and a constructor test before production code changes.
+5. Add the field to the consumer workflow only when that workflow uses it.
 
-// Parse and override defaults
-cfg, err := config.ParseWithFlagSet(fs, os.Args[1:])
-```
-
-## 6. Adding New Configuration Options
-
-### Step 1: Add field to Config struct
-
-```go
-type Config struct {
-    // ... existing fields
-    NewOption string  // Add here
-}
-```
-
-### Step 2: Add flag definition in Parse()
-
-```go
-fs.StringVar(&cfg.NewOption, "new-option", "default_value", "description")
-```
-
-### Step 3: Add validation (if needed)
-
-```go
-if cfg.NewOption != "valid1" && cfg.NewOption != "valid2" {
-    return Config{}, &invalidFlagError{
-        message: "-new-option must be 'valid1' or 'valid2'",
-    }
-}
-```
-
-### Step 4: Add test case in config_test.go
-
-```go
-func TestParse_WithInvalidNewOption_ReturnsError(t *testing.T) {
-    _, err := config.Parse([]string{"-cidr-file", "test.csv", "-new-option", "invalid"})
-    require.Error(t, err)
-    assert.Contains(t, err.Error(), "-new-option must be")
-}
-```
-
-## 7. Implementation Files Reference
+## 10. Implementation Files
 
 | File | Responsibility |
 |------|----------------|
-| `pkg/config/config.go` | Config struct, Parse function, flag definitions |
-| `pkg/config/config_test.go` | Unit tests for parsing and validation |
-
-## 8. Integration Points
-
-- **CLI**: `config.Parse(args)` consumed by `cmd/port-scan`
-- **Validation**: `config.Config` passed to `validate.Inputs(cfg)`
-- **Scan**: `config.Config` passed to `scanapp.Run(ctx, cfg, ...)`
-- **Input**: Column names from `cfg.CIDRIPCol`, `cfg.CIDRIPCidrCol`
+| `pkg/config/pre_ping.go` | Pre-ping values, parser, constructor, and opaque type |
+| `pkg/config/generate_buckets.go` | Bucket values, parser, constructor, and opaque type |
+| `pkg/config/scan_config.go` | Scan values, parser, constructor, and pressure policy |
+| `pkg/config/validate_config.go` | Validate values, parser, constructor, and legacy flag compatibility |
+| `pkg/config/bounds.go` | Shared worker and rate limits |
