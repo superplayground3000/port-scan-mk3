@@ -152,7 +152,7 @@ result := validate.Inputs(cfg)
 2. Add the flag to that command parser.
 3. Add the input rule to the command constructor.
 4. Add a parser test and a constructor test before production code changes.
-5. Add the field to the consumer workflow only when that workflow uses it.
+5. If the consumer workflow uses the field, add the field to that workflow.
 
 ## 10. Implementation Files
 

@@ -119,8 +119,8 @@ func TestParseFor_DefaultsAreWithinBounds(t *testing.T) {
 	}
 }
 
-// Parse is the legacy single-surface parser. It registers these resource flags
-// and must enforce the same range until Slice 8 removes it.
+// Until Slice 8 removes Parse, it must enforce the same range for these
+// resource flags.
 func TestParse_RejectsOutOfRangeResourceFlags(t *testing.T) {
 	cases := []struct {
 		flag  string
