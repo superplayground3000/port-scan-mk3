@@ -401,6 +401,28 @@ func TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot(t *testing.T) {
 	})
 }
 
+func TestRun_WhenSnapshotSaveFails_ReturnsSaveErrorBeforeRuntimeError(t *testing.T) {
+	cfg, tmp, _ := newInterruptibleScanConfig(t)
+	missingDir := filepath.Join(tmp, "missing")
+	resumeOut := filepath.Join(missingDir, "resume.json")
+
+	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard:    true,
+		Dial:               refusingDial,
+		ResumeStatePath:    resumeOut,
+		batchOutputsOpener: failingScanWriterOpener(1),
+	})
+	if runErr == nil {
+		t.Fatal("expected the snapshot save to fail")
+	}
+	if errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("snapshot save error must replace the output error: %v", runErr)
+	}
+	if !strings.Contains(runErr.Error(), "create temp snapshot file") {
+		t.Fatalf("expected snapshot save error, got: %v", runErr)
+	}
+}
+
 // TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows is the
 // companion guarantee: results whose write failed or was skipped must not be
 // counted as scanned, so the reported total never claims more rows than the
