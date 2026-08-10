@@ -19,13 +19,18 @@ func handleHelpCommand(stdout io.Writer) int {
 }
 
 func handleValidateCommand(args []string, stdout, stderr io.Writer) int {
-	cfg, err := config.Parse(args)
+	cfg, err := config.ParseValidate(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	values, err := cfg.Resolve()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	result := validate.Inputs(cfg)
-	if err := cli.WriteValidation(stdout, cfg.Format, result.Valid, result.Detail); err != nil {
+	if err := cli.WriteValidation(stdout, values.Format, result.Valid, result.Detail); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}

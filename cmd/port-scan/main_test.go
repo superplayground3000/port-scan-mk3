@@ -147,6 +147,23 @@ func TestHandleValidateCommand_WhenConfigParseFails_ReturnsExit2AndWritesStderr(
 	}
 }
 
+func TestHandleValidateCommand_WhenLegacyFlagValueIsInvalid_ReturnsExit2(t *testing.T) {
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+
+	code := handleValidateCommand([]string{"-cidr-file", "targets.csv", "-workers", "0"}, out, errOut)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d stderr=%s", code, errOut.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("expected empty stdout on config parse failure, got %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "-workers") {
+		t.Fatalf("expected worker error on stderr, got %s", errOut.String())
+	}
+}
+
 func TestHandleValidateCommand_WhenJSONValidationSucceeds_PreservesDetailAndKeepsStderrEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	cidr := filepath.Join(tmp, "cidr.csv")

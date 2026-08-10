@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,43 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 )
+
+type configurationStub struct {
+	values config.ValidateValues
+	err    error
+}
+
+func (s configurationStub) Resolve() (config.ValidateValues, error) {
+	return s.values, s.err
+}
+
+func mustValidateConfig(t *testing.T, values config.ValidateValues) config.ValidateConfig {
+	t.Helper()
+	if values.CIDRIPCol == "" {
+		values.CIDRIPCol = "ip"
+	}
+	if values.CIDRIPCidrCol == "" {
+		values.CIDRIPCidrCol = "ip_cidr"
+	}
+	if values.Format == "" {
+		values.Format = "human"
+	}
+	cfg, err := config.NewValidate(values)
+	if err != nil {
+		t.Fatalf("NewValidate() error = %v", err)
+	}
+	return cfg
+}
+
+func TestInputs_WhenConfigurationCannotResolve_ReturnsInvalidResultBeforeFileAccess(t *testing.T) {
+	result := Inputs(configurationStub{err: errors.New("configuration is not initialized")})
+	if result.Valid {
+		t.Fatalf("Inputs() = %+v, want invalid result", result)
+	}
+	if !strings.Contains(result.Detail, "configuration is not initialized") {
+		t.Fatalf("Detail = %q, want configuration error", result.Detail)
+	}
+}
 
 func TestInputs_WhenFilesAreValid_ReturnsValidResult(t *testing.T) {
 	tmp := t.TempDir()
@@ -20,12 +58,12 @@ func TestInputs_WhenFilesAreValid_ReturnsValidResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Inputs(config.Config{
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
 		CIDRFile:      cidr,
 		PortFile:      port,
 		CIDRIPCol:     "ip",
 		CIDRIPCidrCol: "ip_cidr",
-	})
+	}))
 
 	if !result.Valid || result.Detail != "ok" {
 		t.Fatalf("unexpected result: %+v", result)
@@ -43,12 +81,12 @@ func TestInputs_WhenCIDRRowsInvalid_ReturnsInvalidDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Inputs(config.Config{
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
 		CIDRFile:      cidr,
 		PortFile:      port,
 		CIDRIPCol:     "ip",
 		CIDRIPCidrCol: "ip_cidr",
-	})
+	}))
 
 	if result.Valid {
 		t.Fatalf("expected invalid result, got %+v", result)
@@ -68,11 +106,11 @@ func TestInputs_WhenRichCSVAndPortFileMissing_ReturnsValidResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Inputs(config.Config{
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
 		CIDRFile:      cidr,
 		CIDRIPCol:     "ip",
 		CIDRIPCidrCol: "ip_cidr",
-	})
+	}))
 	if !result.Valid {
 		t.Fatalf("expected valid result, got %+v", result)
 	}
@@ -85,11 +123,11 @@ func TestInputs_WhenDefaultCSVAndPortFileMissing_ReturnsInvalidDetail(t *testing
 		t.Fatal(err)
 	}
 
-	result := Inputs(config.Config{
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
 		CIDRFile:      cidr,
 		CIDRIPCol:     "ip",
 		CIDRIPCidrCol: "ip_cidr",
-	})
+	}))
 	if result.Valid {
 		t.Fatalf("expected invalid result, got %+v", result)
 	}

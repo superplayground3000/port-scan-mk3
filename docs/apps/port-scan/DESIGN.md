@@ -9,15 +9,17 @@ dedicated `pkg/scanapp` entry point. The pre-ping command uses
 `config.ParsePrePing`, which returns an opaque `config.PrePingConfig` value.
 The bucket command uses `config.ParseGenerateBuckets`, which returns an opaque
 `config.GenerateBucketsConfig` value. The scan command uses `config.ParseScan`,
-which returns an opaque `config.ScanConfig` value. The validate command still
-uses a legacy configuration function. Durable files connect the three stages.
-The `scan` command only consumes a bucket snapshot.
+which returns an opaque `config.ScanConfig` value. The validate command uses
+`config.ParseValidate`, which returns an opaque `config.ValidateConfig` value.
+Durable files connect the three stages. The `scan` command only consumes a
+bucket snapshot.
 
 ```
 CLI entry point (main.go)
     │
     ├── handleValidateCommand
-    │       config.Parse() → validate.Inputs() → cli.WriteValidation()
+    │       config.ParseValidate() → config.ValidateConfig
+    │           └── validate.Inputs(Configuration) → cli.WriteValidation()
     │
     ├── handlePrePingCommand
     │       config.ParsePrePing() → config.PrePingConfig
@@ -78,6 +80,20 @@ rules as the parser. An uninitialized `config.GenerateBucketsConfig` returns
 
 The bucket configuration does not contain a pre-ping timeout. Bucket
 generation writes `timeout_ms=0` as explicit snapshot metadata.
+
+### Validate configuration
+
+`validate.Inputs` accepts the consumer-owned `Configuration` interface. The
+workflow resolves this interface before it reads an input file.
+`config.ValidateConfig` implements the interface.
+
+`config.NewValidate` gives tests and non-CLI callers the same input rules as
+the parser. An uninitialized `config.ValidateConfig` returns
+`config.ErrUninitializedConfiguration`.
+
+`config.ParseValidate` accepts the complete legacy validate flag surface. It
+verifies all legacy values and discards values that the workflow does not use.
+This behavior keeps the current CLI contract.
 
 ### Scan configuration
 
