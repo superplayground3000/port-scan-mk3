@@ -97,7 +97,15 @@ func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 		},
 	}
 	var prePingStdout bytes.Buffer
-	if err := RunPrePing(context.Background(), baseCfg, &prePingStdout, &bytes.Buffer{}, RunOptions{
+	if err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:         baseCfg.CIDRFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		Output:           baseCfg.Output,
+		Workers:          baseCfg.Workers,
+		PingTimeout:      baseCfg.PreScanPingTimeout,
+		ProgressInterval: baseCfg.ProgressInterval,
+	}), &prePingStdout, &bytes.Buffer{}, RunOptions{
 		ReachabilityChecker: checker,
 	}); err != nil {
 		t.Fatalf("pre-ping step failed: %v", err)

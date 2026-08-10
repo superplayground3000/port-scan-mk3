@@ -1,14 +1,15 @@
 # port-scan Design Document
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-07-22
+**Tool**: `cmd/port-scan` | **Revised**: 2026-08-10
 
 ## Architecture Overview
 
-As of **2.0.0**, `port-scan` is a three-step pipeline. Each subcommand parses
-its own flag surface (`config.ParseFor`) and calls a dedicated `pkg/scanapp`
-entry point. The two expensive pre-phases (pinging, chunk build) that used to run
-inline inside `scanapp.Run` are now their own commands with durable file
-hand-offs; `scan` is a pure scanner that consumes a bucket snapshot.
+As of **2.0.0**, `port-scan` is a three-step pipeline. Each subcommand calls a
+dedicated `pkg/scanapp` entry point. The pre-ping command uses
+`config.ParsePrePing`, which returns an opaque `config.PrePingConfig` value.
+The other commands still use the legacy configuration functions during the
+active configuration migration. Durable files connect the three stages.
+The `scan` command is a pure scanner that consumes a bucket snapshot.
 
 ```
 CLI entry point (main.go)
@@ -17,7 +18,8 @@ CLI entry point (main.go)
     │       config.Parse() → validate.Inputs() → cli.WriteValidation()
     │
     ├── handlePrePingCommand
-    │       ParseFor("pre-ping") → scanapp.RunPrePing()
+    │       config.ParsePrePing() → config.PrePingConfig
+    │           └── scanapp.RunPrePing(PrePingConfiguration)
     │           ├── collect unique IPs → reachability checker (platform ping)
     │           ├── progress (stderr) via pkg/progress
     │           └── writer.UnreachableWriter → unreachable_results-<ts>.csv (path → stdout)
@@ -50,6 +52,16 @@ CLI entry point (main.go)
 ```
 
 ## Pipeline Stages
+
+### Pre-ping configuration
+
+`scanapp.RunPrePing` accepts the consumer-owned `PrePingConfiguration`
+interface. The workflow resolves this interface before file, process, or
+network work. `config.PrePingConfig` implements the interface.
+
+`config.NewPrePing` gives tests and non-CLI callers the same input rules as the
+parser. An uninitialized `config.PrePingConfig` returns
+`config.ErrUninitializedConfiguration`.
 
 ### Stage 1: Input Loading (`input_loader.go`)
 

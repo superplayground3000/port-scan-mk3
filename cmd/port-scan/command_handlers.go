@@ -39,14 +39,12 @@ func handleScanCommand(args []string, stdout, stderr io.Writer) int {
 	return runScan(args, stdout, stderr)
 }
 
-// handlePrePingCommand runs the standalone pre-scan ping step. It parses only the
-// pre-ping flag surface (ParseFor rejects scan/bucket flags), needs no pressure
-// fetcher, and delegates to scanapp.RunPrePing, which writes the
-// unreachable_results-<ts>.csv and prints the resolved path to stdout for
-// chaining. Exit codes mirror runScan: parse error → 2, SIGINT/cancel → 130,
-// any other error → 1.
+// handlePrePingCommand runs the standalone pre-ping step. ParsePrePing rejects
+// flags from other commands. RunPrePing writes the unreachable-results CSV and
+// writes its resolved path to stdout. A parse error returns 2. Cancellation
+// returns 130. All other errors return 1.
 func handlePrePingCommand(args []string, stdout, stderr io.Writer) int {
-	cfg, err := config.ParseFor("pre-ping", args)
+	cfg, err := config.ParsePrePing(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2

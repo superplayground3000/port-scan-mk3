@@ -73,14 +73,15 @@ func TestRunPrePing_BasicCSVWithoutPortFile_Succeeds(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := RunPrePing(context.Background(), config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           "", // no ports — must not be required for pre-ping
-		Output:             output,
-		Workers:            4,
-		PreScanPingTimeout: 300 * time.Millisecond,
-		ProgressInterval:   1,
-	}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
+	err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:         cidrFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		Output:           output,
+		Workers:          4,
+		PingTimeout:      300 * time.Millisecond,
+		ProgressInterval: 1,
+	}), &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
 	if err != nil {
 		t.Fatalf("RunPrePing on basic CSV without -port-file errored: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestRunPrePing_BasicCSVWithoutPortFile_Succeeds(t *testing.T) {
 }
 
 func TestRunPrePing_WritesUnreachableCSVWithExistingSchema(t *testing.T) {
-	cidrFile, portFile, output := writePrePingInputs(t,
+	cidrFile, _, output := writePrePingInputs(t,
 		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\nfab2,10.0.0.2,10.0.0.2/32,web\n",
 		"80/tcp\n",
 	)
@@ -107,14 +108,15 @@ func TestRunPrePing_WritesUnreachableCSVWithExistingSchema(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := RunPrePing(context.Background(), config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             output,
-		Workers:            4,
-		PreScanPingTimeout: 300 * time.Millisecond,
-		ProgressInterval:   1,
-	}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
+	err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:         cidrFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		Output:           output,
+		Workers:          4,
+		PingTimeout:      300 * time.Millisecond,
+		ProgressInterval: 1,
+	}), &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
 	if err != nil {
 		t.Fatalf("RunPrePing error: %v", err)
 	}
@@ -140,21 +142,22 @@ func TestRunPrePing_WritesUnreachableCSVWithExistingSchema(t *testing.T) {
 }
 
 func TestRunPrePing_ReportsProgressOverUniqueIPs(t *testing.T) {
-	cidrFile, portFile, output := writePrePingInputs(t,
+	cidrFile, _, output := writePrePingInputs(t,
 		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\nfab2,10.0.0.2,10.0.0.2/32,web\nfab3,10.0.0.3,10.0.0.3/32,web\n",
 		"80/tcp\n",
 	)
 	checker := &fakePreScanChecker{} // all reachable by default
 
 	var stdout, stderr bytes.Buffer
-	if err := RunPrePing(context.Background(), config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             output,
-		Workers:            3,
-		PreScanPingTimeout: 200 * time.Millisecond,
-		ProgressInterval:   1,
-	}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker}); err != nil {
+	if err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:         cidrFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		Output:           output,
+		Workers:          3,
+		PingTimeout:      200 * time.Millisecond,
+		ProgressInterval: 1,
+	}), &stdout, &stderr, RunOptions{ReachabilityChecker: checker}); err != nil {
 		t.Fatalf("RunPrePing error: %v", err)
 	}
 
@@ -170,20 +173,21 @@ func TestRunPrePing_ReportsProgressOverUniqueIPs(t *testing.T) {
 }
 
 func TestRunPrePing_PrintsResolvedPath(t *testing.T) {
-	cidrFile, portFile, output := writePrePingInputs(t,
+	cidrFile, _, output := writePrePingInputs(t,
 		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\n",
 		"80/tcp\n",
 	)
 	checker := &fakePreScanChecker{}
 
 	var stdout, stderr bytes.Buffer
-	if err := RunPrePing(context.Background(), config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             output,
-		Workers:            2,
-		PreScanPingTimeout: 100 * time.Millisecond,
-	}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker}); err != nil {
+	if err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:      cidrFile,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+		Output:        output,
+		Workers:       2,
+		PingTimeout:   100 * time.Millisecond,
+	}), &stdout, &stderr, RunOptions{ReachabilityChecker: checker}); err != nil {
 		t.Fatalf("RunPrePing error: %v", err)
 	}
 
@@ -208,20 +212,21 @@ func TestRunPrePing_NoTargets_WritesHeaderOnlyValidCSV(t *testing.T) {
 	// a genuinely empty target set is unreachable through file input. The
 	// realizable header-only case is "nothing unreachable to write": every target
 	// is reachable, so no data rows are emitted and only the fixed header remains.
-	cidrFile, portFile, output := writePrePingInputs(t,
+	cidrFile, _, output := writePrePingInputs(t,
 		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\n",
 		"80/tcp\n",
 	)
 	checker := &fakePreScanChecker{} // all reachable by default → zero unreachable rows
 
 	var stdout, stderr bytes.Buffer
-	if err := RunPrePing(context.Background(), config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             output,
-		Workers:            4,
-		PreScanPingTimeout: 100 * time.Millisecond,
-	}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker}); err != nil {
+	if err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:      cidrFile,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+		Output:        output,
+		Workers:       4,
+		PingTimeout:   100 * time.Millisecond,
+	}), &stdout, &stderr, RunOptions{ReachabilityChecker: checker}); err != nil {
 		t.Fatalf("RunPrePing error: %v", err)
 	}
 
@@ -245,7 +250,7 @@ func TestRunPrePing_NoTargets_WritesHeaderOnlyValidCSV(t *testing.T) {
 // printed) if the worker pool swallowed the cancellation instead of propagating
 // it.
 func TestRunPrePing_WhenContextCanceledMidFlight_AbortsWithoutWritingOutput(t *testing.T) {
-	cidrFile, portFile, output := writePrePingInputs(t,
+	cidrFile, _, output := writePrePingInputs(t,
 		"fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.1,10.0.0.1/32,web\n",
 		"80/tcp\n",
 	)
@@ -255,16 +260,18 @@ func TestRunPrePing_WhenContextCanceledMidFlight_AbortsWithoutWritingOutput(t *t
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
+	prePingConfig := mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:         cidrFile,
+		CIDRIPCol:        "ip",
+		CIDRIPCidrCol:    "ip_cidr",
+		Output:           output,
+		Workers:          1,
+		PingTimeout:      time.Hour,
+		ProgressInterval: 1,
+	})
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- RunPrePing(ctx, config.Config{
-			CIDRFile:           cidrFile,
-			PortFile:           portFile,
-			Output:             output,
-			Workers:            1,
-			PreScanPingTimeout: time.Hour, // large: the abort is the cancel, not a ping timeout
-			ProgressInterval:   1,
-		}, &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
+		errCh <- RunPrePing(ctx, prePingConfig, &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
 	}()
 
 	select {
