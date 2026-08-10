@@ -43,7 +43,7 @@ const (
 
 ### Configuration
 
-From `config.Config.LogLevel`:
+The scan workflow gets the level from `config.ScanValues.LogLevel`:
 | Value | Behavior |
 |-------|----------|
 | `"debug"` | Debug, Info, Warn, Error |
@@ -206,8 +206,9 @@ func (l *Logger) Fatal(format string, args ...interface{}) {
 
 ## 11. Integration Points
 
-- **Config**: Log level from `config.Config.LogLevel`
-- **Scan**: `logx.Logger` passed via `RunOptions.Logger`
+- **Config**: Log level from `config.ScanValues.LogLevel`
+- **Scan**: `scanapp.Run` creates its private scan logger after it resolves the
+  configuration
 - **Result Aggregator**: Progress and summary logging
 - **Pressure Monitor**: State change logging
 - **Dispatcher**: Debug logging for task dispatch

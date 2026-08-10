@@ -1,5 +1,9 @@
 # SOLID Refactor + TDD Enforcement Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 背景
 
 本 feature 的目標不是新增 CLI 功能，而是在不破壞既有 operator contract 的前提下，

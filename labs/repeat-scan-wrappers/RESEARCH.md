@@ -1,5 +1,9 @@
 # Research: port-scan-mk3 repeat-scan wrappers (Linux + Windows)
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../docs/apps/port-scan/DESIGN.md)
+
 ## Topic
 
 Operators want a small, repeatable way to scan a fixed set of `ip:port` targets without

@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -194,22 +192,20 @@ func TestRun_WhenResumeStateFileProvided_ContinuesFromNextIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		Resume:             resumeFile,
-		LogLevel:           "error",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -240,23 +236,22 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       1,
-		BucketCapacity:   1,
-		Workers:          1,
-		PressureInterval: 5 * time.Millisecond,
-		DisableAPI:       false,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     1,
+		BucketCapacity: 1,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Interval: 5 * time.Millisecond},
+		LogLevel:       "error",
 	}
 	// Scan uses the bucket file as both the input and the resume snapshot.
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		PressureSource: pressureSourceFunc(func(context.Context) (pressure.Sample, error) {
 			return pressure.Sample{}, errors.New("scripted pressure failure")
@@ -313,22 +308,21 @@ func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *
 	}
 
 	checker := &fakeRunReachabilityChecker{}
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, dialErrnoFailure(syscall.ECONNREFUSED)
 		},
@@ -395,22 +389,21 @@ func TestRun_WhenResumeSnapshotPreScanStateAndContextCanceled_AbortsWithoutWriti
 
 	dialCount := 0
 	checker := &fakeRunReachabilityChecker{}
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		Resume:           resumeFile,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
@@ -468,22 +461,20 @@ func TestRun_WhenResumeReusesChunksAndBroadcastExclusionChangesTotal_FailsWithCl
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             filepath.Join(tmp, "out.csv"),
-		Timeout:            20 * time.Millisecond,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		Resume:             resumeFile,
-		LogLevel:           "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
 		DisableKeyboard: true,
 	})
@@ -524,22 +515,20 @@ func TestRun_WhenResumeCIDRIsEntirelyBroadcast_FailsWithClearError(t *testing.T)
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             filepath.Join(tmp, "out.csv"),
-		Timeout:            20 * time.Millisecond,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		Resume:             resumeFile,
-		LogLevel:           "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
 	}
 
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial") },
 		DisableKeyboard: true,
 	})
@@ -571,22 +560,21 @@ func TestRun_WhenAllTargetsBlocklisted_SucceedsWithHeaderOnlyScanOutputs(t *test
 	}
 
 	dialCount := 0
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
@@ -642,21 +630,20 @@ func TestRun_WhenRichAllTargetsBlocklisted_SucceedsWithoutDispatchingTCP(t *test
 	}
 
 	dialCount := 0
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		Output:           outFile,
-		Timeout:          20 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), unreachableFile)
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialCount++
 			return nil, errors.New("unexpected dial")
@@ -690,39 +677,6 @@ func TestRun_WhenRichAllTargetsBlocklisted_SucceedsWithoutDispatchingTCP(t *test
 	// Scan no longer writes the unreachable CSV under decision B.
 	if matches, _ := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); len(matches) != 0 {
 		t.Fatalf("scan must not write unreachable_results CSV, got %v", matches)
-	}
-}
-
-func TestFetchPressure_WhenResponseShapesVary_ReturnsParsedPressureOrError(t *testing.T) {
-	okAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintln(w, `{"pressure":95}`)
-	}))
-	defer okAPI.Close()
-
-	n, err := fetchPressure(&http.Client{Timeout: time.Second}, okAPI.URL)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if n != 95.0 {
-		t.Fatalf("unexpected pressure: %.1f", n)
-	}
-
-	strAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintln(w, `{"pressure":"88"}`)
-	}))
-	defer strAPI.Close()
-
-	n, err = fetchPressure(&http.Client{Timeout: time.Second}, strAPI.URL)
-	if err != nil || n != 88.0 {
-		t.Fatalf("unexpected parse result n=%.1f err=%v", n, err)
-	}
-
-	badAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "fail", http.StatusInternalServerError)
-	}))
-	defer badAPI.Close()
-	if _, err := fetchPressure(&http.Client{Timeout: time.Second}, badAPI.URL); err == nil {
-		t.Fatal("expected status error")
 	}
 }
 
@@ -808,9 +762,8 @@ func TestPollPressureAPI_WhenPressureCrossesThreshold_TogglesPauseAndLogsTransit
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 5 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, logger)
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -970,22 +923,20 @@ func TestRun_WhenIPColumnListsSubset_ScansOnlyListedIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -1036,24 +987,22 @@ func TestRun_WhenCIDRColumnNamesBlank_UsesDefaultInputColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		CIDRIPCol:          "",
-		CIDRIPCidrCol:      "",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
+		CIDRIPCol:      "",
+		CIDRIPCidrCol:  "",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -1100,22 +1049,20 @@ func TestRun_WhenScanCompletes_WritesOpenRecordsToOpenedResultsCSV(t *testing.T)
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -1166,25 +1113,24 @@ func TestRun_WhenScanCompletes_DoesNotWriteResumeState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          100 * time.Millisecond,
-		Delay:            0,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	before, err := os.ReadFile(cfg.Resume)
 	if err != nil {
 		t.Fatalf("read initial snapshot: %v", err)
 	}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 	}); err != nil {
 		t.Fatalf("run failed: %v", err)
@@ -1211,19 +1157,18 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           outFile,
-		Timeout:          50 * time.Millisecond,
-		Delay:            5 * time.Millisecond,
-		BucketRate:       1,
-		BucketCapacity:   1,
-		Workers:          1,
-		PressureInterval: 10 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "info",
-		Format:           "json",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          5 * time.Millisecond,
+		BucketRate:     1,
+		BucketCapacity: 1,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 
@@ -1235,7 +1180,7 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 		cancel()
 	}()
 
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true})
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled error, got %v", err)
 	}
@@ -1295,19 +1240,17 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              10 * time.Millisecond,
-		BucketRate:         2,
-		BucketCapacity:     2,
-		Workers:            2,
-		PressureInterval:   10 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		LogLevel:           "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          10 * time.Millisecond,
+		BucketRate:     2,
+		BucketCapacity: 2,
+		Workers:        2,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 
 	// Cancel on an observed event rather than after a fixed sleep: the first
@@ -1329,7 +1272,7 @@ func TestRun_WhenCanceled_ResumeStateReflectsAllCompletedScans(t *testing.T) {
 	}()
 
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	_ = Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	_ = Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(dialCtx context.Context, network, address string) (net.Conn, error) {
 			conn, dialErr := dialer.DialContext(dialCtx, network, address)

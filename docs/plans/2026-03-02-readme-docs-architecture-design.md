@@ -1,5 +1,9 @@
 # README / Docs Enhancement Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 - Date: 2026-03-02
 - Owner: Codex + xuxiping
 - Scope: Documentation only (no runtime behavior changes)

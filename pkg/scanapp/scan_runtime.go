@@ -13,7 +13,8 @@ import (
 )
 
 type scanRuntimeInput struct {
-	cfg                      config.Config
+	values                   config.ScanValues
+	pressure                 config.PressureValues
 	stdout                   io.Writer
 	stderr                   io.Writer
 	pressureLimit            int
@@ -44,13 +45,14 @@ func newScanRuntime(input scanRuntimeInput, adapters scanRuntimeAdapters) *scanR
 }
 
 func (r *scanRuntime) execute(ctx context.Context) error {
-	cfg := r.input.cfg
+	cfg := r.input.values
+	pressureValues := r.input.pressure
 	logger := r.adapters.logger
 
 	// Decision B: scan is a pure scanner. It requires a bucket file via -resume,
 	// constructs no reachability checker, never pings, and never builds fresh
 	// chunks. The "never pings" guarantee is structural — no checker is wired in.
-	if strings.TrimSpace(cfg.Resume) == "" {
+	if strings.TrimSpace(cfg.ResumeInput) == "" {
 		return errScanRequiresResume
 	}
 
@@ -58,12 +60,18 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		return err
 	}
 
-	inputs, err := loadRunInputs(cfg, r.adapters.deps)
+	inputs, err := loadRunInputs(inputConfiguration{
+		cidrFile:         cfg.CIDRFile,
+		cidrIPCol:        cfg.CIDRIPCol,
+		cidrIPCidrCol:    cfg.CIDRIPCidrCol,
+		portFile:         cfg.PortFile,
+		allowMissingPort: true,
+	}, r.adapters.deps)
 	if err != nil {
 		return err
 	}
 
-	snapshot, err := state.LoadSnapshot(cfg.Resume)
+	snapshot, err := state.LoadSnapshot(cfg.ResumeInput)
 	if err != nil {
 		return err
 	}
@@ -95,7 +103,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		openPath = recorded.OpenPath
 		appendMode = true
 	} else {
-		outputPaths, resolveErr := resolveRunOutputPaths(cfg, r.adapters.deps, time.Now())
+		outputPaths, resolveErr := resolveRunOutputPaths(cfg.Output, r.adapters.deps, time.Now())
 		if resolveErr != nil {
 			return resolveErr
 		}
@@ -130,7 +138,10 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		parseReporter = bucketProgress.Inc
 	}
 
-	plan, err := prepareRuntimePlan(cfg, inputs, reachable, snapshot.Chunks, parseReporter)
+	plan, err := prepareRuntimePlan(runtimePolicy{
+		bucketRate:     cfg.BucketRate,
+		bucketCapacity: cfg.BucketCapacity,
+	}, inputs, reachable, snapshot.Chunks, parseReporter)
 	if err != nil {
 		return err
 	}
@@ -166,7 +177,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		dashboardState *dashboardState
 		resultObserver resultTelemetryObserver
 	)
-	if shouldEnableDashboard(cfg, r.input.stderr, RunOptions{
+	if shouldEnableDashboard(cfg.Format, r.input.stderr, RunOptions{
 		dashboardTerminalDetector: r.adapters.dashboardTerminalDetector,
 	}) {
 		dashboardState = newDashboardState(dashboardTotalTasks(plan.runtimes), time.Now)
@@ -184,7 +195,8 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		r.adapters.controllerObserver = appendControllerTelemetryObservers(r.adapters.controllerObserver, dashboardState)
 	}
 
-	ctrl := speedctrl.NewController(speedctrl.WithAPIEnabled(!cfg.DisableAPI))
+	pressureEnabled := pressureValues.Kind != config.PressureKindDisabled
+	ctrl := speedctrl.NewController(speedctrl.WithAPIEnabled(pressureEnabled))
 	startControllerTelemetrySync(runCtx, ctrl, controllerTelemetryInterval(r.input.dashboardRefreshInterval), r.adapters.controllerObserver)
 	if !r.input.disableKeyboard {
 		if err := speedctrl.StartKeyboardLoop(runCtx, ctrl); err != nil {
@@ -194,17 +206,17 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	startManualPauseMonitor(runCtx, ctrl, logger)
 
 	apiErrCh := make(chan error, 1)
-	if !cfg.DisableAPI {
-		go pollPressureAPI(runCtx, cfg.PressureInterval, r.adapters.pressureSource, RunOptions{
+	if pressureEnabled {
+		go pollPressureAPI(runCtx, pressureValues.Interval, r.adapters.pressureSource, RunOptions{
 			PressureLimit:    r.input.pressureLimit,
 			pressureObserver: r.adapters.pressureObserver,
 		}, ctrl, logger, apiErrCh)
 	}
 
 	taskCh := make(chan scanTask, queueSize)
-	resultCh, executorErrCh := startScanExecutor(workers, cfg.Timeout, r.adapters.dial, logger, taskCh)
+	resultCh, executorErrCh := startScanExecutor(workers, cfg.DialTimeout, r.adapters.dial, logger, taskCh)
 
-	dispatchPolicy := dispatchPolicyFromConfig(cfg)
+	dispatchPolicy := dispatchPolicy{delay: cfg.DispatchDelay, observer: noopDispatchObserver{}}
 	if dashboardState != nil {
 		dispatchPolicy.observer = newDashboardDispatchObserver(dashboardState)
 	}
@@ -247,7 +259,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
-	if err := persistResumeSnapshot(cfg, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
+	if err := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
 		emitCompletionSummary(logger, summary, startedAt, err)
 		return err
 	}

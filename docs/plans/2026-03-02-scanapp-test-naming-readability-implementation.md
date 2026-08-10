@@ -1,5 +1,9 @@
 # ScanApp Test Naming Readability Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 在不改測試邏輯與斷言的前提下，將 `pkg/scanapp` 全部測試名稱統一為 `Test<Function>_<Scenario>_<Expected>`。

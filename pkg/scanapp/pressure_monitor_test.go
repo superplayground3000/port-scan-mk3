@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
@@ -28,8 +27,8 @@ func (s contextPressureSource) Sample(ctx context.Context) (pressure.Sample, err
 func TestPollPressureAPI_ContextCancellationDuringSampleDoesNotRecordFailure(t *testing.T) {
 	observer := &pressureTelemetryRecorder{}
 	started := make(chan struct{})
-	poller := startTestPressurePoller(t, config.Config{
-		PressureInterval: time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{Interval: time.Millisecond},
 	}, RunOptions{
 		PressureSource:   contextPressureSource{started: started},
 		pressureObserver: observer,
@@ -53,9 +52,8 @@ func TestPollPressureAPI_ContextCancellationDuringSampleDoesNotRecordFailure(t *
 func TestPollPressureAPI_ThreeConsecutiveFailures_SendsErrorAndExits(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{}, ctrl, newTestLogger())
 
 	for range 3 {
@@ -92,9 +90,8 @@ func TestPollPressureAPI_FailureRecoveryAfterTwoFails_SkipsThirdAndContinues(t *
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	ctrl.SetAPIPaused(true)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{}, ctrl, newTestLogger())
 
 	for range 2 {
@@ -130,9 +127,8 @@ func TestPollPressureAPI_FailureRecoveryAfterTwoFails_SkipsThirdAndContinues(t *
 func TestPollPressureAPI_PressureExactlyAtThreshold_Pauses(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -150,9 +146,8 @@ func TestPollPressureAPI_PressureJustBelowThreshold_DoesNotPause(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	ctrl.SetAPIPaused(true)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -169,9 +164,8 @@ func TestPollPressureAPI_PressureJustBelowThreshold_DoesNotPause(t *testing.T) {
 func TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -188,9 +182,8 @@ func TestPollPressureAPI_PausesAtNinetyOneWhenThresholdIsNinety(t *testing.T) {
 func TestPollPressureAPI_PressureDropsBelowThreshold_Resumes(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -213,9 +206,8 @@ func TestPollPressureAPI_PressureDropsBelowThreshold_Resumes(t *testing.T) {
 func TestPollPressureAPI_RapidOscillation_RepeatedlyPausesAndResumes(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	for _, step := range []struct {
@@ -243,9 +235,8 @@ func TestPollPressureAPI_ZeroPressure_DoesNotPause(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	ctrl.SetAPIPaused(true)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -263,9 +254,8 @@ func TestPollPressureAPI_NegativePressureValue_DoesNotPause(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	ctrl.SetAPIPaused(true)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -283,9 +273,8 @@ func TestPollPressureAPI_FractionalPressureRoundsUp_TriggersPause(t *testing.T) 
 	// 89.95 rounds to 90.0, so the controller pauses at threshold 90.
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -303,9 +292,8 @@ func TestPollPressureAPI_FractionalPressureJustBelow_StaysActive(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	ctrl.SetAPIPaused(true)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{
@@ -323,9 +311,8 @@ func TestPollPressureAPI_ManualPausedThenAPIPauses_BothBlocksTogether(t *testing
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController(speedctrl.WithAPIEnabled(true))
 	ctrl.SetManualPaused(true)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 10 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 10 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, newTestLogger())
 
 	server.respond(t, scriptedPressureHTTPResponse{

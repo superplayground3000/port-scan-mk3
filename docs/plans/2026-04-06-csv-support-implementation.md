@@ -1,5 +1,9 @@
 # CSV Support Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add transparent .xlsx/.csv file support to xlsx-transform via a new `pkg/spreadsheet` package with content-auto-detection and strict extension matching.

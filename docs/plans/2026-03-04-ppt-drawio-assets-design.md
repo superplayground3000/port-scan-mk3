@@ -1,5 +1,9 @@
 # 2026-03-04 PPT Draw.io Assets Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 1. 背景與目標
 
 本設計要補強既有 `port-scan-mk3` 專案簡報稿（19 頁），新增一份 **draw.io 相容** 且可讀的 HTML 圖資檔，供團隊：

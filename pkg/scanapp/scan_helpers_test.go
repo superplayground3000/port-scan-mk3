@@ -1,10 +1,8 @@
 package scanapp
 
 import (
-	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +10,6 @@ import (
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
@@ -36,11 +33,11 @@ func TestLoadRunInputs_WhenDependenciesInjected_UsesConfigPathsAndColumns(t *tes
 		},
 	}
 
-	cfg := config.Config{
-		CIDRFile:      "cidr.csv",
-		PortFile:      "ports.csv",
-		CIDRIPCol:     "source_ip",
-		CIDRIPCidrCol: "source_cidr",
+	cfg := inputConfiguration{
+		cidrFile:      "cidr.csv",
+		portFile:      "ports.csv",
+		cidrIPCol:     "source_ip",
+		cidrIPCidrCol: "source_cidr",
 	}
 
 	got, err := loadRunInputs(cfg, deps)
@@ -72,11 +69,11 @@ func TestLoadRunInputs_WhenRichInputsAndPortFileMissing_SkipsPortLoader(t *testi
 		},
 	}
 
-	cfg := config.Config{
-		CIDRFile:      "rich.csv",
-		PortFile:      "",
-		CIDRIPCol:     "ip",
-		CIDRIPCidrCol: "ip_cidr",
+	cfg := inputConfiguration{
+		cidrFile:      "rich.csv",
+		portFile:      "",
+		cidrIPCol:     "ip",
+		cidrIPCidrCol: "ip_cidr",
 	}
 	got, err := loadRunInputs(cfg, deps)
 	if err != nil {
@@ -508,30 +505,6 @@ func TestDefaultString_WhenPrimaryEmpty_UsesFallback(t *testing.T) {
 	}
 }
 
-func TestDispatchPolicyFromConfig_WhenConfigHasExtraFields_UsesDelayOnly(t *testing.T) {
-	policy := dispatchPolicyFromConfig(config.Config{
-		Delay:          25 * time.Millisecond,
-		Workers:        99,
-		BucketRate:     88,
-		BucketCapacity: 77,
-	})
-	if policy.delay != 25*time.Millisecond {
-		t.Fatalf("unexpected dispatch delay: %+v", policy)
-	}
-}
-
-func TestRuntimePolicyFromConfig_WhenConfigHasExtraFields_UsesBucketSettingsOnly(t *testing.T) {
-	policy := runtimePolicyFromConfig(config.Config{
-		Delay:          25 * time.Millisecond,
-		Workers:        99,
-		BucketRate:     88,
-		BucketCapacity: 77,
-	})
-	if policy.bucketRate != 88 || policy.bucketCapacity != 77 {
-		t.Fatalf("unexpected runtime policy: %+v", policy)
-	}
-}
-
 func TestReadCIDRFileAndReadPortFile_WhenFileMissing_ReturnsError(t *testing.T) {
 	if _, err := readCIDRFile("/not-exist", "ip", "ip_cidr"); err == nil {
 		t.Fatal("expected read cidr file error")
@@ -650,33 +623,14 @@ func TestChunkStateHelpers_WhenRuntimesMixed_ReturnExpectedSnapshots(t *testing.
 	}
 }
 
-func TestFetchPressure_WhenFieldMissingOrTypeUnsupported_ReturnsError(t *testing.T) {
-	missingFieldAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintln(w, `{"x":1}`)
-	}))
-	defer missingFieldAPI.Close()
-	if _, err := fetchPressure(&http.Client{Timeout: time.Second}, missingFieldAPI.URL); err == nil || !strings.Contains(err.Error(), "pressure field missing") {
-		t.Fatalf("expected missing pressure field error, got %v", err)
-	}
-
-	unsupportedTypeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintln(w, `{"pressure":true}`)
-	}))
-	defer unsupportedTypeAPI.Close()
-	if _, err := fetchPressure(&http.Client{Timeout: time.Second}, unsupportedTypeAPI.URL); err == nil || !strings.Contains(err.Error(), "unsupported pressure field type") {
-		t.Fatalf("expected unsupported type error, got %v", err)
-	}
-}
-
 func TestPollPressureAPI_WhenFirstTwoRequestsFail_DoesNotReturnFatalError(t *testing.T) {
 	server := newScriptedPressureServer(t)
 	ctrl := speedctrl.NewController()
 	ctrl.SetAPIPaused(true)
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", false, logOut)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 5 * time.Millisecond},
 	}, RunOptions{PressureLimit: 90}, ctrl, logger)
 
 	for range 2 {

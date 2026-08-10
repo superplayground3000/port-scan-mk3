@@ -1,5 +1,9 @@
 # PPT Draw.io HTML Assets Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 建立一份 `docs/architecture/drawio-assets.html`，完整覆蓋 19 張簡報頁面，且每頁都同時具備可讀預覽與可匯入 draw.io 的 mxGraph XML 片段。

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
@@ -15,13 +14,6 @@ import (
 type runtimePolicy struct {
 	bucketRate     int
 	bucketCapacity int
-}
-
-func runtimePolicyFromConfig(cfg config.Config) runtimePolicy {
-	return runtimePolicy{
-		bucketRate:     cfg.BucketRate,
-		bucketCapacity: cfg.BucketCapacity,
-	}
 }
 
 func shouldSaveOnDispatchErr(err error) bool {

@@ -72,10 +72,15 @@ port-scan validate -cidr-file <path> [-port-file <path>] [-format human|json]
 
 ## CLI Flags
 
-Each subcommand registers only the flags it owns; passing a foreign flag is an
-unknown-flag error. The table below lists every flag and the subcommand(s) that
-own it. Required flags: `-cidr-file` (all), `-buckets-out` (`generate-buckets`),
-`-resume` (`scan`). See [All flags](../../cli/flags.md) for per-command tables.
+The three pipeline commands register only their workflow flags. A foreign flag
+is an unknown-flag error. `validate` is a compatibility exception. It accepts
+and verifies the complete 24-flag surface of the removed shared parser.
+
+The table shows the pipeline ownership of each flag. `validate` accepts all
+listed flags except `-progress-interval`, `-unreachable-file`, and
+`-buckets-out`. Required flags are `-cidr-file` (all), `-buckets-out`
+(`generate-buckets`), and `-resume` (`scan`). See
+[All flags](../../cli/flags.md) for per-command tables.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -299,7 +304,6 @@ pkg/scanapp/
 ├── dispatch_observer.go       # Dispatch events
 ├── pressure_monitor.go        # Pressure API polling
 ├── pressure_source.go         # Validated policy to pressure adapter
-├── pressure.go                # Legacy adapters retained during migration
 ├── dashboard_state.go         # Dashboard state management
 ├── dashboard_renderer.go      # ANSI rendering
 ├── dashboard_runtime.go       # Lifecycle management

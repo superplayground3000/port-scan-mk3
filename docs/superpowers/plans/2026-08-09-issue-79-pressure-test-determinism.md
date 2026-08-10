@@ -1,5 +1,9 @@
 # Issue 79 Pressure Poll Test Determinism Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace fixed-sleep synchronization in all `TestPollPressureAPI_*` tests with observable events.

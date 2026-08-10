@@ -1,5 +1,9 @@
 # Design — Speed Up Scan Preparation
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 Status: draft · Owner: hp · Related: [`requests.md`](requests.md),
 [`profile-before.txt`](profile-before.txt) · Constitution: I (library-first),
 III (test-first), VIII (SOLID) apply.

@@ -11,14 +11,45 @@ type testScanConfiguration struct {
 	values config.ScanValues
 }
 
+// pressureConfigFixture contains only the pressure policy for a scan test.
+type pressureConfigFixture struct {
+	API          string
+	Interval     time.Duration
+	Disabled     bool
+	AuthURL      string
+	DataURLs     []string
+	ClientID     string
+	ClientSecret string
+	UseAuth      bool
+}
+
+// scanConfigFixture contains only values for the scan workflow.
+type scanConfigFixture struct {
+	CIDRFile       string
+	CIDRIPCol      string
+	CIDRIPCidrCol  string
+	PortFile       string
+	Output         string
+	Timeout        time.Duration
+	Delay          time.Duration
+	BucketRate     int
+	BucketCapacity int
+	Workers        int
+	Pressure       pressureConfigFixture
+	Resume         string
+	LogLevel       string
+	Format         string
+	Quiet          bool
+}
+
 func (c testScanConfiguration) Resolve() (config.ScanValues, error) {
 	return c.values, nil
 }
 
-func testScanConfigurationFromLegacy(t *testing.T, legacy config.Config) testScanConfiguration {
+func scanConfigurationFromFixture(t *testing.T, fixture scanConfigFixture) testScanConfiguration {
 	t.Helper()
 
-	interval := legacy.PressureInterval
+	interval := fixture.Pressure.Interval
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
@@ -27,18 +58,18 @@ func testScanConfigurationFromLegacy(t *testing.T, legacy config.Config) testSca
 		err    error
 	)
 	switch {
-	case legacy.DisableAPI:
+	case fixture.Pressure.Disabled:
 		policy = config.PressureDisabled()
-	case legacy.PressureUseAuth:
+	case fixture.Pressure.UseAuth:
 		policy, err = config.AuthenticatedPressure(
-			legacy.PressureAuthURL,
-			legacy.PressureDataURLs,
-			legacy.PressureClientID,
-			legacy.PressureClientSecret,
+			fixture.Pressure.AuthURL,
+			fixture.Pressure.DataURLs,
+			fixture.Pressure.ClientID,
+			fixture.Pressure.ClientSecret,
 			interval,
 		)
 	default:
-		endpoint := legacy.PressureAPI
+		endpoint := fixture.Pressure.API
 		if endpoint == "" {
 			endpoint = "http://localhost:8080/api/pressure"
 		}
@@ -48,34 +79,34 @@ func testScanConfigurationFromLegacy(t *testing.T, legacy config.Config) testSca
 		t.Fatalf("create test pressure policy: %v", err)
 	}
 
-	ipColumn := legacy.CIDRIPCol
+	ipColumn := fixture.CIDRIPCol
 	if ipColumn == "" {
 		ipColumn = "ip"
 	}
-	cidrColumn := legacy.CIDRIPCidrCol
+	cidrColumn := fixture.CIDRIPCidrCol
 	if cidrColumn == "" {
 		cidrColumn = "ip_cidr"
 	}
-	format := legacy.Format
+	format := fixture.Format
 	if format == "" {
 		format = "human"
 	}
 
 	return testScanConfiguration{values: config.ScanValues{
-		CIDRFile:       legacy.CIDRFile,
+		CIDRFile:       fixture.CIDRFile,
 		CIDRIPCol:      ipColumn,
 		CIDRIPCidrCol:  cidrColumn,
-		PortFile:       legacy.PortFile,
-		ResumeInput:    legacy.Resume,
-		Output:         legacy.Output,
-		Workers:        legacy.Workers,
-		DialTimeout:    legacy.Timeout,
-		DispatchDelay:  legacy.Delay,
-		BucketRate:     legacy.BucketRate,
-		BucketCapacity: legacy.BucketCapacity,
-		LogLevel:       legacy.LogLevel,
+		PortFile:       fixture.PortFile,
+		ResumeInput:    fixture.Resume,
+		Output:         fixture.Output,
+		Workers:        fixture.Workers,
+		DialTimeout:    fixture.Timeout,
+		DispatchDelay:  fixture.Delay,
+		BucketRate:     fixture.BucketRate,
+		BucketCapacity: fixture.BucketCapacity,
+		LogLevel:       fixture.LogLevel,
 		Format:         format,
-		Quiet:          legacy.Quiet,
+		Quiet:          fixture.Quiet,
 		Pressure:       policy,
 	}}
 }

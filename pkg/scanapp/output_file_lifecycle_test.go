@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
@@ -45,7 +44,7 @@ import (
 type outputLifecycleFixture struct {
 	dir        string
 	bucketFile string
-	cfg        config.Config
+	cfg        scanConfigFixture
 }
 
 func newOutputLifecycleFixture(t *testing.T, closedPorts int) outputLifecycleFixture {
@@ -86,18 +85,16 @@ func newOutputLifecycleFixture(t *testing.T, closedPorts int) outputLifecycleFix
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             filepath.Join(dir, "out.csv"),
-		Timeout:            50 * time.Millisecond,
-		BucketRate:         1000,
-		BucketCapacity:     1000,
-		Workers:            1,
-		PressureInterval:   10 * time.Second,
-		DisableAPI:         true,
-		DisablePreScanPing: true,
-		LogLevel:           "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(dir, "out.csv"),
+		Timeout:        50 * time.Millisecond,
+		BucketRate:     1000,
+		BucketCapacity: 1000,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	bucketFile := generateBucketFile(t, cfg, filepath.Join(dir, "buckets.json"), "")
 	cfg.Resume = bucketFile
@@ -206,7 +203,7 @@ func snapshotTotalTargets(t *testing.T, bucketFile string) int {
 func TestRun_WhenCompleted_ReleasesOutputFileHandles(t *testing.T) {
 	fx := newOutputLifecycleFixture(t, 7)
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 	}); err != nil {
 		t.Fatalf("completed run: %v", err)
@@ -237,7 +234,7 @@ func TestRun_WhenCanceled_ReleasesOutputFileHandles(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := Run(ctx, testScanConfigurationFromLegacy(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(ctx, scanConfigurationFromFixture(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstDial(cancel),
 	})
@@ -268,7 +265,7 @@ func TestRun_WhenResumedIntoSameOutputFile_ReopensAndAppendsWithoutDuplicatingHe
 	// Run 1: interrupted, so work is left for the resume to append.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := Run(ctx, testScanConfigurationFromLegacy(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, scanConfigurationFromFixture(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -289,7 +286,7 @@ func TestRun_WhenResumedIntoSameOutputFile_ReopensAndAppendsWithoutDuplicatingHe
 
 	// Run 2: -resume reopens the same files in append mode. A leaked handle from
 	// run 1 surfaces here as an open failure on Windows.
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, fx.cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 	}); err != nil {
 		t.Fatalf("run 2 (resume/append into %s): %v", scanPath, err)

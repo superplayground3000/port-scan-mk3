@@ -1,5 +1,9 @@
 # Windows CI 修正設計
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 追蹤 issue: #47 · 基準 commit: `e50dcd1` (2.1.0) · 撰寫日期: 2026-08-01
 
 > **狀態(2026-08-02)**

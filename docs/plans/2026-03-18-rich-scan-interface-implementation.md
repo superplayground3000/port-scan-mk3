@@ -1,5 +1,9 @@
 # Rich Scan Interface Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 `scan` 執行期間提供預設啟用的終端 rich dashboard，顯示 progress、current CIDR/bucket status、dispatch/results 速率、controller 狀態與 pressure API 狀態，且不破壞既有 CLI 契約。

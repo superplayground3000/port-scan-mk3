@@ -1,5 +1,9 @@
 # SOLID Refactor + TDD Enforcement Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Deliver the SOLID refactor incrementally by completing `T001-T006` first as hard constraints, then using those artifacts to drive baseline tests and code changes.

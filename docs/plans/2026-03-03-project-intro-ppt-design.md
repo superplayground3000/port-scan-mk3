@@ -1,5 +1,9 @@
 # 2026-03-03 Project Intro PPT Design (port-scan-mk3)
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 1. Context
 
 - Project: `port-scan-mk3`

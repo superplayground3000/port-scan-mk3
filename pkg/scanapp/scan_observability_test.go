@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/internal/testkit"
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
@@ -57,12 +56,12 @@ type scriptedPressureResult struct {
 	err      error
 }
 
-type scriptedPressureFetcher struct {
+type scriptedPressureSource struct {
 	mu      sync.Mutex
 	results []scriptedPressureResult
 }
 
-func (f *scriptedPressureFetcher) Sample(context.Context) (pressure.Sample, error) {
+func (f *scriptedPressureSource) Sample(context.Context) (pressure.Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -82,12 +81,12 @@ type scriptedSourcePressureResult struct {
 	err      error
 }
 
-type scriptedSourcePressureFetcher struct {
+type scriptedMultiPressureSource struct {
 	mu      sync.Mutex
 	results []scriptedSourcePressureResult
 }
 
-func (f *scriptedSourcePressureFetcher) Sample(context.Context) (pressure.Sample, error) {
+func (f *scriptedMultiPressureSource) Sample(context.Context) (pressure.Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -156,25 +155,23 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "info",
-		Format:             "json",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -210,25 +207,23 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "info",
-		Format:             "json",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), io.Discard, stderr, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, errors.New("dial failed for observability test")
@@ -258,20 +253,18 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            50 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "info",
-		Format:             "json",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        50 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -279,7 +272,7 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), io.Discard, stderr, RunOptions{
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), io.Discard, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			panic("boom in dial")
@@ -310,32 +303,30 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              10 * time.Millisecond,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   10 * time.Millisecond,
-		DisableAPI:         false,
-		LogLevel:           "error",
-		Format:             "human",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          10 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Interval: 10 * time.Millisecond},
+		LogLevel:       "error",
+		Format:         "human",
 	}
 
 	recorder := &dashboardSnapshotRecorder{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			time.Sleep(25 * time.Millisecond)
 			return nil, errors.New("dial refused for test")
 		},
 		PressureLimit: 90,
-		PressureSource: &scriptedSourcePressureFetcher{results: []scriptedSourcePressureResult{
+		PressureSource: &scriptedMultiPressureSource{results: []scriptedSourcePressureResult{
 			{
 				pressure: 95,
 				sources: []pressure.SourceResult{
@@ -462,21 +453,19 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   10 * time.Millisecond,
-		DisableAPI:         true,
-		Resume:             resumeFile,
-		LogLevel:           "error",
-		Format:             "human",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
+		Format:         "human",
 	}
 
 	firstSnapshotSeen := make(chan struct{})
@@ -489,7 +478,7 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 		},
 	}
 
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			select {
@@ -531,9 +520,8 @@ func TestPollPressureAPI_WhenJSONLoggerEnabled_EmitsPauseResumeMessages(t *testi
 	ctrl := speedctrl.NewController()
 	logOut := &lockedBuffer{}
 	logger := newLogger("info", true, logOut)
-	poller := startTestPressurePoller(t, config.Config{
-		PressureAPI:      server.server.URL,
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{API: server.server.URL, Interval: 5 * time.Millisecond},
 	}, RunOptions{
 		PressureLimit: 90,
 	}, ctrl, logger)
@@ -577,11 +565,11 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 	boom1 := errors.New("boom-1")
 	boom2 := errors.New("boom-2")
 
-	poller := startTestPressurePoller(t, config.Config{
-		PressureInterval: 5 * time.Millisecond,
+	poller := startTestPressurePoller(t, pressurePollFixture{
+		Pressure: pressureConfigFixture{Interval: 5 * time.Millisecond},
 	}, RunOptions{
 		PressureLimit:      90,
-		PressureSource:     &scriptedPressureFetcher{results: []scriptedPressureResult{{err: boom1}, {err: boom2}, {pressure: 42}}},
+		PressureSource:     &scriptedPressureSource{results: []scriptedPressureResult{{err: boom1}, {err: boom2}, {pressure: 42}}},
 		pressureObserver:   observer,
 		controllerObserver: controllerObserver,
 	}, ctrl, logger)

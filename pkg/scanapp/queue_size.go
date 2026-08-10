@@ -11,7 +11,7 @@ const queueSlotsPerWorker = 2
 // effectiveWorkerCount reduces a requested worker count to one the scanner can
 // actually run: at least 1, at most config.MaxWorkers.
 //
-// config.ParseFor already rejects anything outside that range, so this is the
+// config.ParseScan already rejects anything outside that range, so this is the
 // library-side guarantee for programmatic callers rather than a second policy.
 // Clamping here is what lets queueCapacityFor be total: no arithmetic downstream
 // has to consider a negative or overflowing worker count.

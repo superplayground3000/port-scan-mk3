@@ -1,5 +1,9 @@
 # ScanApp 測試命名可讀性設計
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 - 日期：2026-03-02
 - 狀態：已確認（使用者核准）
 - 範圍：`pkg/scanapp` 測試命名統一

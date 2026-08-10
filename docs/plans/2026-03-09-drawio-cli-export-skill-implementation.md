@@ -1,5 +1,9 @@
 # Draw.io CLI Export Skill Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 建立一個全域可重用的 `drawio-cli-export` skill，讓未來 session 能穩定使用本機 draw.io CLI 匯出 `.drawio` 檔為圖片或 PDF。

@@ -1,5 +1,9 @@
 # Port Scan MK3 IP-Aware Full Spec Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 1. Scope
 
 This design finalizes full implementation of `plan/design.md` with additional requirements:

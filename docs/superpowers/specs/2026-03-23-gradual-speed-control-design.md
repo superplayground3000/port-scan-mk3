@@ -1,5 +1,9 @@
 # Gradual Speed Control with Pressure Feedback
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../apps/port-scan/DESIGN.md)
+
 **Date:** 2026-03-23  
 **Topic:** Gradual Ramp-Up/Ramp-Down Speed Control  
 **Status:** Draft

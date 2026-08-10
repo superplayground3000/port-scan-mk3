@@ -64,7 +64,7 @@ func TestEffectiveWorkerCount_ClampsIntoTheAllowedRange(t *testing.T) {
 	}
 }
 
-// config.ParseFor already rejects such a worker count, so this covers the
+// config.ParseScan already rejects such a worker count, so this covers the
 // library entry point directly: startScanExecutor must not panic sizing its
 // result queue, and must not try to start that many goroutines.
 func TestStartScanExecutor_WhenWorkerCountOverflowsQueueArithmetic_RunsClamped(t *testing.T) {

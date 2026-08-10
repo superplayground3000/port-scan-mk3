@@ -209,6 +209,6 @@ func (tb *TokenBucket) Acquire(ctx context.Context) error {
 
 ## 8. Integration Points
 
-- **Config**: Rate and capacity from `config.Config`
+- **Config**: Rate and capacity from `config.ScanValues`
 - **Chunk Runtime**: Each `chunkRuntime` has its own bucket
 - **Dispatcher**: Calls `Acquire()` before each task

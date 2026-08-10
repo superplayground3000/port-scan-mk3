@@ -1,5 +1,9 @@
 # 2026-03-06 Detailed Architecture Drawings Design (Draw.io Compatible)
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 1. Objective
 
 Create a detailed architecture diagram set for `port-scan-mk3` in draw.io-compatible format that clearly shows:

@@ -1,5 +1,9 @@
 # README and Documentation Refresh Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Deliver developer-focused documentation that explains how `port-scan-mk3` works, fully documents all CLI flags, adds scenario-based command guides, explains e2e coverage, and ships a static HTML+CSS architecture diagram.

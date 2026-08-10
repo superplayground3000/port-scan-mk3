@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 )
 
 type dashboardRendererStub struct {
@@ -28,34 +26,34 @@ func TestDashboardRuntime_ShouldEnableOnlyForHumanTTYStderr(t *testing.T) {
 
 	stderr := &bytes.Buffer{}
 	tests := []struct {
-		name  string
-		cfg   config.Config
-		isTTY bool
-		want  bool
+		name   string
+		format string
+		isTTY  bool
+		want   bool
 	}{
 		{
-			name:  "json format disables dashboard",
-			cfg:   config.Config{Format: "json"},
-			isTTY: true,
-			want:  false,
+			name:   "json format disables dashboard",
+			format: "json",
+			isTTY:  true,
+			want:   false,
 		},
 		{
-			name:  "non tty stderr disables dashboard",
-			cfg:   config.Config{Format: "human"},
-			isTTY: false,
-			want:  false,
+			name:   "non tty stderr disables dashboard",
+			format: "human",
+			isTTY:  false,
+			want:   false,
 		},
 		{
-			name:  "tty stderr and human format enables dashboard",
-			cfg:   config.Config{Format: "human"},
-			isTTY: true,
-			want:  true,
+			name:   "tty stderr and human format enables dashboard",
+			format: "human",
+			isTTY:  true,
+			want:   true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := shouldEnableDashboard(tc.cfg, stderr, RunOptions{
+			got := shouldEnableDashboard(tc.format, stderr, RunOptions{
 				dashboardTerminalDetector: func(io.Writer) bool { return tc.isTTY },
 			})
 			if got != tc.want {
@@ -126,20 +124,18 @@ func TestRun_WhenRichDashboardEnabled_RendersPeriodicUpdatesToStderr(t *testing.
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            100 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		Format:             "human",
-		PreScanPingTimeout: 100 * time.Millisecond,
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        100 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
+		Format:         "human",
 	}
 
 	stdout := &bytes.Buffer{}
@@ -149,7 +145,7 @@ func TestRun_WhenRichDashboardEnabled_RendersPeriodicUpdatesToStderr(t *testing.
 
 	var renders atomic.Int32
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), stdout, stderr, RunOptions{
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), stdout, stderr, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			<-ctx.Done()

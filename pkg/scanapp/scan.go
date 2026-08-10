@@ -3,6 +3,7 @@ package scanapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -69,18 +70,18 @@ type batchOutputsOpenFunc func(scanPath, openPath string, appendMode bool) (*bat
 func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io.Writer, opts RunOptions) error {
 	values, err := configuration.Resolve()
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve scan configuration: %w", err)
 	}
 	pressureValues, err := values.Pressure.Resolve()
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve pressure policy: %w", err)
 	}
 
 	pressureSource := opts.PressureSource
 	if pressureSource == nil && pressureValues.Kind != config.PressureKindDisabled {
 		pressureSource, err = newPressureSource(values.Pressure)
 		if err != nil {
-			return err
+			return fmt.Errorf("create pressure source: %w", err)
 		}
 	}
 
@@ -95,10 +96,10 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		openOutputs = openBatchOutputs
 	}
 
-	cfg := legacyScanConfig(values, pressureValues)
-	logger := newLoggerWithQuiet(cfg.LogLevel, cfg.Format == "json", stderr, cfg.Quiet)
+	logger := newLoggerWithQuiet(values.LogLevel, values.Format == "json", stderr, values.Quiet)
 	runtime := newScanRuntime(scanRuntimeInput{
-		cfg:                      cfg,
+		values:                   values,
+		pressure:                 pressureValues,
 		stdout:                   stdout,
 		stderr:                   stderr,
 		pressureLimit:            opts.PressureLimit,
@@ -116,32 +117,8 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		controllerObserver:        opts.controllerObserver,
 		batchOutputsOpener:        openOutputs,
 	})
-	return runtime.execute(ctx)
-}
-
-func legacyScanConfig(values config.ScanValues, pressureValues config.PressureValues) config.Config {
-	return config.Config{
-		CIDRFile:             values.CIDRFile,
-		CIDRIPCol:            values.CIDRIPCol,
-		CIDRIPCidrCol:        values.CIDRIPCidrCol,
-		PortFile:             values.PortFile,
-		Resume:               values.ResumeInput,
-		Output:               values.Output,
-		Workers:              values.Workers,
-		Timeout:              values.DialTimeout,
-		Delay:                values.DispatchDelay,
-		BucketRate:           values.BucketRate,
-		BucketCapacity:       values.BucketCapacity,
-		LogLevel:             values.LogLevel,
-		Format:               values.Format,
-		Quiet:                values.Quiet,
-		DisableAPI:           pressureValues.Kind == config.PressureKindDisabled,
-		PressureAPI:          pressureValues.Endpoint,
-		PressureInterval:     pressureValues.Interval,
-		PressureAuthURL:      pressureValues.AuthEndpoint,
-		PressureDataURLs:     append([]string(nil), pressureValues.DataEndpoints...),
-		PressureClientID:     pressureValues.ClientID,
-		PressureClientSecret: pressureValues.ClientSecret,
-		PressureUseAuth:      pressureValues.Kind == config.PressureKindAuthenticated,
+	if err := runtime.execute(ctx); err != nil {
+		return fmt.Errorf("execute scan runtime: %w", err)
 	}
+	return nil
 }

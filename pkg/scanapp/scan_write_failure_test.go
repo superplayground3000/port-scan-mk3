@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
@@ -97,7 +96,7 @@ func refusingDial(context.Context, string, string) (net.Conn, error) {
 	return nil, errors.New("connection refused")
 }
 
-func newTwoChunkWriteFailureConfig(t *testing.T) (config.Config, string) {
+func newTwoChunkWriteFailureConfig(t *testing.T) (scanConfigFixture, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
@@ -114,17 +113,16 @@ func newTwoChunkWriteFailureConfig(t *testing.T) (config.Config, string) {
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		PortFile:         portFile,
-		Output:           filepath.Join(tmp, "out.csv"),
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       100,
-		BucketCapacity:   100,
-		Workers:          2,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        2,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
 	return cfg, tmp
@@ -136,7 +134,7 @@ func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
 	secondChunkDialed := make(chan struct{})
 	var signalSecondChunk sync.Once
 
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
 			if strings.HasPrefix(address, "10.0.0.2:") {
@@ -183,7 +181,7 @@ func TestRun_WhenOutputWriteFails_KeepsCursorForFullyPersistedChunk(t *testing.T
 	resumeOut := cfg.Resume
 	releaseSecondDial := make(chan struct{})
 
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
 			if strings.HasPrefix(address, "10.0.0.2:") {
@@ -237,7 +235,7 @@ func TestRun_WhenOutputWriteFails_AlignsScannedCountWithRewoundCursor(t *testing
 	}
 	resumeOut := cfg.Resume
 
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		batchOutputsOpener: failingScanWriterOpener(3),
@@ -262,7 +260,7 @@ func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPers
 	cfg.Workers = 2
 	releaseFirstDial := make(chan struct{})
 
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial: func(_ context.Context, _, address string) (net.Conn, error) {
 			if strings.HasPrefix(address, "10.9.0.0:") {
@@ -307,7 +305,7 @@ func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPers
 		t.Fatalf("failed run wrote %d rows, want 1 persisted row", len(partialRows))
 	}
 
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            refusingDial,
 	}); err != nil {
@@ -345,7 +343,7 @@ func TestRun_WhenResumedAfterOutputWriteFailure_CoversEveryTaskAndDuplicatesPers
 // corrected cursor preserves safe progress in the configured snapshot.
 func TestRun_WhenOutputWriteFails_PersistsRewoundResumeSnapshot(t *testing.T) {
 	cfg, _, bucketsFile := newInterruptibleScanConfig(t)
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		batchOutputsOpener: failingScanWriterOpener(3),
@@ -377,7 +375,7 @@ func TestRun_WhenSnapshotSaveFails_ReturnsSaveErrorBeforeRuntimeError(t *testing
 	}
 	cfg.Resume = resumeOut
 
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            refusingDial,
 		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
@@ -420,7 +418,7 @@ func TestRun_WhenOutputWriteFails_ReportedScannedCountMatchesWrittenRows(t *test
 	const failOn = 3
 
 	var stderr bytes.Buffer
-	err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		batchOutputsOpener: failingScanWriterOpener(failOn),
@@ -452,7 +450,7 @@ func TestRun_WhenOutputWriteFails_LogsCorrectedResumeSnapshot(t *testing.T) {
 	resumeOut := cfg.Resume
 	var stderr bytes.Buffer
 
-	runErr := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
 		DisableKeyboard:    true,
 		Dial:               refusingDial,
 		batchOutputsOpener: failingScanWriterOpener(3),
@@ -523,7 +521,7 @@ func TestRun_WhenCanceledWithoutWriteFailure_StillPersistsResumeSnapshot(t *test
 		return nil, errors.New("connection refused")
 	}
 
-	err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dial,
 		// The writers are wrapped but never fail, so the only difference from the

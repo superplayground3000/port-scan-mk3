@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"golang.org/x/term"
-
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 )
 
 const defaultDashboardRefreshInterval = 500 * time.Millisecond
@@ -101,8 +99,8 @@ func (r *dashboardRuntime) Stop() {
 	})
 }
 
-func shouldEnableDashboard(cfg config.Config, stderr io.Writer, opts RunOptions) bool {
-	if strings.EqualFold(strings.TrimSpace(cfg.Format), "json") {
+func shouldEnableDashboard(format string, stderr io.Writer, opts RunOptions) bool {
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
 		return false
 	}
 

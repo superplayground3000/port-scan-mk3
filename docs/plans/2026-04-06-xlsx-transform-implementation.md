@@ -1,5 +1,9 @@
 # xlsx-transform Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Implement `xlsx-transform`, a standalone binary that reads an xlsx file and outputs a Rich CSV for the port-scan pipeline.

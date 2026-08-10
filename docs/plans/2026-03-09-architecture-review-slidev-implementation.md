@@ -1,5 +1,9 @@
 # Architecture Review Slidev Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Build a Slidev-based architecture review deck for `port-scan-mk3` that explains requirements, architecture, bottlenecks, and trade-offs with draw.io-backed visuals.

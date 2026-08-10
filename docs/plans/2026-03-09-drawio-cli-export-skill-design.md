@@ -1,5 +1,9 @@
 # 2026-03-09 Draw.io CLI Export Skill Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 ## 1. Objective
 
 建立一個放在 `~/.codex/skills/` 的全域個人 skill，讓未來任何 session 在需要把 `.drawio` 檔匯出成圖片或 PDF 時，都能用一致、可驗證、可排查的流程完成工作，而不是每次重新摸索 CLI 參數。

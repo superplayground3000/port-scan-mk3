@@ -1,5 +1,9 @@
 # Pressure Fetcher Interface Design
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 **Date:** 2026-03-18  
 **Status:** Approved
 

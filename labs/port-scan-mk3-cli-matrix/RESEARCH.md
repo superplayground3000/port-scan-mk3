@@ -31,8 +31,11 @@ NET_RAW so pre-scan `ping` works (else reachable hosts misclassify as unreachabl
 healthchecks hit a dedicated non-consuming `/healthz` so they never advance the pressure
 sequence. Multi-source auth needs two distinct `/data` URLs ⇒ two auth containers.
 
-Rejected: stock images (can't deterministically produce close(timeout)); single auth container
-(won't exercise MultiSourcePressureFetcher); exhaustive cartesian flag product (infeasible).
+Rejected options:
+
+- Stock images cannot produce `close(timeout)` deterministically.
+- One auth container does not exercise `pressure.OAuthMulti`.
+- The complete Cartesian flag product is too large.
 
 ## Deliberately excluded
 

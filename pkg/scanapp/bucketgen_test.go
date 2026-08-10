@@ -270,7 +270,7 @@ func TestGenerateBuckets_SnapshotAcceptedByRuntime(t *testing.T) {
 		t.Fatalf("read records: %v", err)
 	}
 	reachable := reachablePredicate(snap.PreScanPing.UnreachableIPv4U32)
-	if _, err := buildRuntimeWithPredicate(snap.Chunks, records, nil, runtimePolicyFromConfig(config.Config{}), reachable, nil); err != nil {
+	if _, err := buildRuntimeWithPredicate(snap.Chunks, records, nil, runtimePolicy{}, reachable, nil); err != nil {
 		t.Fatalf("snapshot rejected by runtime (invariant violated): %v", err)
 	}
 }

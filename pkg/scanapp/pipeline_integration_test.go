@@ -26,24 +26,21 @@ const richPipelineCSV = "src_ip,src_network_segment,dst_ip,dst_network_segment,s
 
 // pipelineBaseConfig returns a config wired for the in-process pipeline: a rich
 // CIDR CSV at cidrFile, no PortFile (rich mode), fast timeouts, pressure API
-// disabled. Callers set Resume / BucketsOut / UnreachableFile as each step needs.
-func pipelineBaseConfig(t *testing.T, cidrFile, outFile string) config.Config {
+// disabled. Callers set the resume path when the scan step starts.
+func pipelineBaseConfig(t *testing.T, cidrFile, outFile string) scanConfigFixture {
 	t.Helper()
 	if err := os.WriteFile(cidrFile, []byte(richPipelineCSV), 0o644); err != nil {
 		t.Fatalf("write rich csv: %v", err)
 	}
-	return config.Config{
-		CIDRFile:           cidrFile,
-		Output:             outFile,
-		Timeout:            20 * time.Millisecond,
-		BucketRate:         100,
-		BucketCapacity:     100,
-		Workers:            2,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		PreScanPingTimeout: 300 * time.Millisecond,
-		ProgressInterval:   1,
+	return scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         outFile,
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        2,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 }
 
@@ -103,8 +100,8 @@ func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 		CIDRIPCidrCol:    "ip_cidr",
 		Output:           baseCfg.Output,
 		Workers:          baseCfg.Workers,
-		PingTimeout:      baseCfg.PreScanPingTimeout,
-		ProgressInterval: baseCfg.ProgressInterval,
+		PingTimeout:      300 * time.Millisecond,
+		ProgressInterval: 1,
 	}), &prePingStdout, &bytes.Buffer{}, RunOptions{
 		ReachabilityChecker: checker,
 	}); err != nil {
@@ -129,7 +126,7 @@ func TestPipeline_PrePingToBucketsToScan(t *testing.T) {
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		Dial:                dialOpenFor("127.0.0.1"),
 		ReachabilityChecker: spy,
@@ -178,7 +175,7 @@ func TestPipeline_NoPrePing_ScansAll(t *testing.T) {
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
 	spy := &failIfCalledChecker{t: t}
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard:     true,
 		Dial:                dialOpenFor("127.0.0.1"),
 		ReachabilityChecker: spy,
@@ -229,7 +226,7 @@ func TestPipeline_TamperedTotalCount_Rejected(t *testing.T) {
 
 	scanCfg := baseCfg
 	scanCfg.Resume = bucketsFile
-	err = Run(context.Background(), testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	err = Run(context.Background(), scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dialOpenFor("127.0.0.1"),
 	})

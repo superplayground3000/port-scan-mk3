@@ -1,5 +1,9 @@
 # Preprocess Workflow Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Build two CLI tools (`enrich-targets` and `preprocess`) that prepare input CSVs for the port-scan tool, with a shared configuration package for all column names and constants.

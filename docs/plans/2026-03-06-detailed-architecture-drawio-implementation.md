@@ -1,5 +1,9 @@
 # Detailed Architecture Drawings (Draw.io + HTML) Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 產出一套可直接用於工程與架構評審的詳細架構圖，包含 `.drawio` SSOT 與 `.html` 展示稿，完整覆蓋 component interaction、I/O 契約、happy path、sad path。

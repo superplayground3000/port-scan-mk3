@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
-	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 )
 
 func BenchmarkPressureSampleSimple(b *testing.B) {
@@ -18,19 +17,11 @@ func BenchmarkPressureSampleSimple(b *testing.B) {
 	}))
 	b.Cleanup(server.Close)
 
-	legacy := scanapp.NewSimplePressureFetcher(server.URL, server.Client())
 	current, err := pressure.NewSimpleHTTP(server.URL, server.Client())
 	if err != nil {
 		b.Fatalf("NewSimpleHTTP() error = %v", err)
 	}
 
-	b.Run("legacy", func(b *testing.B) {
-		for b.Loop() {
-			if _, err := legacy.Fetch(context.Background()); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
 	b.Run("current", func(b *testing.B) {
 		for b.Loop() {
 			if _, err := current.Sample(context.Background()); err != nil {
@@ -53,13 +44,6 @@ func BenchmarkPressureSampleOAuthMulti(b *testing.B) {
 	b.Cleanup(dataServer.Close)
 	endpoints := []string{dataServer.URL, dataServer.URL}
 
-	legacy := scanapp.NewMultiSourcePressureFetcher(
-		authServer.URL,
-		endpoints,
-		"client",
-		"secret",
-		authServer.Client(),
-	)
 	current, err := pressure.NewOAuthMulti(pressure.OAuthConfig{
 		AuthEndpoint:  authServer.URL,
 		DataEndpoints: endpoints,
@@ -70,13 +54,6 @@ func BenchmarkPressureSampleOAuthMulti(b *testing.B) {
 		b.Fatalf("NewOAuthMulti() error = %v", err)
 	}
 
-	b.Run("legacy", func(b *testing.B) {
-		for b.Loop() {
-			if _, err := legacy.Fetch(context.Background()); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
 	b.Run("current", func(b *testing.B) {
 		for b.Loop() {
 			if _, err := current.Sample(context.Background()); err != nil {

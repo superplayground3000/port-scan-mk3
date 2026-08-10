@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
@@ -20,7 +19,7 @@ import (
 // needs is absolute, so the run can be started from an arbitrary working
 // directory and only the output location depends on the cwd. The bucket snapshot
 // is generated up front and returned with the config.
-func newRelativeOutputScanConfig(t *testing.T, inputsDir string) (config.Config, string) {
+func newRelativeOutputScanConfig(t *testing.T, inputsDir string) (scanConfigFixture, string) {
 	t.Helper()
 	cidrFile := filepath.Join(inputsDir, "rich.csv")
 	bucketsFile := filepath.Join(inputsDir, "buckets.json")
@@ -34,16 +33,15 @@ func newRelativeOutputScanConfig(t *testing.T, inputsDir string) (config.Config,
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{
-		CIDRFile:         cidrFile,
-		Output:           "scan_results.csv", // relative on purpose: this is the default
-		Timeout:          20 * time.Millisecond,
-		BucketRate:       1000,
-		BucketCapacity:   1000,
-		Workers:          1,
-		PressureInterval: 5 * time.Second,
-		DisableAPI:       true,
-		LogLevel:         "error",
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         "scan_results.csv", // relative on purpose: this is the default
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     1000,
+		BucketCapacity: 1000,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 	generateBucketFile(t, cfg, bucketsFile, "")
 	cfg.Resume = bucketsFile
@@ -84,7 +82,7 @@ func TestRun_WhenResumedFromDifferentWorkingDirectory_AppendsToOriginalOutputs(t
 	// Run 1 from directory A: interrupted with work still pending.
 	t.Chdir(dirA)
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -106,7 +104,7 @@ func TestRun_WhenResumedFromDifferentWorkingDirectory_AppendsToOriginalOutputs(t
 
 	// Run 2 from directory B: same snapshot, different cwd.
 	t.Chdir(dirB)
-	if err := Run(context.Background(), testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("closed") },
 	}); err != nil {
@@ -181,7 +179,7 @@ func TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
 
 	t.Chdir(workDir)
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -208,7 +206,7 @@ func TestRun_WhenSnapshotHasRelativeOutputPaths_ResumesInPlaceAndRecordsAbsolute
 
 	// Resume from the SAME directory, interrupted again so a snapshot is saved.
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	if err := Run(ctx2, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx2, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel2),
 	}); !errors.Is(err, context.Canceled) {
@@ -287,7 +285,7 @@ func TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchor
 	// holds the original output pair.
 	t.Chdir(dirA)
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := Run(ctx, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel),
 	}); !errors.Is(err, context.Canceled) {
@@ -315,7 +313,7 @@ func TestRun_WhenLegacyRelativeSnapshotResumedFromAnotherDirectory_UpgradeAnchor
 	// Resume from directory B, interrupted again so a snapshot is saved.
 	t.Chdir(dirB)
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	if err := Run(ctx2, testScanConfigurationFromLegacy(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+	if err := Run(ctx2, scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
 		DisableKeyboard: true,
 		Dial:            cancelOnFirstRefusedDial(cancel2),
 	}); !errors.Is(err, context.Canceled) {

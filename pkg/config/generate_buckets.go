@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"flag"
+	"fmt"
 	"strings"
 )
 
@@ -38,28 +40,37 @@ func NewGenerateBuckets(values GenerateBucketsValues) (GenerateBucketsConfig, er
 		return GenerateBucketsConfig{}, errors.New("-buckets-out is required")
 	}
 	if err := validateWorkers(values.Workers); err != nil {
-		return GenerateBucketsConfig{}, err
+		return GenerateBucketsConfig{}, fmt.Errorf("validate workers: %w", err)
 	}
 	return GenerateBucketsConfig{state: &generateBucketsState{values: values}}, nil
 }
 
 // ParseGenerateBuckets parses and verifies the bucket command arguments.
 func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
-	cfg, err := ParseFor("generate-buckets", args)
-	if err != nil {
-		return GenerateBucketsConfig{}, err
-	}
+	fs := flag.NewFlagSet("port-scan generate-buckets", flag.ContinueOnError)
+	common := commonCLIValues{}
+	values := GenerateBucketsValues{}
+	registerCommonFlags(fs, &common)
+	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
+	fs.IntVar(&values.ProgressInterval, "progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
+	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path")
+	fs.StringVar(&values.BlocklistFile, "unreachable-file", "", "unreachable blocklist CSV path (optional)")
+	fs.StringVar(&values.SnapshotOutput, "buckets-out", "", "bucket snapshot output path (required)")
 
-	return NewGenerateBuckets(GenerateBucketsValues{
-		CIDRFile:         cfg.CIDRFile,
-		CIDRIPCol:        cfg.CIDRIPCol,
-		CIDRIPCidrCol:    cfg.CIDRIPCidrCol,
-		PortFile:         cfg.PortFile,
-		BlocklistFile:    cfg.UnreachableFile,
-		SnapshotOutput:   cfg.BucketsOut,
-		Workers:          cfg.Workers,
-		ProgressInterval: cfg.ProgressInterval,
-	})
+	if err := fs.Parse(args); err != nil {
+		return GenerateBucketsConfig{}, fmt.Errorf("parse generate-buckets flags: %w", err)
+	}
+	if err := common.validate(); err != nil {
+		return GenerateBucketsConfig{}, fmt.Errorf("validate generate-buckets flags: %w", err)
+	}
+	values.CIDRFile = common.cidrFile
+	values.CIDRIPCol = common.cidrIPCol
+	values.CIDRIPCidrCol = common.cidrIPCidrCol
+	cfg, err := NewGenerateBuckets(values)
+	if err != nil {
+		return GenerateBucketsConfig{}, fmt.Errorf("validate generate-buckets arguments: %w", err)
+	}
+	return cfg, nil
 }
 
 // Resolve returns the values for the bucket workflow.

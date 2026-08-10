@@ -35,7 +35,7 @@ import (
 //
 //   - pre-ping writes unreachable_results-<ts>.csv and prints its path
 //     (pre_ping.go:80-85), which generate-buckets consumes as -unreachable-file.
-//   - generate-buckets writes the bucket snapshot to cfg.BucketsOut
+//   - generate-buckets writes the bucket snapshot to its configured output
 //     (bucketgen.go:115-125), which scan consumes as -resume.
 //   - scan's first pass is interrupted, so it persists a resume snapshot that
 //     records the output paths (resume_manager.go:25-40, scan.go:288), which the
@@ -75,36 +75,32 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 		t.Fatalf("write port file: %v", err)
 	}
 
-	baseCfg := config.Config{
-		CIDRFile:           cidrFile,
-		PortFile:           portFile,
-		Output:             outFile,
-		Timeout:            200 * time.Millisecond,
-		Delay:              0,
-		BucketRate:         1000,
-		BucketCapacity:     1000,
-		Workers:            1,
-		PressureInterval:   5 * time.Second,
-		DisableAPI:         true,
-		LogLevel:           "error",
-		ProgressInterval:   100,
-		PreScanPingTimeout: 100 * time.Millisecond,
+	baseCfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		PortFile:       portFile,
+		Output:         outFile,
+		Timeout:        200 * time.Millisecond,
+		Delay:          0,
+		BucketRate:     1000,
+		BucketCapacity: 1000,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
 	}
 
 	// ---------------------------------------------------------------- step 1.
 	// RunPrePing. The checker is injected through the documented public seam
 	// (pre_ping.go:22-24, RunOptions.ReachabilityChecker) so the step is decided
 	// by our fixture rather than by whether ICMP works on the CI runner.
-	prepCfg := baseCfg
 	var prepStdout, prepStderr bytes.Buffer
 	prepErr := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
-		CIDRFile:         prepCfg.CIDRFile,
+		CIDRFile:         baseCfg.CIDRFile,
 		CIDRIPCol:        "ip",
 		CIDRIPCidrCol:    "ip_cidr",
-		Output:           prepCfg.Output,
-		Workers:          prepCfg.Workers,
-		PingTimeout:      prepCfg.PreScanPingTimeout,
-		ProgressInterval: prepCfg.ProgressInterval,
+		Output:           baseCfg.Output,
+		Workers:          baseCfg.Workers,
+		PingTimeout:      100 * time.Millisecond,
+		ProgressInterval: 100,
 	}), &prepStdout, &prepStderr, RunOptions{
 		ReachabilityChecker: fullFlowChecker{unreachable: map[string]bool{unreachableIP: true}},
 	})
@@ -144,7 +140,7 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 		BlocklistFile:    unreachablePath,
 		SnapshotOutput:   bucketsPath,
 		Workers:          baseCfg.Workers,
-		ProgressInterval: baseCfg.ProgressInterval,
+		ProgressInterval: 100,
 	})
 	var genStderr bytes.Buffer
 	if err := GenerateBuckets(context.Background(), genCfg, &genStderr, GenerateBucketsOptions{}); err != nil {
@@ -201,7 +197,7 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 		Dial:            interruptingDial,
 	}
 	var firstStderr bytes.Buffer
-	firstErr := Run(ctx, testScanConfigurationFromLegacy(t, scanCfg), &bytes.Buffer{}, &firstStderr, firstOpts)
+	firstErr := Run(ctx, scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &firstStderr, firstOpts)
 	if !errors.Is(firstErr, context.Canceled) {
 		t.Fatalf("step 3 (scan, first pass): expected context.Canceled from the interrupt, got: %v\nstderr: %s",
 			firstErr, firstStderr.String())
@@ -265,7 +261,7 @@ func TestFullFlow_PrePingGenerateBucketsScanResume_ProducesOneContinuousResultSe
 	// reopen with a sharing violation (output_files.go:66-72).
 	resumeCfg := scanCfg
 	var resumeStderr bytes.Buffer
-	resumeErr := Run(context.Background(), testScanConfigurationFromLegacy(t, resumeCfg), &bytes.Buffer{}, &resumeStderr, RunOptions{
+	resumeErr := Run(context.Background(), scanConfigurationFromFixture(t, resumeCfg), &bytes.Buffer{}, &resumeStderr, RunOptions{
 		DisableKeyboard: true,
 		Dial:            dialer.DialContext,
 	})

@@ -177,8 +177,8 @@ if result.Status == "open" {
 ### With Custom Timeout
 
 ```go
-cfg.Timeout = 500 * time.Millisecond
-result := scanner.ScanTCP(dial, ip, port, cfg.Timeout)
+timeout := 500 * time.Millisecond
+result := scanner.ScanTCP(dial, ip, port, timeout)
 ```
 
 ### With Local Address Binding
@@ -228,10 +228,11 @@ result := scanner.ScanTCP(mockDial, "10.0.0.1", 443, timeout)
 
 ### Worker Pool Configuration
 
-Workers consume `ScanTCP` results. Configuration in `config.Config`:
+Workers consume `ScanTCP` results. `config.ScanValues` supplies these values:
+
 - `Workers`: Number of concurrent workers
-- `Timeout`: Per-probe timeout
-- `BucketRate`: Rate limit tokens/second
+- `DialTimeout`: Per-probe timeout
+- `BucketRate`: Rate limit tokens per second
 - `BucketCapacity`: Burst allowance
 
 ## 8. Extending the Scanner
@@ -280,5 +281,5 @@ case syscall.ESOMETHING:
 ## 10. Integration Points
 
 - **Executor**: `startScanExecutor()` in `executor.go` calls `ScanTCP`
-- **Config**: Timeout from `config.Config.Timeout`
+- **Config**: Timeout from `config.ScanValues.DialTimeout`
 - **Runtime**: Dial function passed via `RunOptions.Dial`

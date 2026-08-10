@@ -1,5 +1,9 @@
 # Research: port-scan-mk3 pre-scan ping timeout
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../../docs/apps/port-scan/DESIGN.md)
+
 ## Topic
 
 port-scan-mk3 runs an optional pre-scan reachability stage that ICMP-pings each unique

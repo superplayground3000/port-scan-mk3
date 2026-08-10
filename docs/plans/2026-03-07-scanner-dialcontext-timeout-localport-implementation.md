@@ -1,5 +1,9 @@
 # Scanner DialContext Timeout + Local Port 0 Implementation Plan
 
+**Status:** Historical
+
+**Current architecture:** [port-scan design](../apps/port-scan/DESIGN.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Migrate TCP connect logic to `net.Dialer` + `DialContext` with context timeout and `LocalAddr` port `0`, while preserving status behavior and testability.

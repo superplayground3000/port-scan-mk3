@@ -142,13 +142,13 @@ Input Load (pkg/input)
        ↓
 Chunk Build (pkg/scanapp/chunk_lifecycle.go)
        ↓
-Runtime Build (buildRuntime)
+Runtime Rebuild (prepareRuntimePlan)
        ↓
 Dispatch (pkg/scanapp/task_dispatcher.go)
        ↓
 Execute (pkg/scanapp/executor.go)
        ↓
-Resume (persistResumeState)
+Resume (persistResumeSnapshot)
 ```
 
 ### Status Flow
