@@ -203,27 +203,35 @@ unreachable blocklist so `scan` never needs to ping).
 
 ## Pressure API Contract
 
-### Plain HTTP Fetcher
+### Plain HTTP pressure
 
-`SimplePressureFetcher` makes unauthenticated GET to the configured URL. Expected JSON response:
+`pkg/pressure.SimpleHTTP` makes an unauthenticated GET request. It expects this
+JSON response:
 
 ```json
 {"pressure": 45.0}
 ```
 
-### OAuth-Authenticated Fetcher
+### OAuth pressure
 
-`AuthenticatedPressureFetcher` obtains a bearer token from `authURL` and uses it to fetch from `dataURL`. The data response is an array:
+`pkg/pressure.OAuthMulti` obtains separate bearer tokens for the configured
+data endpoints. Each data response is an array:
 
 ```json
 [{"data": {"Percent": 45.0}}, {"data": {"Percent": 30.0}}]
 ```
 
-Returns the **maximum** `Percent` value across all entries.
+Each source returns the maximum `Percent` value across its entries.
 
-### Multi-Source Fetcher
+### Multi-source result
 
-`MultiSourcePressureFetcher` fans out to multiple `dataURLs` concurrently with shared OAuth credentials. Returns the maximum pressure across all sources. If **any** source fails, the entire fetch fails.
+`OAuthMulti` polls all data endpoints concurrently. It returns source results
+in configuration order. A successful sample returns the maximum pressure
+across all sources. If one source fails, the aggregate value is zero and the
+sample returns an error with all source results.
+
+The scan monitor uses the legacy fetcher seam during the active configuration
+migration. Both implementations use the same wire formats.
 
 ### Pressure Response Parsing
 
@@ -231,7 +239,8 @@ Returns the **maximum** `Percent` value across all entries.
 
 ### Pause Behavior
 
-When pressure exceeds `PressureLimit` (default 60%), the scanner pauses dispatch until pressure drops below the threshold.
+When pressure meets or exceeds `PressureLimit` (default 60%), the scanner
+pauses dispatch until pressure drops below the threshold.
 
 ## Dashboard
 
@@ -267,6 +276,9 @@ cmd/port-scan/
 ├── main_extra_test.go
 └── test_helpers_test.go
 
+pkg/pressure/
+└── pressure.go                 # HTTP and OAuth pressure adapters
+
 pkg/scanapp/
 ├── scan.go                    # Main orchestration (Run)
 ├── executor.go                # Worker pool
@@ -284,7 +296,7 @@ pkg/scanapp/
 ├── scan_logger.go             # Logging
 ├── dispatch_observer.go       # Dispatch events
 ├── pressure_monitor.go        # Pressure API polling
-├── pressure.go                # PressureFetcher interface and implementations
+├── pressure.go                # Legacy PressureFetcher during migration
 ├── dashboard_state.go         # Dashboard state management
 ├── dashboard_renderer.go      # ANSI rendering
 ├── dashboard_runtime.go       # Lifecycle management

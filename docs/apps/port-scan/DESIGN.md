@@ -230,15 +230,31 @@ Manages pause gate:
 
 ## Pressure API Integration
 
+### Adapter module (`pkg/pressure`)
+
+`pkg/pressure` owns the new HTTP and OAuth transport adapters.
+`SimpleHTTP` returns one normalized aggregate value. `OAuthMulti` polls all
+configured endpoints concurrently and keeps source results in configuration
+order. A failed source makes the aggregate value zero and returns an error.
+
+Both constructors require an explicit `http.Client` and valid HTTP endpoints.
+Each OAuth endpoint owns a separate token cache and mutex. Each sample returns
+a new source-result slice.
+
+The scan monitor still uses the legacy `PressureFetcher` seam during the active
+configuration migration. The new adapters do not change current CLI behavior.
+
 ### Polling Loop (`pressure_monitor.go`)
 
 ```
 every PressureInterval:
     pressure, err := PressureFetcher.Fetch(ctx)
     if err != nil:
-        record failure, continue
+        record failure
+        stop after the third consecutive failure
+        continue
     update controller with pressure value
-    if pressure > limit:
+    if pressure >= limit:
         controller.PauseFromAPI()
     else:
         controller.ResumeFromAPI()
@@ -247,7 +263,9 @@ every PressureInterval:
 ### Dashboard Telemetry
 
 Pressure monitor observes:
-- `pressureTelemetryObserver.OnPressureUpdate(percent, time)`
+- `pressureTelemetryObserver.OnPressureSample(percent, time)`
+- `pressureTelemetryObserver.OnPressureFailure(streak, time)`
+- Per-source samples and failures when the fetcher supplies source results
 - `controllerTelemetryObserver.OnControllerStatusChange(status)`
 
 ## Dashboard Architecture
