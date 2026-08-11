@@ -1,6 +1,14 @@
 # Port Scan MK3
 
-Port Scan MK3 is a developer-first TCP port scanner CLI in Go. It has fail-fast input validation, pressure-aware pacing, resumable scanning, and e2e verification.
+Port Scan MK3 is a TCP port scanner command-line tool for developers. It validates input before a scan and supports pressure-aware pacing and resume snapshots.
+
+## Current Release
+
+Version 4.0.0 keeps the command-line interface stable and changes the public Go API. Existing CLI commands do not need migration.
+
+The Go API uses workflow-specific configuration values. Library users can use `pkg/pressure` adapters or implement `scanapp.PressureSource` for a custom source.
+
+If you migrate a Go application, read the [4.0.0 release notes](docs/release-notes/4.0.0.md).
 
 ## Prerequisites
 
@@ -18,10 +26,11 @@ go run ./cmd/port-scan validate \
   -format human
 ```
 
-Run a real scan — `port-scan` is a **three-step pipeline** (`pre-ping` ->
-`generate-buckets` -> `scan`). `scan` requires a bucket snapshot through
-`-resume`. It never pings and no longer accepts ping flags (this behavior
-changed in 2.0.0 — see the [release notes](docs/release-notes/2.0.0.md)):
+Run a scan with the three-step pipeline: `pre-ping`, `generate-buckets`, and `scan`.
+
+The `scan` command requires a bucket snapshot through `-resume`. It does not ping targets and does not accept ping flags.
+
+This behavior changed in version 2.0.0. Read the [2.0.0 release notes](docs/release-notes/2.0.0.md) for migration information.
 
 ```bash
 # 1. Ping unique targets; capture the printed unreachable CSV path (stdout)
@@ -162,18 +171,18 @@ port-scan -version
 The report goes to stdout, and the command exits `0`:
 
 ```
-port-scan version v2.2.0
-commit:  702ded4238bc4643fd317612db519209c58a82d3
-built:   2026-08-05T04:04:10Z
-go:      go1.24.0 windows/amd64
+port-scan version v4.0.0
+commit:  <tagged commit SHA>
+built:   <tagged commit time in UTC>
+go:      go1.24.4 windows/amd64
 ```
 
 | Field | Source | Policy |
 |-------|--------|--------|
-| version | `git describe --always --dirty` at build time | The nearest annotated tag plus distance and abbreviated commit, or a bare commit when no tag is reachable |
-| commit | `git rev-parse HEAD` at build time | Stamped separately from the version, because a build made exactly on a tag describes as `v2.2.0` alone and carries no commit at all |
-| built | The **commit** timestamp, normalized to UTC | Never the wall clock: two builds of one commit must be byte-identical, which is what makes a published checksum meaningful |
-| go | The running binary's toolchain and `GOOS/GOARCH` | Describes the artifact itself, so it cannot drift from it |
+| version | `git describe --always --dirty` at build time | This field contains the nearest annotated tag. Without a tag, it contains the commit. |
+| commit | `git rev-parse HEAD` at build time | This field contains the full source commit. |
+| built | The commit timestamp in UTC | This field contains the commit time in UTC, not the wall-clock time. |
+| go | The binary toolchain and `GOOS/GOARCH` | This field identifies the build platform of the artifact. |
 
 **Dirty builds.** A working tree with uncommitted changes makes `git describe`
 append `-dirty`, and the report then carries an extra line:
@@ -330,7 +339,10 @@ any TCP dial" guarantee — `pre-ping` completes before `scan` runs.
 
 `port-scan` is a TCP port scanner with pressure-aware pacing and resume support.
 
-**Commands** (each parses only its own flag surface):
+**Commands:**
+
+Each command uses a command-specific flag parser. For compatibility, `validate` accepts all legacy flags.
+
 - `port-scan pre-ping [flags]` - Ping unique target IPs. Write `unreachable_results-<ts>.csv` and print its path
 - `port-scan generate-buckets [flags]` - Build the resume bucket snapshot (`-buckets-out` required). No network I/O
 - `port-scan scan [flags]` - Pure TCP scan of a bucket snapshot (`-resume` required). No ping flags
@@ -494,14 +506,15 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - `cmd/preprocess`: filters rich CSV by closed-CIDR containment, writes port-scan input
 - `cmd/cidr-compare`: CIDR interval-tree comparison utility
 - `cmd/csv-transform`: spreadsheet-to-rich-CSV transformer (Excel-export path)
-- `pkg/config`: flag parsing and configuration validation
+- `pkg/config`: command-specific flag parsing and configuration values
 - `pkg/cli`: CLI composition utilities bridging domain types to writers and formats
 - `pkg/input`: CIDR/rich input loading and row-level validation
 - `pkg/validate`: input validation service for the `validate` command
 - `pkg/cidrutil`: CIDR CSV parsing and selector construction
 - `pkg/netutil`: IPv4 range, execution-key, and IPv4-to-uint32 utilities
 - `pkg/task`: selector expansion and execution-key helpers
-- `pkg/scanapp`: scan orchestration (load, plan, dispatch, execute, aggregate, resume, outputs)
+- `pkg/scanapp`: private scan runtime and scan workflow orchestration
+- `pkg/pressure`: pressure samples and HTTP or OAuth pressure adapters
 - `pkg/scanner`: single TCP probe primitive
 - `pkg/ratelimit`: leaky-bucket rate limiter for dispatch throttling
 - `pkg/writer`: fixed CSV output contract and open-only projection
@@ -537,7 +550,7 @@ this repository.
 All commands below are PowerShell 5.1 or 7+. Set `$Version` once:
 
 ```powershell
-$Version = 'v2.2.0'
+$Version = 'v4.0.0'
 $Archive = "port-scan-mk3_${Version}_windows_amd64.zip"
 ```
 
@@ -586,7 +599,7 @@ sure that the installed build is the one that you verified:
 port-scan --version
 ```
 
-The first line must read `port-scan version v2.2.0`. If it says `dev`, the
+The first line must read `port-scan version v4.0.0`. If it says `dev`, the
 binary is a local build, not a release asset.
 
 ### 4. Upgrade (snapshot backup first)
@@ -656,6 +669,7 @@ version before anything is published.
 ## Docs
 
 - [Maintainability Baseline](docs/MAINTENANCE.md) — quality gates, cross-platform, runnable example
+- [4.0.0 release notes](docs/release-notes/4.0.0.md) — Go API changes and migration examples
 - [All flags](docs/cli/flags.md)
 - [Scenario cookbook](docs/cli/scenarios.md)
 - [Interrupt handling](docs/interrupt-handling.md) — which terminations stop a scan gracefully (Ctrl+C, Ctrl+Break) and which do not
@@ -677,4 +691,4 @@ Each `cmd/` tool has a dedicated specification and design document:
 | csv-transform | [SPEC](docs/apps/csv-transform/SPEC.md) | [DESIGN](docs/apps/csv-transform/DESIGN.md) |
 
 ---
-**Revised**: 2026-07-22 | **Author**: docs-team
+**Revised**: 2026-08-11 | **Author**: docs-team
