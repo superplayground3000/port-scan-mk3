@@ -376,7 +376,9 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 	switch trimmed[0] {
 	case '[':
 		var chunks []task.Chunk
-		if err := json.Unmarshal(trimmed, &chunks); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&chunks); err != nil {
 			return Snapshot{}, err
 		}
 		snap := Snapshot{Chunks: chunks}

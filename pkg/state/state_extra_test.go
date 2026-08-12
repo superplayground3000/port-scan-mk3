@@ -42,6 +42,19 @@ func TestLoadSnapshot_WhenLegacyChunkArrayProvided_PreservesCompatibility(t *tes
 	}
 }
 
+func TestLoadSnapshot_WhenLegacyChunkHasUnknownField_ReturnsError(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "legacy_unknown.json")
+	data := `[{"cidr":"10.0.0.0/30","status":"paused","unknown":true}]`
+	if err := os.WriteFile(file, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadSnapshotWithLimits(file, SnapshotLimits{})
+	if err == nil || !strings.Contains(err.Error(), `unknown field "unknown"`) {
+		t.Fatalf("LoadSnapshotWithLimits() error = %v, want strict legacy-field error", err)
+	}
+}
+
 func TestLoadSnapshot_WhenObjectEnvelopeMissingChunks_ReturnsError(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "missing_chunks.json")
 	if err := os.WriteFile(file, []byte(`{"pre_scan_ping":{"enabled":true,"timeout_ms":100}}`), 0o644); err != nil {
