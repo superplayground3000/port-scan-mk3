@@ -1,7 +1,7 @@
 # Port-scan performance harness
 
 The performance harness records repeatable evidence for large `port-scan` data.
-The harness does not certify the scale targets of issue 151.
+The complete matrix records scale-conformance results for issue 151.
 
 ## Module design
 
@@ -42,6 +42,11 @@ The `full` profile defines these fixture families:
 - `rich-deny`
 
 Snapshot fixtures use 1 MB, 10 MB, 100 MB, and 1 GB shapes.
+Each snapshot fixture produces separate load and save results.
+The load result measures only production decoding.
+The save result measures serialization, write, sync, close, and replacement.
+The harness reloads the saved snapshot after the measured operation.
+This reload is a correctness check and is not part of the save result.
 Resume fixtures use 0%, 50%, and 99% progress.
 The contract also records LF and CRLF input variants.
 
@@ -77,6 +82,7 @@ These cases cover the exact default, default plus one, a positive override,
 
 The CIDR loader uses 1 MB, 10 MB, 100 MB, and 1 GB fixtures.
 The snapshot loader and saver use the same four sizes.
+Each save fixture uses its production serialized size for the selected scale.
 The full matrix checks default rejection and positive-override completion for rich input larger than 1 GB.
 
 The production fake-probe cases use 1, 16, and 256 workers.
@@ -139,6 +145,9 @@ Artifact names are relative, so deterministic manifests do not contain host root
 
 Each fixture or workflow case starts with one cold observation. Five more
 observations produce its steady-state median.
+
+Snapshot load and save operations have independent observations and verdicts.
+Their manifests identify the artifact that each operation reads or writes.
 
 Each output case has five observations. Its report uses the first observation
 as the cold value and calculates the median from all five observations.

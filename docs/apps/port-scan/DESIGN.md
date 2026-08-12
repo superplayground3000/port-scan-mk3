@@ -437,6 +437,12 @@ The configuration passes `input.CIDRLimits` and `input.PortLimits` to the file a
 The input module owns byte and record counting.
 This seam keeps the workflow free of parser policy.
 
+The CIDR file adapter counts records with a streaming pass.
+It then rewinds the file and allocates the exact result capacity.
+The parser converts each CSV row directly to one domain record.
+The adapter returns an error if the record count changes between the two passes.
+The reader interface cannot rewind and uses incremental result growth.
+
 `state.SnapshotLimits` owns snapshot byte and object counts.
 The state module checks a replacement before it creates the temporary file.
 

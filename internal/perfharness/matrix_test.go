@@ -37,25 +37,54 @@ func TestRunFixtureCaseKeepsOneFixtureAndSummarizesSixRuns(t *testing.T) {
 	}
 }
 
-func TestRunFixtureCaseSeparatesGenerationAndUsesProductionSnapshotRoundTrip(t *testing.T) {
+func TestRunSnapshotCasesMeasureLoadAndSaveSeparately(t *testing.T) {
 	t.Parallel()
 
-	result, err := perfharness.New().RunFixtureCase(context.Background(), filepath.Join(t.TempDir(), "snapshot case"), perfharness.FixtureSpec{
+	const targetBytes = uint64(100_000)
+	results, err := perfharness.New().RunSnapshotCases(context.Background(), filepath.Join(t.TempDir(), "snapshot case"), perfharness.FixtureSpec{
 		Family: perfharness.FamilySnapshotHeavy,
 		Shape:  "mixed",
-		Scale:  perfharness.Scale{TargetBytes: 4_096},
+		Scale:  perfharness.Scale{TargetBytes: targetBytes},
 		Seed:   perfharness.DefaultGeneratorSeed,
 	})
 	if err != nil {
-		t.Fatalf("RunFixtureCase: %v", err)
+		t.Fatalf("RunSnapshotCases: %v", err)
 	}
-	if result.FixtureGeneration == nil || len(result.FixtureGeneration.Runs) != 6 {
-		t.Fatalf("fixture generation phase = %+v", result.FixtureGeneration)
+	if len(results) != 2 {
+		t.Fatalf("case count = %d, want separate load and save cases", len(results))
 	}
-	if result.ColdStart.InputBytes == 0 || result.ColdStart.OutputBytes == 0 {
-		t.Fatalf("snapshot production phase = %+v", result.ColdStart)
+	load, save := results[0], results[1]
+	if load.Name != "snapshot-load/mixed/one-hundred-kilobytes" {
+		t.Fatalf("load case name = %q", load.Name)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(result.Manifest.ArtifactPath), "roundtrip.json")); err != nil {
+	if save.Name != "snapshot-save/mixed/one-hundred-kilobytes" {
+		t.Fatalf("save case name = %q", save.Name)
+	}
+	if load.FixtureGeneration == nil || len(load.FixtureGeneration.Runs) != 6 {
+		t.Fatalf("load fixture generation phase = %+v", load.FixtureGeneration)
+	}
+	if save.FixtureGeneration != nil {
+		t.Fatalf("save fixture generation must stay on the load case: %+v", save.FixtureGeneration)
+	}
+	if load.ColdStart.InputBytes < targetBytes || load.ColdStart.OutputBytes != load.ColdStart.InputBytes {
+		t.Fatalf("snapshot load bytes = %+v", load.ColdStart)
+	}
+	if save.ColdStart.InputBytes != targetBytes {
+		t.Fatalf("snapshot save input bytes = %d, want %d", save.ColdStart.InputBytes, targetBytes)
+	}
+	if save.ColdStart.OutputBytes < targetBytes || save.ColdStart.OutputBytes > targetBytes+targetBytes/100 {
+		t.Fatalf("snapshot save output bytes = %d, want [%d,%d]", save.ColdStart.OutputBytes, targetBytes, targetBytes+targetBytes/100)
+	}
+	if save.Manifest == nil || save.Manifest.ActualBytes != save.ColdStart.OutputBytes {
+		t.Fatalf("snapshot save manifest = %+v, want actual measured output", save.Manifest)
+	}
+	if err := perfharness.New().Validate(*save.Manifest); err != nil {
+		t.Fatalf("validate snapshot save manifest: %v", err)
+	}
+	if load.Manifest == nil {
+		t.Fatal("load manifest is nil")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(load.Manifest.ArtifactPath), "roundtrip.json")); err != nil {
 		t.Fatalf("retained production round trip: %v", err)
 	}
 }

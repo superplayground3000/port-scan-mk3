@@ -128,6 +128,22 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	results := make([]perfharness.CaseResult, 0, len(specs)+5)
 	for index, spec := range specs {
 		caseDir := filepath.Join(casesDir, fmt.Sprintf("%02d-%s", index, spec.Family))
+		if spec.Family == perfharness.FamilySnapshotHeavy {
+			snapshotResults, err := harness.RunSnapshotCases(context.Background(), caseDir, spec)
+			if err != nil {
+				if writeErr := writeStatus(stderr, "run snapshot fixture %s: %v\n", spec.Shape, err); writeErr != nil {
+					return 1
+				}
+				return 1
+			}
+			results = append(results, snapshotResults...)
+			for _, result := range snapshotResults {
+				if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+					return 1
+				}
+			}
+			continue
+		}
 		result, err := harness.RunFixtureCase(context.Background(), caseDir, spec)
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run fixture %s: %v\n", spec.Family, err); writeErr != nil {
@@ -347,6 +363,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	matrixPassed := applyAbsoluteThresholds(results, harness, contract)
+	if !applySnapshotCaseContract(results, specs) {
+		matrixPassed = false
+	}
 	if !applyWorkerParity(results, harness, contract.FakeWorkers) {
 		matrixPassed = false
 	}
@@ -404,6 +423,24 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func applySnapshotCaseContract(results []perfharness.CaseResult, specs []perfharness.FixtureSpec) bool {
+	for _, result := range results {
+		if strings.HasPrefix(result.Name, "snapshot-heavy/") {
+			return false
+		}
+	}
+	for _, spec := range specs {
+		if spec.Family != perfharness.FamilySnapshotHeavy {
+			continue
+		}
+		loadName, saveName := perfharness.SnapshotCaseNames(spec)
+		if findCase(results, loadName) == nil || findCase(results, saveName) == nil {
+			return false
+		}
+	}
+	return true
+}
+
 func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, harness perfharness.Harness) bool {
 	sequences := [][]string{
 		{
@@ -413,10 +450,16 @@ func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, har
 			"record-heavy/one-gigabyte",
 		},
 		{
-			"snapshot-heavy/mixed/one-megabyte",
-			"snapshot-heavy/mixed/ten-megabytes",
-			"snapshot-heavy/mixed/one-hundred-megabytes",
-			"snapshot-heavy/mixed/one-gigabyte",
+			"snapshot-load/mixed/one-megabyte",
+			"snapshot-load/mixed/ten-megabytes",
+			"snapshot-load/mixed/one-hundred-megabytes",
+			"snapshot-load/mixed/one-gigabyte",
+		},
+		{
+			"snapshot-save/mixed/one-megabyte",
+			"snapshot-save/mixed/ten-megabytes",
+			"snapshot-save/mixed/one-hundred-megabytes",
+			"snapshot-save/mixed/one-gigabyte",
 		},
 	}
 	passed := true

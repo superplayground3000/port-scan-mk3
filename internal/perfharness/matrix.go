@@ -32,6 +32,7 @@ type Harness interface {
 	RunResourceLimitCase(context.Context, ResourceLimitSpec) (CaseResult, error)
 	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
+	RunSnapshotCases(context.Context, string, FixtureSpec) ([]CaseResult, error)
 	RunOutputCase(context.Context, OutputSpec) (CaseResult, error)
 }
 

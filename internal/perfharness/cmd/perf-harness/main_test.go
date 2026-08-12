@@ -72,6 +72,44 @@ func TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations(t *testing.T) {
 	}
 }
 
+func TestSnapshotLoadAndSaveEachUseTheAbsoluteMemoryBudget(t *testing.T) {
+	t.Parallel()
+
+	results := []perfharness.CaseResult{
+		{Name: "snapshot-load/mixed/one-gigabyte", ColdStart: perfharness.Observation{PeakCommittedBytes: 5_900_000_000}, SteadyMedian: perfharness.Observation{PeakCommittedBytes: 5_900_000_000}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-save/mixed/one-gigabyte", ColdStart: perfharness.Observation{PeakCommittedBytes: 6_000_000_001}, SteadyMedian: perfharness.Observation{PeakCommittedBytes: 6_000_000_001}, Verdict: perfharness.Verdict{Passed: true}},
+	}
+	contract := perfharness.DefaultContract()
+	if applyAbsoluteThresholds(results, perfharness.New(), contract) {
+		t.Fatal("absolute thresholds accepted an oversized snapshot save")
+	}
+	if !results[0].Verdict.Passed || !results[1].Verdict.HasFailure("absolute-committed-memory") {
+		t.Fatalf("snapshot verdicts = %+v", results)
+	}
+}
+
+func TestSnapshotCaseContractRejectsTheOldCombinedResult(t *testing.T) {
+	t.Parallel()
+
+	spec := perfharness.FixtureSpec{
+		Family: perfharness.FamilySnapshotHeavy,
+		Shape:  "mixed",
+		Scale:  perfharness.Scale{TargetBytes: 1_000_000_000},
+	}
+	results := []perfharness.CaseResult{{Name: "snapshot-heavy/mixed/one-gigabyte", Verdict: perfharness.Verdict{Passed: true}}}
+	if applySnapshotCaseContract(results, []perfharness.FixtureSpec{spec}) {
+		t.Fatal("snapshot case contract accepted the old combined result")
+	}
+	loadName, saveName := perfharness.SnapshotCaseNames(spec)
+	results = []perfharness.CaseResult{
+		{Name: loadName, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: saveName, Verdict: perfharness.Verdict{Passed: true}},
+	}
+	if !applySnapshotCaseContract(results, []perfharness.FixtureSpec{spec}) {
+		t.Fatal("snapshot case contract rejected separate load and save results")
+	}
+}
+
 func TestApplyGrowthThresholdBlocksNonlinearMedianGrowth(t *testing.T) {
 	t.Parallel()
 
@@ -94,15 +132,17 @@ func TestApplyInputAndSnapshotGrowthThresholdsChecksEveryTenfoldStep(t *testing.
 	results := []perfharness.CaseResult{
 		{Name: "record-heavy/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
 		{Name: "record-heavy/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 13 * time.Second, GoAllocatedBytes: 1_000}, Verdict: perfharness.Verdict{Passed: true}},
-		{Name: "snapshot-heavy/chunk-heavy", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
-		{Name: "snapshot-heavy/port-heavy", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
-		{Name: "snapshot-heavy/mixed/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
-		{Name: "snapshot-heavy/mixed/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-load/chunk-heavy/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-save/port-heavy/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-load/mixed/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-load/mixed/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-save/mixed/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-save/mixed/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
 	}
 	if applyInputAndSnapshotGrowthThresholds(results, perfharness.New()) {
 		t.Fatal("scale thresholds accepted nonlinear CIDR time and snapshot allocation growth")
 	}
-	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[5].Verdict.HasFailure("growth-allocated-bytes") {
+	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[5].Verdict.HasFailure("growth-allocated-bytes") || !results[7].Verdict.HasFailure("growth-allocated-bytes") {
 		t.Fatalf("growth verdicts = %+v", results)
 	}
 	if results[3].Verdict.HasFailure("growth-allocated-bytes") {
@@ -211,8 +251,8 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 111 {
-		t.Fatalf("case count = %d, want all smoke, limit, output, failure, and platform cases", len(report.Cases))
+	if len(report.Cases) != 112 {
+		t.Fatalf("case count = %d, want separate snapshot load and save results", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
 		t.Fatalf("evidence label = %q", report.Hardware.EvidenceLabel)
@@ -229,7 +269,15 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	targetLimitCases := 0
 	resourceLimitCases := 0
 	outputCases := 0
+	snapshotLoadCases := 0
+	snapshotSaveCases := 0
 	for _, result := range report.Cases {
+		if strings.HasPrefix(result.Name, "snapshot-load/") {
+			snapshotLoadCases++
+		}
+		if strings.HasPrefix(result.Name, "snapshot-save/") {
+			snapshotSaveCases++
+		}
 		if strings.HasPrefix(result.Name, "output-heavy/results-") {
 			outputCases++
 			if len(result.Runs) != 5 || !result.Verdict.Passed || result.SteadyMedian.MegabytesPerSecond <= 0 {
@@ -322,6 +370,9 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	}
 	if outputCases != 3 {
 		t.Fatalf("output case count = %d, want 3", outputCases)
+	}
+	if snapshotLoadCases != 1 || snapshotSaveCases != 1 {
+		t.Fatalf("snapshot cases = load %d save %d, want one of each", snapshotLoadCases, snapshotSaveCases)
 	}
 }
 

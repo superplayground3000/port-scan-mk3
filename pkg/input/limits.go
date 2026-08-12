@@ -2,6 +2,7 @@ package input
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"math"
@@ -25,6 +26,7 @@ type CIDRLimits struct {
 	Path       string
 	MaxBytes   uint64
 	MaxRecords uint64
+	capacity   uint64
 }
 
 // LoadCIDRsFileWithColumnsContext reads the file at path and returns its CIDR records.
@@ -40,11 +42,56 @@ func LoadCIDRsFileWithColumnsContext(ctx context.Context, path, ipCol, ipCidrCol
 		return nil, fmt.Errorf("open CIDR input %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	records, err := LoadCIDRsWithColumnsContextAndLimits(ctx, f, ipCol, ipCidrCol, limits)
+	records, err := loadCIDRsSeekable(ctx, path, f, ipCol, ipCidrCol, limits)
 	if err != nil {
 		return nil, fmt.Errorf("load CIDR input %s: %w", path, err)
 	}
 	return records, nil
+}
+
+func loadCIDRsSeekable(ctx context.Context, path string, file io.ReadSeeker, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
+	recordCount, err := countCIDRFileRecords(ctx, file, limits)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind CIDR input %s: %w", path, err)
+	}
+	limits.capacity = recordCount
+	records, err := LoadCIDRsWithColumnsContextAndLimits(ctx, file, ipCol, ipCidrCol, limits)
+	if err != nil {
+		return nil, err
+	}
+	if uint64(len(records)) != recordCount {
+		return nil, fmt.Errorf("CIDR input %s changed during load: counted %d records, parsed %d", displayPath(path), recordCount, len(records))
+	}
+	return records, nil
+}
+
+func countCIDRFileRecords(ctx context.Context, inputReader io.Reader, limits CIDRLimits) (uint64, error) {
+	reader := csv.NewReader(limitInputReader(inputReader, limits.Path, "CIDR", "-cidr-input-size-limit-gb", limits.MaxBytes))
+	reader.ReuseRecord = true
+	if _, err := readCSVRecordContext(ctx, reader); err != nil {
+		if err == io.EOF {
+			return 0, fmt.Errorf("cidr csv must include header and at least one row")
+		}
+		return 0, err
+	}
+	var count uint64
+	for {
+		_, err := readCIDRDataRecord(ctx, reader, limits, count)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+		count++
+	}
+	if count == 0 {
+		return 0, fmt.Errorf("cidr csv must include header and at least one row")
+	}
+	return count, nil
 }
 
 // LoadPortsFileContext reads the file at path and returns normalized port records.
