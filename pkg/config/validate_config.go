@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 )
 
@@ -28,7 +29,18 @@ type ValidateValues struct {
 type validateState struct {
 	values    ValidateValues
 	expansion TargetExpansionValues
-	resources ResourceLimitValues
+	resources ValidateResourceLimits
+}
+
+// ValidateResourceLimits contains the CIDR and port limits used by validation.
+// The workflow returns an input error when these limits reject a file.
+type ValidateResourceLimits struct {
+	CIDR input.CIDRLimits
+	Port input.PortLimits
+}
+
+func defaultValidateResourceLimits() ValidateResourceLimits {
+	return ValidateResourceLimits{CIDR: input.DefaultCIDRLimits(""), Port: input.DefaultPortLimits("")}
 }
 
 type validateCompatibilityValues struct {
@@ -62,11 +74,12 @@ func NewValidate(values ValidateValues) (ValidateConfig, error) {
 	if values.Format != "human" && values.Format != "json" {
 		return ValidateConfig{}, errors.New("-format must be human or json")
 	}
-	return ValidateConfig{state: &validateState{values: values, expansion: defaultTargetExpansionValues(), resources: defaultResourceLimitValues()}}, nil
+	return ValidateConfig{state: &validateState{values: values, expansion: defaultTargetExpansionValues(), resources: defaultValidateResourceLimits()}}, nil
 }
 
-// NewValidateWithResourceLimits verifies values and keeps explicit input limits.
-func NewValidateWithResourceLimits(values ValidateValues, limits ResourceLimitValues) (ValidateConfig, error) {
+// NewValidateWithResourceLimits verifies values and returns a configuration with explicit input limits.
+// It returns the same validation errors as NewValidate. It does not open input files.
+func NewValidateWithResourceLimits(values ValidateValues, limits ValidateResourceLimits) (ValidateConfig, error) {
 	cfg, err := NewValidate(values)
 	if err != nil {
 		return ValidateConfig{}, err
@@ -85,11 +98,12 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	values := ValidateValues{}
 	compatibility := validateCompatibilityValues{}
 	expansionFlags := targetExpansionFlagValues{}
-	resourceFlags := defaultResourceLimitFlagValues()
+	cidrLimitFlags := defaultCIDRLimitFlags()
+	portLimitFlags := defaultPortLimitFlags()
 	registerCommonFlags(fs, &common)
 	registerTargetExpansionFlags(fs, &expansionFlags)
-	registerCIDRLimitFlags(fs, &resourceFlags)
-	registerPortLimitFlags(fs, &resourceFlags)
+	registerCIDRLimitFlags(fs, &cidrLimitFlags)
+	registerPortLimitFlags(fs, &portLimitFlags)
 	fs.IntVar(&compatibility.workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&compatibility.bucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
 	fs.IntVar(&compatibility.bucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
@@ -126,7 +140,11 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	if err := compatibility.validate(); err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate compatibility flags: %w", err)
 	}
-	resources, err := resourceFlags.resolve()
+	cidrLimits, err := cidrLimitFlags.resolve()
+	if err != nil {
+		return ValidateConfig{}, fmt.Errorf("validate resource limits: %w", err)
+	}
+	portLimits, err := portLimitFlags.resolve()
 	if err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate resource limits: %w", err)
 	}
@@ -139,14 +157,14 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 		return ValidateConfig{}, fmt.Errorf("validate arguments: %w", err)
 	}
 	cfg.state.expansion = expansion
-	cfg.state.resources = resources
+	cfg.state.resources = ValidateResourceLimits{CIDR: cidrLimits, Port: portLimits}
 	return cfg, nil
 }
 
 // ResolveResourceLimits returns the verified input limits.
-func (c ValidateConfig) ResolveResourceLimits() (ResourceLimitValues, error) {
+func (c ValidateConfig) ResolveResourceLimits() (ValidateResourceLimits, error) {
 	if c.state == nil {
-		return ResourceLimitValues{}, ErrUninitializedConfiguration
+		return ValidateResourceLimits{}, ErrUninitializedConfiguration
 	}
 	return c.state.resources, nil
 }

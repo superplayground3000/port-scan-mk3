@@ -4,10 +4,17 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
@@ -30,9 +37,12 @@ func (suite Suite) RunResourceLimitCase(ctx context.Context, spec ResourceLimitS
 		return CaseResult{}, fmt.Errorf("unsupported resource limit flag %q", spec.Flag)
 	}
 	observations := make([]Observation, 0, 6)
+	detail := "configuration rejected the value before production I/O"
 	for run := 0; run < 6; run++ {
 		observation, err := suite.Measure(ctx, 0, 1, func(context.Context) (uint64, error) {
-			return 0, executeResourceLimitCase(spec)
+			caseDetail, caseErr := executeResourceLimitCase(ctx, spec)
+			detail = caseDetail
+			return 0, caseErr
 		})
 		if err != nil {
 			return CaseResult{}, fmt.Errorf("run %s %s observation %d: %w", spec.Flag, spec.Case.Kind, run+1, err)
@@ -43,57 +53,195 @@ func (suite Suite) RunResourceLimitCase(ctx context.Context, spec ResourceLimitS
 	if err != nil {
 		return CaseResult{}, err
 	}
-	result.Correctness = Correctness{ExpectedValues: true, Detail: "production command limit matched the case"}
+	result.Correctness = Correctness{ExpectedValues: true, Detail: detail}
 	result.Verdict = Verdict{Passed: true}
 	result.Semantic = &SemanticArtifact{Status: "passed"}
 	return result, nil
 }
 
-func executeResourceLimitCase(spec ResourceLimitSpec) error {
+func executeResourceLimitCase(ctx context.Context, spec ResourceLimitSpec) (string, error) {
 	if spec.Case.Kind == BypassNegative {
-		return expectResourceLimitParseFailure(spec.Flag, "-1")
+		return "", expectResourceLimitParseFailure(spec.Flag, "-1")
 	}
 	if spec.Case.Kind == BypassOverflow {
 		if strings.HasSuffix(spec.Flag, "-gb") || strings.HasSuffix(spec.Flag, "-mb") {
-			return expectResourceLimitParseFailure(spec.Flag, strconv.FormatInt(math.MaxInt64, 10))
+			return "", expectResourceLimitParseFailure(spec.Flag, strconv.FormatInt(math.MaxInt64, 10))
 		}
-		return expectResourceLimitParseFailure(spec.Flag, strconv.FormatUint(uint64(math.MaxInt64)+1, 10))
+		return "", expectResourceLimitParseFailure(spec.Flag, strconv.FormatUint(uint64(math.MaxInt64)+1, 10))
 	}
-	defaults, err := parsedResourceLimits(spec.Flag, "")
+	_, err := parsedResourceLimits(spec.Flag, resourceLimitCaseFlagValue(spec.Case.Kind))
 	if err != nil {
-		return err
+		return "", err
 	}
-	defaultValue := resourceLimitValue(defaults, spec.Flag)
-	value := defaultValue
-	switch spec.Case.Kind {
-	case BypassExactDefault:
-	case BypassDefaultPlusOne:
-		value++
+	wantReject := spec.Case.Kind == BypassDefaultPlusOne
+	limit := uint64(2)
+	if wantReject {
+		limit = 1
+	}
+	if spec.Case.Kind == BypassDisabledTwice {
+		limit = 0
+	}
+	if err := runResourceProductionProbe(ctx, spec.Flag, limit, wantReject); err != nil {
+		return "", err
+	}
+	action := "accepted"
+	if wantReject {
+		action = "rejected limit plus one"
+	}
+	return "production enforcement " + action, nil
+}
+
+func resourceLimitCaseFlagValue(kind BypassKind) string {
+	switch kind {
+	case BypassExactDefault, BypassDefaultPlusOne:
+		return ""
 	case BypassPositiveOverride:
-		value *= 2
+		return "2"
 	case BypassDisabledTwice:
-		value = 0
+		return "0"
 	default:
-		return fmt.Errorf("unsupported bypass kind %q", spec.Case.Kind)
+		return ""
 	}
-	parsed, err := parsedResourceLimits(spec.Flag, strconv.FormatUint(value, 10))
-	if err != nil {
-		return err
+}
+
+func runResourceProductionProbe(ctx context.Context, flagName string, limit uint64, wantReject bool) error {
+	switch flagName {
+	case "-cidr-input-size-limit-gb":
+		data := "ip,ip_cidr\n192.0.2.1,192.0.2.0/24\n"
+		_, err := input.LoadCIDRsWithColumnsContextAndLimits(ctx, strings.NewReader(data), "ip", "ip_cidr", input.CIDRLimits{MaxBytes: probeBoundary(limit, uint64(len(data)))})
+		return expectProbeResult(err, wantReject)
+	case "-cidr-input-record-limit":
+		data := "ip,ip_cidr\n192.0.2.1,192.0.2.0/24\n192.0.2.2,192.0.2.0/24\n"
+		_, err := input.LoadCIDRsWithColumnsContextAndLimits(ctx, strings.NewReader(data), "ip", "ip_cidr", input.CIDRLimits{MaxRecords: limit})
+		return expectProbeResult(err, wantReject)
+	case "-port-input-size-limit-mb":
+		data := "80/tcp\n81/tcp\n"
+		_, err := input.LoadPortsContextWithLimits(ctx, strings.NewReader(data), input.PortLimits{MaxBytes: probeBoundary(limit, uint64(len(data)))})
+		return expectProbeResult(err, wantReject)
+	case "-port-input-record-limit":
+		_, err := input.LoadPortsContextWithLimits(ctx, strings.NewReader("80/tcp\n81/tcp\n"), input.PortLimits{MaxRecords: limit})
+		return expectProbeResult(err, wantReject)
+	case "-snapshot-size-limit-gb", "-snapshot-chunk-limit", "-snapshot-port-entry-limit", "-snapshot-unreachable-ip-limit":
+		return runSnapshotLimitProbe(flagName, limit, wantReject)
+	case "-pressure-response-size-limit-mb":
+		return runPressureSizeProbe(ctx, limit, wantReject)
+	case "-pressure-response-entry-limit":
+		return runPressureEntryProbe(ctx, limit, wantReject)
+	default:
+		return fmt.Errorf("unsupported resource limit flag %q", flagName)
 	}
-	if got := resourceLimitValue(parsed, spec.Flag); got != value {
-		return fmt.Errorf("%s resolved %d, want %d", spec.Flag, got, value)
+}
+
+func probeBoundary(limit, actual uint64) uint64 {
+	if limit == 0 {
+		return 0
+	}
+	if limit == 1 {
+		return actual - 1
+	}
+	return actual
+}
+
+func expectProbeResult(err error, wantReject bool) error {
+	if wantReject && err == nil {
+		return fmt.Errorf("production enforcement accepted limit plus one")
+	}
+	if !wantReject && err != nil {
+		return fmt.Errorf("production enforcement rejected allowed value: %w", err)
 	}
 	return nil
 }
 
-func parsedResourceLimits(flagName, raw string) (config.ResourceLimitValues, error) {
+func runSnapshotLimitProbe(flagName string, limit uint64, wantReject bool) error {
+	dir, err := os.MkdirTemp("", "port-scan-resource-limit-")
+	if err != nil {
+		return fmt.Errorf("create snapshot probe directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	snapshot := state.Snapshot{
+		Chunks: []task.Chunk{
+			{CIDR: "192.0.2.0/24", Ports: []string{"80/tcp"}},
+			{CIDR: "198.51.100.0/24", Ports: []string{"81/tcp"}},
+		},
+		PreScanPing: state.PreScanPingState{UnreachableIPv4U32: []uint32{1, 2}},
+	}
+	source := filepath.Join(dir, "source.json")
+	if err := state.SaveSnapshotWithLimits(source, snapshot, state.SnapshotLimits{}); err != nil {
+		return fmt.Errorf("create snapshot probe: %w", err)
+	}
+	limits := state.SnapshotLimits{}
+	switch flagName {
+	case "-snapshot-size-limit-gb":
+		info, err := os.Stat(source)
+		if err != nil {
+			return fmt.Errorf("stat snapshot probe: %w", err)
+		}
+		limits.MaxBytes = probeBoundary(limit, uint64(info.Size()))
+	case "-snapshot-chunk-limit":
+		limits.MaxChunks = limit
+	case "-snapshot-port-entry-limit":
+		limits.MaxPortEntries = limit
+	case "-snapshot-unreachable-ip-limit":
+		limits.MaxUnreachableIPs = limit
+	}
+	_, loadErr := state.LoadSnapshotWithLimits(source, limits)
+	if err := expectProbeResult(loadErr, wantReject); err != nil {
+		return err
+	}
+	destination := filepath.Join(dir, "destination.json")
+	saveErr := state.SaveSnapshotWithLimits(destination, snapshot, limits)
+	if err := expectProbeResult(saveErr, wantReject); err != nil {
+		return err
+	}
+	if wantReject {
+		if _, err := os.Stat(destination); !os.IsNotExist(err) {
+			return fmt.Errorf("snapshot production enforcement left rejected output")
+		}
+	}
+	return nil
+}
+
+func runPressureSizeProbe(ctx context.Context, limit uint64, wantReject bool) error {
+	body := `{"pressure":1}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, body)
+	}))
+	defer server.Close()
+	source, err := pressure.NewSimpleHTTPWithLimits(server.URL, server.Client(), pressure.ResponseLimits{MaxBytes: probeBoundary(limit, uint64(len(body)))})
+	if err != nil {
+		return err
+	}
+	_, sampleErr := source.Sample(ctx)
+	return expectProbeResult(sampleErr, wantReject)
+}
+
+func runPressureEntryProbe(ctx context.Context, limit uint64, wantReject bool) error {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/token" {
+			_, _ = fmt.Fprint(w, `{"access_token":"x","token_type":"Bearer","expires_in":0}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `[{"data":{"Percent":1}},{"data":{"Percent":2}}]`)
+	}))
+	defer server.Close()
+	source, err := pressure.NewOAuthMultiWithLimits(pressure.OAuthConfig{
+		AuthEndpoint: server.URL + "/token", DataEndpoints: []string{server.URL + "/data"}, ClientID: "id", ClientSecret: "secret",
+	}, server.Client(), pressure.ResponseLimits{MaxEntries: limit})
+	if err != nil {
+		return err
+	}
+	_, sampleErr := source.Sample(ctx)
+	return expectProbeResult(sampleErr, wantReject)
+}
+
+func parsedResourceLimits(flagName, raw string) (config.ScanResourceLimits, error) {
 	args := []string{"-cidr-file", "performance-input.csv", "-resume", "performance-snapshot.json", "-disable-api"}
 	if raw != "" {
 		args = append(args, flagName, raw)
 	}
 	cfg, err := config.ParseScan(args)
 	if err != nil {
-		return config.ResourceLimitValues{}, err
+		return config.ScanResourceLimits{}, err
 	}
 	return cfg.ResolveResourceLimits()
 }
@@ -104,33 +252,6 @@ func expectResourceLimitParseFailure(flagName, value string) error {
 		return fmt.Errorf("%s accepted invalid value %s", flagName, value)
 	}
 	return nil
-}
-
-func resourceLimitValue(values config.ResourceLimitValues, flagName string) uint64 {
-	switch flagName {
-	case "-cidr-input-size-limit-gb":
-		return values.CIDR.MaxBytes / 1_000_000_000
-	case "-cidr-input-record-limit":
-		return values.CIDR.MaxRecords
-	case "-port-input-size-limit-mb":
-		return values.Port.MaxBytes / 1_000_000
-	case "-port-input-record-limit":
-		return values.Port.MaxRecords
-	case "-snapshot-size-limit-gb":
-		return values.Snapshot.MaxBytes / 1_000_000_000
-	case "-snapshot-chunk-limit":
-		return values.Snapshot.MaxChunks
-	case "-snapshot-port-entry-limit":
-		return values.Snapshot.MaxPortEntries
-	case "-snapshot-unreachable-ip-limit":
-		return values.Snapshot.MaxUnreachableIPs
-	case "-pressure-response-size-limit-mb":
-		return values.Pressure.MaxBytes / 1_000_000
-	case "-pressure-response-entry-limit":
-		return values.Pressure.MaxEntries
-	default:
-		return 0
-	}
 }
 
 func isResourceLimitFlag(flagName string) bool {

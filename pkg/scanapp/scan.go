@@ -83,7 +83,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	if err != nil {
 		return err
 	}
-	resourceLimits, err := resolveResourceLimits(configuration)
+	resourceLimits, err := resolveScanLimits(configuration)
 	if err != nil {
 		return err
 	}

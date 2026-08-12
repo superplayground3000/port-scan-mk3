@@ -9,51 +9,80 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 )
 
-type resourceLimitConfig interface {
-	ResolveResourceLimits() (config.ResourceLimitValues, error)
-}
-
 func TestCommandResourceLimitFlagsHaveDefaultsOverridesAndIndependentBypass(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name  string
-		parse func([]string) (resourceLimitConfig, error)
-		base  []string
-	}{
-		{name: "validate", parse: func(args []string) (resourceLimitConfig, error) { return config.ParseValidate(args) }, base: []string{"-cidr-file", "targets.csv"}},
-		{name: "pre-ping", parse: func(args []string) (resourceLimitConfig, error) { return config.ParsePrePing(args) }, base: []string{"-cidr-file", "targets.csv"}},
-		{name: "generate-buckets", parse: func(args []string) (resourceLimitConfig, error) { return config.ParseGenerateBuckets(args) }, base: []string{"-cidr-file", "targets.csv", "-buckets-out", "resume.json"}},
-		{name: "scan", parse: func(args []string) (resourceLimitConfig, error) { return config.ParseScan(args) }, base: []string{"-cidr-file", "targets.csv", "-resume", "resume.json", "-disable-api"}},
+	defaults := resolveScanLimits(t, []string{"-cidr-file", "targets.csv", "-resume", "resume.json", "-disable-api"})
+	if defaults.maxBytes != 1_000_000_000 || defaults.maxRecords != 10_000_000 {
+		t.Fatalf("scan CIDR defaults = %+v", defaults)
 	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			cfg, err := test.parse(test.base)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defaults, err := cfg.ResolveResourceLimits()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if defaults.CIDR.MaxBytes != 1_000_000_000 || defaults.CIDR.MaxRecords != 10_000_000 {
-				t.Fatalf("CIDR defaults = %+v", defaults.CIDR)
-			}
+	for name, values := range map[string]cidrLimitValues{
+		"validate":         resolveValidateLimits(t, []string{"-cidr-file", "targets.csv", "-cidr-input-size-limit-gb", "0", "-cidr-input-record-limit", "7"}),
+		"pre-ping":         resolvePrePingLimits(t, []string{"-cidr-file", "targets.csv", "-cidr-input-size-limit-gb", "0", "-cidr-input-record-limit", "7"}),
+		"generate-buckets": resolveGenerateLimits(t, []string{"-cidr-file", "targets.csv", "-buckets-out", "resume.json", "-cidr-input-size-limit-gb", "0", "-cidr-input-record-limit", "7"}),
+		"scan":             resolveScanLimits(t, []string{"-cidr-file", "targets.csv", "-resume", "resume.json", "-disable-api", "-cidr-input-size-limit-gb", "0", "-cidr-input-record-limit", "7"}),
+	} {
+		if values.maxBytes != 0 || values.maxRecords != 7 {
+			t.Fatalf("%s CIDR limits = %+v", name, values)
+		}
+	}
+}
 
-			cfg, err = test.parse(append(append([]string{}, test.base...), "-cidr-input-size-limit-gb", "0", "-cidr-input-record-limit", "7"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			values, err := cfg.ResolveResourceLimits()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if values.CIDR.MaxBytes != 0 || values.CIDR.MaxRecords != 7 {
-				t.Fatalf("CIDR override values = %+v", values.CIDR)
-			}
-		})
+type cidrLimitValues struct {
+	maxBytes   uint64
+	maxRecords uint64
+}
+
+func resolveValidateLimits(t *testing.T, args []string) cidrLimitValues {
+	t.Helper()
+	cfg, err := config.ParseValidate(args)
+	if err != nil {
+		t.Fatal(err)
 	}
+	got, err := cfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cidrLimitValues{maxBytes: got.CIDR.MaxBytes, maxRecords: got.CIDR.MaxRecords}
+}
+
+func resolvePrePingLimits(t *testing.T, args []string) cidrLimitValues {
+	t.Helper()
+	cfg, err := config.ParsePrePing(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := cfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cidrLimitValues{maxBytes: got.CIDR.MaxBytes, maxRecords: got.CIDR.MaxRecords}
+}
+
+func resolveGenerateLimits(t *testing.T, args []string) cidrLimitValues {
+	t.Helper()
+	cfg, err := config.ParseGenerateBuckets(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := cfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cidrLimitValues{maxBytes: got.CIDR.MaxBytes, maxRecords: got.CIDR.MaxRecords}
+}
+
+func resolveScanLimits(t *testing.T, args []string) cidrLimitValues {
+	t.Helper()
+	cfg, err := config.ParseScan(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := cfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cidrLimitValues{maxBytes: got.CIDR.MaxBytes, maxRecords: got.CIDR.MaxRecords}
 }
 
 func TestResourceLimitFlagsRejectNegativeAndOverflowValues(t *testing.T) {
@@ -91,7 +120,7 @@ func TestResourceLimitFlagsRejectNegativeAndOverflowValues(t *testing.T) {
 func TestProgrammaticConstructorsAcceptExplicitDisabledLimits(t *testing.T) {
 	t.Parallel()
 
-	limits := config.DefaultResourceLimitValues()
+	limits := config.ScanResourceLimits{}
 	limits.CIDR.MaxBytes = 0
 	limits.Port.MaxRecords = 0
 	limits.Snapshot.MaxChunks = 0
@@ -118,25 +147,31 @@ func TestProgrammaticConstructorsAcceptExplicitDisabledLimits(t *testing.T) {
 		t.Fatalf("ResolveResourceLimits() = %+v, want independent disabled values", got)
 	}
 
-	validateCfg, err := config.NewValidateWithResourceLimits(config.ValidateValues{CIDRFile: "targets.csv", CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", Format: "human"}, limits)
+	validateCfg, err := config.NewValidateWithResourceLimits(config.ValidateValues{CIDRFile: "targets.csv", CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", Format: "human"}, config.ValidateResourceLimits{CIDR: limits.CIDR, Port: limits.Port})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prePingCfg, err := config.NewPrePingWithResourceLimits(config.PrePingValues{CIDRFile: "targets.csv", CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", Workers: 1, PingTimeout: time.Second}, limits)
+	prePingCfg, err := config.NewPrePingWithResourceLimits(config.PrePingValues{CIDRFile: "targets.csv", CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", Workers: 1, PingTimeout: time.Second}, config.PrePingResourceLimits{CIDR: limits.CIDR})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bucketCfg, err := config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{CIDRFile: "targets.csv", CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", SnapshotOutput: "resume.json", Workers: 1}, limits)
+	bucketCfg, err := config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{CIDRFile: "targets.csv", CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", SnapshotOutput: "resume.json", Workers: 1}, config.GenerateBucketsResourceLimits{CIDR: limits.CIDR, Port: limits.Port, Snapshot: limits.Snapshot})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, resolver := range map[string]resourceLimitConfig{"validate": validateCfg, "pre-ping": prePingCfg, "generate-buckets": bucketCfg} {
-		got, resolveErr := resolver.ResolveResourceLimits()
-		if resolveErr != nil {
-			t.Fatalf("%s: %v", name, resolveErr)
-		}
-		if got.CIDR.MaxBytes != 0 {
-			t.Fatalf("%s CIDR byte limit = %d, want 0", name, got.CIDR.MaxBytes)
-		}
+	validateGot, err := validateCfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prePingGot, err := prePingCfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucketGot, err := bucketCfg.ResolveResourceLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validateGot.CIDR.MaxBytes != 0 || prePingGot.CIDR.MaxBytes != 0 || bucketGot.CIDR.MaxBytes != 0 {
+		t.Fatal("workflow-specific constructors did not keep disabled CIDR limits")
 	}
 }

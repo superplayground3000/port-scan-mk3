@@ -63,7 +63,7 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	if err != nil {
 		return err
 	}
-	resourceLimits, err := resolveResourceLimits(configuration)
+	resourceLimits, err := resolveGenerateBucketsLimits(configuration)
 	if err != nil {
 		return err
 	}

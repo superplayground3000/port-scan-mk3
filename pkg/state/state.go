@@ -47,8 +47,8 @@ const (
 	DefaultSnapshotUnreachableIPLimit uint64 = 10_000_000
 )
 
-// SnapshotLimits controls serialized bytes and decoded object counts.
-// A zero value disables only that limit.
+// SnapshotLimits controls serialized bytes and decoded object counts for one snapshot.
+// A zero maximum disables only that limit.
 type SnapshotLimits struct {
 	MaxBytes          uint64
 	MaxChunks         uint64
@@ -56,7 +56,8 @@ type SnapshotLimits struct {
 	MaxUnreachableIPs uint64
 }
 
-// DefaultSnapshotLimits returns the default snapshot limits.
+// DefaultSnapshotLimits returns the default byte and object-count limits.
+// It does not access a snapshot and cannot return an error.
 func DefaultSnapshotLimits() SnapshotLimits {
 	return SnapshotLimits{
 		MaxBytes:          DefaultSnapshotSizeLimitBytes,
@@ -148,8 +149,8 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	return SaveSnapshotWithLimits(path, snap, DefaultSnapshotLimits())
 }
 
-// SaveSnapshotWithLimits writes a snapshot when its bytes and object counts fit.
-// A limit failure occurs before a temporary file is created.
+// SaveSnapshotWithLimits writes snap to path when its bytes and object counts fit limits.
+// It returns a serialization, limit, or filesystem error. A limit error occurs before temporary-file creation.
 func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) error {
 	_, previousStatErr := os.Stat(path)
 	if err := validateSnapshotLimits(path, snap, limits); err != nil {
@@ -179,7 +180,7 @@ func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) e
 
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode snapshot %s: %w", path, err)
 	}
 	if limits.MaxBytes > 0 && uint64(len(data)) > limits.MaxBytes {
 		return snapshotLimitError(path, "serialized bytes", uint64(len(data)), limits.MaxBytes, "-snapshot-size-limit-gb")
@@ -282,12 +283,13 @@ func LoadSnapshot(path string) (Snapshot, error) {
 	return LoadSnapshotWithLimits(path, DefaultSnapshotLimits())
 }
 
-// LoadSnapshotWithLimits reads a snapshot with byte and decoded-object limits.
+// LoadSnapshotWithLimits reads path and returns a snapshot that fits limits.
+// It accepts current and legacy JSON. It returns a path, read, decode, or limit error.
 func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error) {
 	if limits.MaxBytes > 0 {
 		info, err := os.Stat(path)
 		if err != nil {
-			return Snapshot{}, err
+			return Snapshot{}, fmt.Errorf("stat snapshot %s: %w", path, err)
 		}
 		if info.Size() >= 0 && uint64(info.Size()) > limits.MaxBytes {
 			return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(info.Size()), limits.MaxBytes, "-snapshot-size-limit-gb")
@@ -295,7 +297,7 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, fmt.Errorf("open snapshot %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	var reader io.Reader = f
@@ -304,7 +306,7 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, fmt.Errorf("read snapshot %s: %w", path, err)
 	}
 	if limits.MaxBytes > 0 && uint64(len(data)) > limits.MaxBytes {
 		return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(len(data)), limits.MaxBytes, "-snapshot-size-limit-gb")

@@ -2,6 +2,7 @@ package input_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,10 +76,10 @@ func TestLimitedFileLoadersUseMetadataAndKeepExactFilesReadable(t *testing.T) {
 	}
 
 	missing := filepath.Join(dir, "missing.csv")
-	if _, err := input.LoadCIDRsFileWithColumnsContext(context.Background(), missing, "ip", "ip_cidr", input.CIDRLimits{MaxBytes: 1}); !os.IsNotExist(err) {
+	if _, err := input.LoadCIDRsFileWithColumnsContext(context.Background(), missing, "ip", "ip_cidr", input.CIDRLimits{MaxBytes: 1}); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing CIDR file error = %v", err)
 	}
-	if _, err := input.LoadPortsFileContext(context.Background(), missing, input.PortLimits{MaxBytes: 1}); !os.IsNotExist(err) {
+	if _, err := input.LoadPortsFileContext(context.Background(), missing, input.PortLimits{MaxBytes: 1}); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing port file error = %v", err)
 	}
 }

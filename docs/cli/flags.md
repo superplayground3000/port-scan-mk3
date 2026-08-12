@@ -15,7 +15,7 @@ from the current parser behavior in:
 pipeline commands register only their workflow flags. An unregistered flag is
 an unknown-flag error (exit `2`).
 
-`validate` is a compatibility exception. It accepts and verifies all 26 flags
+`validate` is a compatibility exception. It accepts and verifies all 30 flags
 from the removed shared parser. It discards values that input validation does
 not use.
 

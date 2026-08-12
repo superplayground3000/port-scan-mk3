@@ -16,7 +16,7 @@ import (
 type scanRuntimeInput struct {
 	values                   config.ScanValues
 	targetExpansion          config.TargetExpansionValues
-	resourceLimits           config.ResourceLimitValues
+	resourceLimits           config.ScanResourceLimits
 	pressure                 config.PressureValues
 	stdout                   io.Writer
 	stderr                   io.Writer

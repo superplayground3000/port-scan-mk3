@@ -33,7 +33,7 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 	if err != nil {
 		return err
 	}
-	resourceLimits, err := resolveResourceLimits(configuration)
+	resourceLimits, err := resolvePrePingLimits(configuration)
 	if err != nil {
 		return err
 	}

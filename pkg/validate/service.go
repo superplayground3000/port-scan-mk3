@@ -23,7 +23,7 @@ type targetExpansionConfiguration interface {
 }
 
 type resourceLimitConfiguration interface {
-	ResolveResourceLimits() (config.ResourceLimitValues, error)
+	ResolveResourceLimits() (config.ValidateResourceLimits, error)
 }
 
 // Result is the outcome of input validation. Valid is true when all inputs are
@@ -69,7 +69,7 @@ func Inputs(cfg Configuration) Result {
 	if err != nil {
 		return Result{Valid: false, Detail: fmt.Sprintf("resolve validate configuration: %v", err)}
 	}
-	resourceLimits := config.ResourceLimitValues{
+	resourceLimits := config.ValidateResourceLimits{
 		CIDR: input.DefaultCIDRLimits(values.CIDRFile),
 		Port: input.DefaultPortLimits(values.PortFile),
 	}

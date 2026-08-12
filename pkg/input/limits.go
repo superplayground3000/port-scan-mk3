@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 )
 
@@ -18,14 +19,17 @@ const (
 	DefaultPortRecordLimit uint64 = 65_535
 )
 
-// CIDRLimits controls one CIDR input. A zero value disables that limit.
+// CIDRLimits controls the path, byte count, and data-record count for one CIDR input.
+// A zero maximum disables only that limit.
 type CIDRLimits struct {
 	Path       string
 	MaxBytes   uint64
 	MaxRecords uint64
 }
 
-// LoadCIDRsFileWithColumnsContext reads one CIDR file with metadata and stream limits.
+// LoadCIDRsFileWithColumnsContext reads the file at path and returns its CIDR records.
+// The column names select basic input fields. The limits apply to file bytes and data records.
+// It returns a path, parse, context, or limit error without retaining a second input buffer.
 func LoadCIDRsFileWithColumnsContext(ctx context.Context, path, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
 	limits.Path = path
 	if err := checkFileSize(path, "CIDR", "-cidr-input-size-limit-gb", limits.MaxBytes); err != nil {
@@ -33,13 +37,19 @@ func LoadCIDRsFileWithColumnsContext(ctx context.Context, path, ipCol, ipCidrCol
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open CIDR input %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	return LoadCIDRsWithColumnsContextAndLimits(ctx, f, ipCol, ipCidrCol, limits)
+	records, err := LoadCIDRsWithColumnsContextAndLimits(ctx, f, ipCol, ipCidrCol, limits)
+	if err != nil {
+		return nil, fmt.Errorf("load CIDR input %s: %w", path, err)
+	}
+	return records, nil
 }
 
-// LoadPortsFileContext reads one port file with metadata and stream limits.
+// LoadPortsFileContext reads the file at path and returns normalized port records.
+// The limits apply to file bytes and nonblank records.
+// It returns a path, parse, context, or limit error.
 func LoadPortsFileContext(ctx context.Context, path string, limits PortLimits) ([]PortSpec, error) {
 	limits.Path = path
 	if err := checkFileSize(path, "port", "-port-input-size-limit-mb", limits.MaxBytes); err != nil {
@@ -47,10 +57,14 @@ func LoadPortsFileContext(ctx context.Context, path string, limits PortLimits) (
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open port input %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	return LoadPortsContextWithLimits(ctx, f, limits)
+	records, err := LoadPortsContextWithLimits(ctx, f, limits)
+	if err != nil {
+		return nil, fmt.Errorf("load port input %s: %w", path, err)
+	}
+	return records, nil
 }
 
 func checkFileSize(path, kind, flagName string, maxBytes uint64) error {
@@ -59,7 +73,7 @@ func checkFileSize(path, kind, flagName string, maxBytes uint64) error {
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("stat %s input %s: %w", kind, path, err)
 	}
 	if info.Size() >= 0 && uint64(info.Size()) > maxBytes {
 		return fmt.Errorf("%s input %s size %d bytes exceeds limit %d bytes; use %s to override it", kind, path, info.Size(), maxBytes, flagName)
@@ -67,19 +81,22 @@ func checkFileSize(path, kind, flagName string, maxBytes uint64) error {
 	return nil
 }
 
-// DefaultCIDRLimits returns the default limits for a CIDR input path.
+// DefaultCIDRLimits returns the default byte and record limits for path.
+// This function does not open the path and cannot return an error.
 func DefaultCIDRLimits(path string) CIDRLimits {
 	return CIDRLimits{Path: path, MaxBytes: DefaultCIDRSizeLimitBytes, MaxRecords: DefaultCIDRRecordLimit}
 }
 
-// PortLimits controls one port input. A zero value disables that limit.
+// PortLimits controls the path, byte count, and nonblank-record count for one port input.
+// A zero maximum disables only that limit.
 type PortLimits struct {
 	Path       string
 	MaxBytes   uint64
 	MaxRecords uint64
 }
 
-// DefaultPortLimits returns the default limits for a port input path.
+// DefaultPortLimits returns the default byte and record limits for path.
+// This function does not open the path and cannot return an error.
 func DefaultPortLimits(path string) PortLimits {
 	return PortLimits{Path: path, MaxBytes: DefaultPortSizeLimitBytes, MaxRecords: DefaultPortRecordLimit}
 }
@@ -128,11 +145,22 @@ func (r *boundedInputReader) Read(p []byte) (int, error) {
 		readSize = remaining + 1
 	}
 	n, err := r.reader.Read(p[:int(readSize)])
+	if uint64(n) > math.MaxUint64-r.consumed {
+		return n, fmt.Errorf("%s input %s byte count overflows the supported range", r.kind, displayPath(r.path))
+	}
 	r.consumed += uint64(n)
 	if r.consumed > r.maxBytes {
 		return n, r.limitError(r.consumed)
 	}
 	return n, err
+}
+
+func incrementInputCount(count *uint64, kind string) error {
+	if *count == math.MaxUint64 {
+		return fmt.Errorf("%s count overflows the supported range", kind)
+	}
+	*count++
+	return nil
 }
 
 func (r *boundedInputReader) limitError(actual uint64) error {

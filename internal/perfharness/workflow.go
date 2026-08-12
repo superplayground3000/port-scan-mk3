@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
@@ -220,7 +222,7 @@ func (suite Suite) RunRichOversizeCase(ctx context.Context, spec RichOversizeSpe
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(spec.OutputDir, fmt.Sprintf("run-%d", run))
 		observation, err := suite.Measure(ctx, spec.TargetBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
-			limits := config.DefaultResourceLimitValues()
+			limits := config.ScanResourceLimits{CIDR: input.DefaultCIDRLimits(""), Port: input.DefaultPortLimits(""), Snapshot: state.DefaultSnapshotLimits(), Pressure: pressure.DefaultResponseLimits()}
 			limits.CIDR.MaxBytes = spec.LimitBytes
 			if spec.Case == "override-complete" {
 				limits.CIDR.MaxBytes = spec.TargetBytes * 2
@@ -263,7 +265,7 @@ func runRichProduction(ctx context.Context, outputDir string, items uint64, work
 	return runRichProductionWithLimits(ctx, outputDir, items, workers, fixture, nil)
 }
 
-func runRichProductionWithLimits(ctx context.Context, outputDir string, items uint64, workers int, fixture FixtureSpec, resourceLimits *config.ResourceLimitValues) (WorkflowResult, error) {
+func runRichProductionWithLimits(ctx context.Context, outputDir string, items uint64, workers int, fixture FixtureSpec, resourceLimits *config.ScanResourceLimits) (WorkflowResult, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich workflow directory: %w", err)
 	}
@@ -301,7 +303,7 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 			CIDRFile: manifest.ArtifactPath, CIDRIPCol: "src_ip", CIDRIPCidrCol: "src_network_segment",
 			Output: filepath.Join(prePingDir, "results.csv"), Workers: workers, PingTimeout: time.Second,
 			ProgressInterval: int(items) + 1,
-		}, *resourceLimits)
+		}, config.PrePingResourceLimits{CIDR: resourceLimits.CIDR})
 	}
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny pre-ping configuration: %w", err)
@@ -318,7 +320,7 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 		bucketConfig, err = config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
 			CIDRFile: manifest.ArtifactPath, CIDRIPCol: "src_ip", CIDRIPCidrCol: "src_network_segment",
 			SnapshotOutput: snapshotPath, Workers: workers, ProgressInterval: int(items) + 1,
-		}, *resourceLimits)
+		}, config.GenerateBucketsResourceLimits{CIDR: resourceLimits.CIDR, Port: resourceLimits.Port, Snapshot: resourceLimits.Snapshot})
 	}
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny bucket configuration: %w", err)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
 )
 
 // ErrUninitializedConfiguration reports an opaque configuration zero value.
@@ -25,7 +27,13 @@ type PrePingValues struct {
 type prePingState struct {
 	values    PrePingValues
 	expansion TargetExpansionValues
-	resources ResourceLimitValues
+	resources PrePingResourceLimits
+}
+
+// PrePingResourceLimits contains the CIDR limits used by pre-ping.
+// The workflow returns an input error when these limits reject its CIDR file.
+type PrePingResourceLimits struct {
+	CIDR input.CIDRLimits
 }
 
 // PrePingConfig is an opaque configuration value for the pre-ping workflow.
@@ -47,11 +55,12 @@ func NewPrePing(values PrePingValues) (PrePingConfig, error) {
 	if values.PingTimeout <= 0 {
 		return PrePingConfig{}, errors.New("-pre-scan-ping-timeout must be > 0")
 	}
-	return PrePingConfig{state: &prePingState{values: values, expansion: defaultTargetExpansionValues(), resources: defaultResourceLimitValues()}}, nil
+	return PrePingConfig{state: &prePingState{values: values, expansion: defaultTargetExpansionValues(), resources: PrePingResourceLimits{CIDR: input.DefaultCIDRLimits("")}}}, nil
 }
 
-// NewPrePingWithResourceLimits verifies values and keeps explicit CIDR limits.
-func NewPrePingWithResourceLimits(values PrePingValues, limits ResourceLimitValues) (PrePingConfig, error) {
+// NewPrePingWithResourceLimits verifies values and returns a configuration with explicit CIDR limits.
+// It returns the same validation errors as NewPrePing. It does not open files or run ping work.
+func NewPrePingWithResourceLimits(values PrePingValues, limits PrePingResourceLimits) (PrePingConfig, error) {
 	cfg, err := NewPrePing(values)
 	if err != nil {
 		return PrePingConfig{}, err
@@ -66,10 +75,10 @@ func ParsePrePing(args []string) (PrePingConfig, error) {
 	common := commonCLIValues{}
 	values := PrePingValues{}
 	expansionFlags := targetExpansionFlagValues{}
-	resourceFlags := defaultResourceLimitFlagValues()
+	cidrLimitFlags := defaultCIDRLimitFlags()
 	registerCommonFlags(fs, &common)
 	registerTargetExpansionFlags(fs, &expansionFlags)
-	registerCIDRLimitFlags(fs, &resourceFlags)
+	registerCIDRLimitFlags(fs, &cidrLimitFlags)
 	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&values.ProgressInterval, "progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.Output, "output", "scan_results.csv", "output csv")
@@ -85,7 +94,7 @@ func ParsePrePing(args []string) (PrePingConfig, error) {
 	if err != nil {
 		return PrePingConfig{}, err
 	}
-	resources, err := resourceFlags.resolve()
+	cidrLimits, err := cidrLimitFlags.resolve()
 	if err != nil {
 		return PrePingConfig{}, fmt.Errorf("validate resource limits: %w", err)
 	}
@@ -97,14 +106,14 @@ func ParsePrePing(args []string) (PrePingConfig, error) {
 		return PrePingConfig{}, fmt.Errorf("validate pre-ping arguments: %w", err)
 	}
 	cfg.state.expansion = expansion
-	cfg.state.resources = resources
+	cfg.state.resources = PrePingResourceLimits{CIDR: cidrLimits}
 	return cfg, nil
 }
 
 // ResolveResourceLimits returns the verified CIDR limits.
-func (c PrePingConfig) ResolveResourceLimits() (ResourceLimitValues, error) {
+func (c PrePingConfig) ResolveResourceLimits() (PrePingResourceLimits, error) {
 	if c.state == nil {
-		return ResourceLimitValues{}, ErrUninitializedConfiguration
+		return PrePingResourceLimits{}, ErrUninitializedConfiguration
 	}
 	return c.state.resources, nil
 }

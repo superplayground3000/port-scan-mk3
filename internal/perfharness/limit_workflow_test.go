@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/internal/perfharness"
@@ -54,6 +55,10 @@ func TestRunResourceLimitCaseExecutesEveryNonTargetFlagAndBypassKind(t *testing.
 			}
 			if !result.Verdict.Passed || !result.Correctness.ExpectedValues || len(result.Runs) != 6 {
 				t.Fatalf("flag=%s case=%s result=%+v", limit.Flag, bypass.Kind, result)
+			}
+			if bypass.Kind != perfharness.BypassNegative && bypass.Kind != perfharness.BypassOverflow &&
+				!strings.Contains(result.Correctness.Detail, "production enforcement") {
+				t.Fatalf("flag=%s case=%s detail=%q, want production enforcement evidence", limit.Flag, bypass.Kind, result.Correctness.Detail)
 			}
 		}
 	}

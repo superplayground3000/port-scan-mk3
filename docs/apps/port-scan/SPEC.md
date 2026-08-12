@@ -109,7 +109,7 @@ batch size, and total flush time.
 
 The three pipeline commands register only their workflow flags. A foreign flag
 is an unknown-flag error. `validate` is a compatibility exception. It accepts
-and verifies the complete 24-flag surface of the removed shared parser.
+and verifies the complete 30-flag surface of the removed shared parser.
 
 The table shows the pipeline ownership of each flag. `validate` accepts all
 listed flags except `-progress-interval`, `-unreachable-file`, and

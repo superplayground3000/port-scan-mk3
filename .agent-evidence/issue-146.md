@@ -280,3 +280,40 @@ Result: passed with no output.
 The pragmatic Simple English self-check covered all changed documentation, comments, help text, and errors.
 The text uses active voice, short sentences, consistent limit terms, and conditions before commands.
 Commands, flags, identifiers, paths, and quoted errors keep their exact spelling.
+
+### Independent review corrections
+
+The first independent review blocked the branch at `cf25ffbd037534c93b7dab5f641dab47a4ad4e83`.
+It found that four matrix cases only resolved flags and then reported production success.
+It also found unchecked counters, one cross-workflow limit aggregate, unwrapped filesystem errors, incomplete API comments, and stale flag counts.
+
+The matrix false-positive test started with this command:
+
+`GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run '^TestRunResourceLimitCaseExecutesEveryNonTargetFlagAndBypassKind$' -count=1`
+
+It failed with:
+
+```text
+flag=-cidr-input-size-limit-gb case=exact-default detail="production command limit matched the case", want production enforcement evidence
+```
+
+The corrected runner uses these production symbols:
+
+- CIDR size and record cases use `input.LoadCIDRsWithColumnsContextAndLimits`.
+- Port size and record cases use `input.LoadPortsContextWithLimits`.
+- Snapshot byte and object cases use `state.LoadSnapshotWithLimits` and `state.SaveSnapshotWithLimits`.
+- Pressure byte cases use `pressure.SimpleHTTP.Sample`.
+- Pressure entry cases use `pressure.OAuthMulti.Sample`.
+
+Each production probe uses a bounded two-item fixture.
+It checks exact acceptance, plus-one rejection, positive-override acceptance, and zero-limit acceptance.
+Negative and overflow cases still stop during configuration parsing before I/O.
+The focused matrix test then passed in `0.167s`.
+
+The counter-overflow test started with this command:
+
+`GOTOOLCHAIN=go1.24.4 go test ./pkg/input ./pkg/pressure -run '^(TestBoundedInputReaderRejectsConsumedByteOverflow|TestIncrementInputCountRejectsOverflow|TestIncrementResponseCountRejectsOverflow|TestCountingReaderRejectsByteCounterOverflow)$' -count=1`
+
+It failed to compile because `incrementInputCount` and `incrementResponseCount` did not exist.
+The input and pressure readers now reject byte or item counters that cannot represent the next value.
+The same command then passed both packages.

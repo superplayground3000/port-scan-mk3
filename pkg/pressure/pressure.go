@@ -23,14 +23,15 @@ const (
 	DefaultResponseEntryLimit uint64 = 10_000
 )
 
-// ResponseLimits controls one HTTP response and one OAuth data array.
-// A zero value disables only that limit.
+// ResponseLimits controls the byte count for each HTTP response and the entry count for each OAuth data array.
+// A zero maximum disables only that limit.
 type ResponseLimits struct {
 	MaxBytes   uint64
 	MaxEntries uint64
 }
 
-// DefaultResponseLimits returns the default pressure response limits.
+// DefaultResponseLimits returns the default byte and OAuth entry limits.
+// It does not create an HTTP adapter and cannot return an error.
 func DefaultResponseLimits() ResponseLimits {
 	return ResponseLimits{MaxBytes: DefaultResponseSizeLimitBytes, MaxEntries: DefaultResponseEntryLimit}
 }
@@ -99,7 +100,9 @@ func NewSimpleHTTP(endpoint string, client *http.Client) (*SimpleHTTP, error) {
 	return NewSimpleHTTPWithLimits(endpoint, client, DefaultResponseLimits())
 }
 
-// NewSimpleHTTPWithLimits returns an unauthenticated adapter with response limits.
+// NewSimpleHTTPWithLimits returns an unauthenticated adapter for endpoint.
+// The client sends requests, and limits control each response.
+// It returns an error for an invalid endpoint or nil client.
 func NewSimpleHTTPWithLimits(endpoint string, client *http.Client, limits ResponseLimits) (*SimpleHTTP, error) {
 	if err := validateEndpoint("pressure endpoint", endpoint); err != nil {
 		return nil, err
@@ -119,7 +122,9 @@ func NewOAuthMulti(cfg OAuthConfig, client *http.Client) (*OAuthMulti, error) {
 	return NewOAuthMultiWithLimits(cfg, client, DefaultResponseLimits())
 }
 
-// NewOAuthMultiWithLimits returns an authenticated adapter with response limits.
+// NewOAuthMultiWithLimits returns an authenticated adapter for all configured endpoints.
+// The client sends requests, and limits control each token and data response.
+// It returns an error for invalid endpoints, missing credentials, no data endpoints, or a nil client.
 func NewOAuthMultiWithLimits(cfg OAuthConfig, client *http.Client, limits ResponseLimits) (*OAuthMulti, error) {
 	if err := validateEndpoint("OAuth endpoint", cfg.AuthEndpoint); err != nil {
 		return nil, err
@@ -285,7 +290,9 @@ func (s *oauthSource) sample(ctx context.Context) (float64, error) {
 	}
 	var count uint64
 	for decoder.More() {
-		count++
+		if err := incrementResponseCount(&count, "OAuth data entries"); err != nil {
+			return 0, fmt.Errorf("pressure endpoint %s OAuth data response: %w", s.dataEndpoint, err)
+		}
 		if s.limits.MaxEntries > 0 && count > s.limits.MaxEntries {
 			return 0, fmt.Errorf("pressure endpoint %s OAuth data response count %d exceeds limit %d; use -pressure-response-entry-limit to override it", s.dataEndpoint, count, s.limits.MaxEntries)
 		}
@@ -392,8 +399,19 @@ type countingReader struct {
 
 func (r *countingReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
+	if uint64(n) > math.MaxUint64-r.count {
+		return n, fmt.Errorf("response byte count overflows the supported range")
+	}
 	r.count += uint64(n)
 	return n, err
+}
+
+func incrementResponseCount(count *uint64, kind string) error {
+	if *count == math.MaxUint64 {
+		return fmt.Errorf("%s count overflows the supported range", kind)
+	}
+	*count++
+	return nil
 }
 
 func decodeCompleteResponse(decoder *json.Decoder, consumed *countingReader, endpoint, responseType string, maxBytes uint64, target any) error {
