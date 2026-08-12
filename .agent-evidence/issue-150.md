@@ -1238,3 +1238,44 @@ internal/perfharness coverage: 80.4% of statements
 internal/perfharness/cmd/perf-harness coverage: 73.1% of statements
 coverage gate passed: 85.0%
 ```
+
+### Per-case native process peaks
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 make verify-performance
+```
+
+Observed red result:
+
+```text
+snapshot-heavy/mixed: committed memory 10691940352 exceeds 6000000000
+rich-record-mixed: committed memory 10805760000 exceeds 8000000000
+rich-hot-key: committed memory 10826141696 exceeds 8000000000
+performance matrix failed one or more thresholds
+```
+
+The Linux adapter used `VmHWM`. The Windows adapter used lifetime peak fields.
+Later cases therefore inherited memory peaks from earlier cases.
+
+Focused red command and reason:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestLinuxProcessMetricsUseCurrentValuesForPerCasePeaks -count=1
+undefined: linuxProcessMetrics
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+```
+
+The adapters now sample current native values. The case sampler calculates
+the peak inside each case.
+
+Focused green commands and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./internal/perfharness -run 'TestLinuxProcessMetricsUseCurrentValuesForPerCasePeaks|TestMeasureRecordsPortableGoMetrics' -count=1
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.017s
+
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOTOOLCHAIN=go1.24.4 go test -c ./internal/perfharness -o /tmp/perfharness-706f295.test.exe
+exit 0
+```

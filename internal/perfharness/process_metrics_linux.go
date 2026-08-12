@@ -14,13 +14,17 @@ func sampleProcessMetrics() (processMetrics, error) {
 	if err != nil {
 		return processMetrics{}, fmt.Errorf("read Linux process status: %w", err)
 	}
-	rss := procValueBytes(status, "VmHWM:")
+	return linuxProcessMetrics(status), nil
+}
+
+func linuxProcessMetrics(status []byte) processMetrics {
+	rss := procValueBytes(status, "VmRSS:")
 	swap := procValueBytes(status, "VmSwap:")
 	return processMetrics{
 		linuxRSS:       rss,
 		committed:      rss + swap,
 		swapOrPagefile: swap,
-	}, nil
+	}
 }
 
 func procValueBytes(data []byte, name string) uint64 {

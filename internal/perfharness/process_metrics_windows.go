@@ -42,8 +42,8 @@ func sampleProcessMetrics() (processMetrics, error) {
 		return processMetrics{}, fmt.Errorf("read Windows process memory: %w", callErr)
 	}
 	return processMetrics{
-		windowsWorkingSet: uint64(memory.peakWorkingSetSize),
+		windowsWorkingSet: uint64(memory.workingSetSize),
 		committed:         uint64(memory.privateUsage),
-		swapOrPagefile:    uint64(memory.peakPagefileUsage),
+		swapOrPagefile:    uint64(memory.pagefileUsage),
 	}, nil
 }
