@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,6 +61,19 @@ type releaseThenFailRecordWriter struct {
 	release chan struct{}
 	writes  int
 }
+
+type flushFailingRecordWriter struct {
+	inner recordWriter
+	err   error
+}
+
+func (w *flushFailingRecordWriter) Write(record writer.Record) error {
+	return w.inner.Write(record)
+}
+
+func (w *flushFailingRecordWriter) WriteHeader() error { return w.inner.WriteHeader() }
+
+func (w *flushFailingRecordWriter) Flush() error { return w.err }
 
 func (w *releaseThenFailRecordWriter) Write(record writer.Record) error {
 	w.writes++
@@ -173,6 +187,59 @@ func TestRun_WhenOutputWriteFails_RewindsEveryAffectedChunk(t *testing.T) {
 			t.Errorf("chunk %s state=(scanned %d, status %s), want (0, pending)",
 				chunk.CIDR, chunk.ScannedCount, chunk.Status)
 		}
+	}
+}
+
+func TestRun_WhenBatchFlushFails_ResumeOmitsNoUncommittedTask(t *testing.T) {
+	cfg, _, _ := newInterruptibleScanConfig(t)
+	cfg.OutputFlushResults = 3
+
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            stubDial,
+		batchOutputsOpener: func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+			outputs, err := openBufferedBatchOutputs(scanPath, openPath, appendMode)
+			if err != nil {
+				return nil, err
+			}
+			outputs.openOnlyWriter = &flushFailingRecordWriter{inner: outputs.openOnlyWriter, err: errInjectedWriteFailure}
+			return outputs, nil
+		},
+	})
+	if !errors.Is(runErr, errInjectedWriteFailure) {
+		t.Fatalf("run error = %v, want injected flush failure", runErr)
+	}
+	failed, err := state.LoadSnapshot(cfg.Resume)
+	if err != nil {
+		t.Fatalf("load failed snapshot: %v", err)
+	}
+	if failed.Chunks[0].NextIndex != 0 || failed.Chunks[0].ScannedCount != 0 {
+		t.Fatalf("failed batch snapshot = %+v, want cursor 0", failed.Chunks[0])
+	}
+	totalTasks := failed.Chunks[0].TotalCount
+	var resumedProbes atomic.Int64
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			resumedProbes.Add(1)
+			return stubDial(ctx, network, address)
+		},
+	}); err != nil {
+		t.Fatalf("resume after batch failure: %v", err)
+	}
+	if got := int(resumedProbes.Load()); got != totalTasks {
+		t.Fatalf("resumed probes = %d, want all %d uncommitted tasks", got, totalTasks)
+	}
+	if failed.Output == nil {
+		t.Fatal("failed snapshot lacks output paths")
+	}
+	_, scanRows := readCSVRows(t, failed.Output.ScanPath)
+	_, openRows := readCSVRows(t, failed.Output.OpenPath)
+	if len(scanRows) != totalTasks+3 {
+		t.Fatalf("scan rows after resume = %d, want %d including allowed duplicates", len(scanRows), totalTasks+3)
+	}
+	if len(openRows) != totalTasks {
+		t.Fatalf("open rows after resume = %d, want %d", len(openRows), totalTasks)
 	}
 }
 

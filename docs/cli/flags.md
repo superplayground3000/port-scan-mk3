@@ -84,6 +84,7 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 | `-target-memory-limit-gb` | int | stored or `16` | Explicit value replaces the stored memory limit. `0` disables this limit. |
 | `-resume` | string | **required** | Bucket snapshot file to scan. The command reads it at start. On an interrupt or an error, the command **updates it in place at this path**. |
 | `-output` | string | `scan_results.csv` | Output anchor. It gives the directory and the shared suffix for `scan_results-<ts>.csv` and `opened_results-<ts>.csv`. |
+| `-output-flush-results` | int | `1000` | Probe results per output batch. `1` flushes each result. `0` disables periodic flushes. Negative values are errors. Positive values have no fixed maximum. |
 | `-timeout` | duration | `100ms` | TCP dial timeout for each probe. |
 | `-delay` | duration | `10ms` | Dispatch delay between tasks. |
 | `-bucket-rate` | int | `100` | Leaky-bucket refill rate. Accepted range `1`-`1000000`. At a higher rate, the refill interval becomes shorter than the runtime timer resolution. |
@@ -102,6 +103,8 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 
 - **No ping flags.** `scan` does not register `-disable-pre-scan-ping` or
   `-pre-scan-ping-timeout`. Either flag is an unknown-flag error.
+- The snapshot does not store `-output-flush-results`. Each resumed run uses
+  its current flag value.
 
 ### `port-scan validate`
 

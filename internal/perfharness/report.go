@@ -146,8 +146,8 @@ func markdownReport(report Report) string {
 	fmt.Fprintf(&text, "RAM: `%d` bytes\n\n", report.Hardware.RAMBytes)
 	fmt.Fprintf(&text, "Go: `%s`\n\n", report.Hardware.GoVersion)
 	fmt.Fprintf(&text, "Commit: `%s`\n\n", report.Hardware.Commit)
-	fmt.Fprintln(&text, "| Case | Fixture generation median | Stage cold wall time | Stage steady median | Verdict |")
-	fmt.Fprintln(&text, "|---|---:|---:|---:|---|")
+	fmt.Fprintln(&text, "| Case | Fixture generation median | Stage cold wall time | Stage steady median | Output bytes | Results/s | MB/s | Allocations | Allocated bytes | Peak heap | Verdict |")
+	fmt.Fprintln(&text, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
 	for _, result := range report.Cases {
 		verdict := "fail"
 		if result.Verdict.Passed {
@@ -157,7 +157,19 @@ func markdownReport(report Report) string {
 		if result.FixtureGeneration != nil {
 			fixtureGeneration = result.FixtureGeneration.SteadyMedian.WallTime.String()
 		}
-		fmt.Fprintf(&text, "| %s | %s | %s | %s | %s |\n", result.Name, fixtureGeneration, result.ColdStart.WallTime, result.SteadyMedian.WallTime, verdict)
+		fmt.Fprintf(&text, "| %s | %s | %s | %s | %d | %.2f | %.2f | %d | %d | %d | %s |\n",
+			result.Name,
+			fixtureGeneration,
+			result.ColdStart.WallTime,
+			result.SteadyMedian.WallTime,
+			result.SteadyMedian.OutputBytes,
+			result.SteadyMedian.ThroughputPerSecond,
+			result.SteadyMedian.MegabytesPerSecond,
+			result.SteadyMedian.GoAllocationCount,
+			result.SteadyMedian.GoAllocatedBytes,
+			result.SteadyMedian.GoPeakHeapBytes,
+			verdict,
+		)
 	}
 	return text.String()
 }
@@ -168,6 +180,7 @@ func medianObservation(values []Observation) Observation {
 		OutputBytes:            medianUint64(values, func(value Observation) uint64 { return value.OutputBytes }),
 		WallTime:               medianDuration(values, func(value Observation) time.Duration { return value.WallTime }),
 		ThroughputPerSecond:    medianFloat64(values, func(value Observation) float64 { return value.ThroughputPerSecond }),
+		MegabytesPerSecond:     medianFloat64(values, func(value Observation) float64 { return value.MegabytesPerSecond }),
 		GoAllocatedBytes:       medianUint64(values, func(value Observation) uint64 { return value.GoAllocatedBytes }),
 		GoAllocationCount:      medianUint64(values, func(value Observation) uint64 { return value.GoAllocationCount }),
 		GoPeakHeapBytes:        medianUint64(values, func(value Observation) uint64 { return value.GoPeakHeapBytes }),

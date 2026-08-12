@@ -16,6 +16,7 @@
 package writer
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/csv"
 	"io"
@@ -110,15 +111,18 @@ func CanonicalHeader() string {
 // each Write call. The scan pipeline serializes the writes at the dispatcher
 // level.
 type CSVWriter struct {
-	w           *csv.Writer
-	wroteHeader bool
+	w            *csv.Writer
+	wroteHeader  bool
+	autoFlush    bool
+	outputBuffer *bufio.Writer
+	row          []string
 }
 
 // NewCSVWriter creates a CSVWriter that writes to the io.Writer out. The
 // CSVWriter does not take ownership of out. If the underlying writer needs a
 // close, the caller must close it.
 func NewCSVWriter(out io.Writer) *CSVWriter {
-	return &CSVWriter{w: csv.NewWriter(out)}
+	return &CSVWriter{w: csv.NewWriter(out), autoFlush: true}
 }
 
 // NewCSVWriterAppending creates a CSVWriter that appends to a destination that
@@ -127,11 +131,34 @@ func NewCSVWriter(out io.Writer) *CSVWriter {
 // and WriteHeader does nothing. Use this constructor when you reopen an
 // existing result file in append mode (design §3.7).
 func NewCSVWriterAppending(out io.Writer) *CSVWriter {
-	return &CSVWriter{w: csv.NewWriter(out), wroteHeader: true}
+	return &CSVWriter{w: csv.NewWriter(out), wroteHeader: true, autoFlush: true}
+}
+
+// NewBufferedCSVWriter creates a CSVWriter that keeps records buffered until
+// the caller calls Flush. The CSVWriter does not take ownership of out.
+func NewBufferedCSVWriter(out io.Writer) *CSVWriter {
+	return newBufferedCSVWriter(out, false)
+}
+
+// NewBufferedCSVWriterAppending creates a buffered CSVWriter for a destination
+// that already contains the canonical header.
+func NewBufferedCSVWriterAppending(out io.Writer) *CSVWriter {
+	return newBufferedCSVWriter(out, true)
+}
+
+func newBufferedCSVWriter(out io.Writer, wroteHeader bool) *CSVWriter {
+	const outputBufferBytes = 256 * 1024
+	outputBuffer := bufio.NewWriterSize(out, outputBufferBytes)
+	return &CSVWriter{
+		w:            csv.NewWriter(outputBuffer),
+		wroteHeader:  wroteHeader,
+		outputBuffer: outputBuffer,
+	}
 }
 
 // Write appends one record to the CSV. On the first call, Write also writes the
-// header. Write flushes after each write to make sure that the data is visible.
+// header. Writers from the existing constructors flush after each write.
+// Writers from the buffered constructors require an explicit Flush call.
 //
 // # Parameters
 //
@@ -144,15 +171,21 @@ func (cw *CSVWriter) Write(r Record) error {
 	if err := cw.WriteHeader(); err != nil {
 		return err
 	}
-	row := make([]string, len(Columns))
+	row := cw.row
+	if len(row) != len(Columns) {
+		row = make([]string, len(Columns))
+	}
 	for i, col := range Columns {
 		row[i] = col.Extract(r)
 	}
 	if err := cw.w.Write(row); err != nil {
 		return err
 	}
-	cw.w.Flush()
-	return cw.w.Error()
+	if cw.autoFlush {
+		return cw.Flush()
+	}
+	cw.row = row
+	return nil
 }
 
 // WriteHeader writes the fixed result header one time. Later calls do nothing.
@@ -166,8 +199,24 @@ func (cw *CSVWriter) WriteHeader() error {
 			return err
 		}
 		cw.wroteHeader = true
-		cw.w.Flush()
-		return cw.w.Error()
+		if cw.autoFlush {
+			return cw.Flush()
+		}
+	}
+	return nil
+}
+
+// Flush writes all buffered CSV data to the underlying writer.
+func (cw *CSVWriter) Flush() error {
+	cw.w.Flush()
+	if err := cw.w.Error(); err != nil {
+		return err
+	}
+	if cw.outputBuffer != nil {
+		if err := cw.outputBuffer.Flush(); err != nil {
+			return err
+		}
+		cw.row = nil
 	}
 	return nil
 }

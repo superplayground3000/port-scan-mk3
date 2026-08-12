@@ -153,6 +153,20 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 - `scan`: pure TCP scan of a bucket snapshot (`-resume` required. It dispatches, probes, writes output, and persists resume state in place)
 - `validate`: parse and validate input files only
 
+## Scan Output Batches
+
+`scan` writes both result files as one commit batch. The
+`-output-flush-results` flag sets the number of probe results in each batch.
+
+The default is `1000`. A value of `1` flushes each result. A value of `0`
+disables periodic flushes and keeps the final flush.
+
+Positive values have no fixed maximum. A resumed run uses its current flag
+value because the snapshot does not store this value.
+
+The scan updates progress after both writers flush. If output fails, a resumed
+scan repeats the complete uncommitted batch.
+
 ## Target Expansion Limits
 
 All four commands verify the complete target expansion before network or output work.

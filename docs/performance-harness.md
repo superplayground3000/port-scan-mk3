@@ -63,7 +63,13 @@ The denied cases must make zero reachability checks and zero TCP probes.
 The accepted cases run pre-ping, snapshot generation, resume, scan, and both writers.
 
 The matrix executes resume cases at 0%, 50%, and 99% completion.
-It also executes snapshot-save and pressure fatal failures.
+It also executes output, snapshot-save, and pressure fatal failures.
+
+The output matrix uses all-open results to write both result files. The full
+profile uses 10,000, 100,000, 1,000,000, and 10,000,000 results.
+
+Each scale uses flush intervals `1`, `1000`, and `0`. Each output case runs
+five times and removes its temporary CSV files after measurement.
 
 The matrix executes six cases for each target expansion limit.
 These cases cover the exact default, default plus one, a positive override,
@@ -127,14 +133,19 @@ The JSON schema version is `1`.
 Each fixture manifest records the seed, counts, bytes, digest, family, and shape.
 Artifact names are relative, so deterministic manifests do not contain host roots.
 
-Each case starts with one cold observation.
-Five more observations produce the steady-state median.
+Each fixture or workflow case starts with one cold observation. Five more
+observations produce its steady-state median.
+
+Each output case has five observations. Its report uses the first observation
+as the cold value and calculates the median from all five observations.
+
 Fixture generation time is separate from production-stage time.
 
 The portable observation has these metrics:
 
 - Input and output bytes.
 - Wall time and throughput.
+- Output MB/s.
 - Go allocated bytes and allocation count.
 - Go peak heap.
 - Linux peak RSS or Windows peak working set.
@@ -161,6 +172,11 @@ A ten-fold input increase permits at most 12.5-fold time growth.
 Allocated bytes permit at most 11-fold growth.
 A benchmark change permits at most a 10% increase in `ns/op` or `B/op`.
 The 256-worker case permits at most 25% more memory than the 16-worker case.
+
+A ten-fold output increase permits at most 12.5-fold time growth. At the two
+largest scales, interval `1000` must be twice as fast as interval `1`.
+
+At those scales, interval `1000` cannot be more than 15% slower than interval `0`.
 
 An OOM, panic, corruption, missing result, or incomplete case fails immediately.
 Paging is permitted, and its time stays in the wall-time result.

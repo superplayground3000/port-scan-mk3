@@ -93,6 +93,18 @@ promise a current snapshot or finalized output handles.
 A snapshot-save error replaces cancellation and returns exit code `1`. The
 error states whether the previous snapshot remains usable.
 
+The scan commits a result batch only after both result writers flush. Progress
+and summaries include only committed results.
+
+A controlled stop flushes the final batch. A write or flush failure rewinds
+the current batch to its earliest pending task in each chunk.
+
+Each `scan_result` event includes `output_state=pending` and `batch_id`. The
+runtime emits `output_batch_committed` or `output_batch_failed` for each batch.
+
+The `output_batch_summary` event reports the interval, batch counts, maximum
+batch size, and total flush time.
+
 ## CLI Flags
 
 The three pipeline commands register only their workflow flags. A foreign flag
@@ -118,6 +130,7 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 | `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. The scan parser accepts this compatibility flag but does not use its value. |
 | `-port-file` | (basic mode) | `generate-buckets` (primary; required in basic mode, ignored in rich mode) and `scan` (fallback, normally ignored — chunks carry ports). |
 | `-output` | `scan_results.csv` | `pre-ping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
+| `-output-flush-results` | `1000` | `scan` only. Probe results per output batch. `1` flushes each result. `0` disables periodic flushes. Positive values have no fixed maximum. |
 | `-timeout` | `100ms` | `scan` only. Per-scan TCP connection timeout (Go duration string). |
 | `-delay` | `10ms` | `scan` only. Pause between dispatching consecutive tasks. |
 | `-bucket-rate` | `100` | `scan` only. Leaky-bucket token refill rate (tokens/second) |

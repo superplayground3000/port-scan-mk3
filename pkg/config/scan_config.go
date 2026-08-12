@@ -105,21 +105,22 @@ func (p PressurePolicy) Resolve() (PressureValues, error) {
 
 // ScanValues contains the validated values for the scan workflow.
 type ScanValues struct {
-	CIDRFile       string
-	CIDRIPCol      string
-	CIDRIPCidrCol  string
-	PortFile       string
-	ResumeInput    string
-	Output         string
-	Workers        int
-	DialTimeout    time.Duration
-	DispatchDelay  time.Duration
-	BucketRate     int
-	BucketCapacity int
-	LogLevel       string
-	Format         string
-	Quiet          bool
-	Pressure       PressurePolicy
+	CIDRFile           string
+	CIDRIPCol          string
+	CIDRIPCidrCol      string
+	PortFile           string
+	ResumeInput        string
+	Output             string
+	OutputFlushResults int
+	Workers            int
+	DialTimeout        time.Duration
+	DispatchDelay      time.Duration
+	BucketRate         int
+	BucketCapacity     int
+	LogLevel           string
+	Format             string
+	Quiet              bool
+	Pressure           PressurePolicy
 }
 
 type scanState struct {
@@ -143,6 +144,9 @@ func NewScan(values ScanValues) (ScanConfig, error) {
 	}
 	if values.ResumeInput == "" {
 		return ScanConfig{}, errors.New("-resume is required")
+	}
+	if values.OutputFlushResults < 0 {
+		return ScanConfig{}, errors.New("-output-flush-results must be >= 0")
 	}
 	if err := validateWorkers(values.Workers); err != nil {
 		return ScanConfig{}, fmt.Errorf("validate workers: %w", err)
@@ -182,6 +186,7 @@ func ParseScan(args []string) (ScanConfig, error) {
 	fs.Int("progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path (optional fallback; chunks carry ports)")
 	fs.StringVar(&values.Output, "output", "scan_results.csv", "output csv")
+	fs.IntVar(&values.OutputFlushResults, "output-flush-results", 1000, "result count between output flushes (0 disables periodic flushes)")
 	fs.StringVar(&values.ResumeInput, "resume", "", "resume/bucket snapshot file (required)")
 	fs.DurationVar(&values.DialTimeout, "timeout", 100*time.Millisecond, "dial timeout")
 	fs.DurationVar(&values.DispatchDelay, "delay", 10*time.Millisecond, "dispatch delay")

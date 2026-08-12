@@ -161,7 +161,7 @@ func runScanCancellation(ctx context.Context, spec CancellationSpec, injector *C
 		CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: portPath, ResumeInput: snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
 		Workers: 1, DialTimeout: time.Second, DispatchDelay: 100 * time.Microsecond, BucketRate: 1,
-		BucketCapacity: 1, LogLevel: "error", Format: "json", Quiet: true,
+		BucketCapacity: 1, OutputFlushResults: 1, LogLevel: "error", Format: "json", Quiet: true,
 		Pressure: config.PressureDisabled(),
 	})
 	if err != nil {

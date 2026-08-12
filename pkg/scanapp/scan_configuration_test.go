@@ -25,21 +25,22 @@ type pressureConfigFixture struct {
 
 // scanConfigFixture contains only values for the scan workflow.
 type scanConfigFixture struct {
-	CIDRFile       string
-	CIDRIPCol      string
-	CIDRIPCidrCol  string
-	PortFile       string
-	Output         string
-	Timeout        time.Duration
-	Delay          time.Duration
-	BucketRate     int
-	BucketCapacity int
-	Workers        int
-	Pressure       pressureConfigFixture
-	Resume         string
-	LogLevel       string
-	Format         string
-	Quiet          bool
+	CIDRFile           string
+	CIDRIPCol          string
+	CIDRIPCidrCol      string
+	PortFile           string
+	Output             string
+	Timeout            time.Duration
+	Delay              time.Duration
+	BucketRate         int
+	BucketCapacity     int
+	Workers            int
+	Pressure           pressureConfigFixture
+	Resume             string
+	LogLevel           string
+	Format             string
+	Quiet              bool
+	OutputFlushResults int
 }
 
 func (c testScanConfiguration) Resolve() (config.ScanValues, error) {
@@ -91,22 +92,27 @@ func scanConfigurationFromFixture(t *testing.T, fixture scanConfigFixture) testS
 	if format == "" {
 		format = "human"
 	}
+	outputFlushResults := fixture.OutputFlushResults
+	if outputFlushResults == 0 {
+		outputFlushResults = 1
+	}
 
 	return testScanConfiguration{values: config.ScanValues{
-		CIDRFile:       fixture.CIDRFile,
-		CIDRIPCol:      ipColumn,
-		CIDRIPCidrCol:  cidrColumn,
-		PortFile:       fixture.PortFile,
-		ResumeInput:    fixture.Resume,
-		Output:         fixture.Output,
-		Workers:        fixture.Workers,
-		DialTimeout:    fixture.Timeout,
-		DispatchDelay:  fixture.Delay,
-		BucketRate:     fixture.BucketRate,
-		BucketCapacity: fixture.BucketCapacity,
-		LogLevel:       fixture.LogLevel,
-		Format:         format,
-		Quiet:          fixture.Quiet,
-		Pressure:       policy,
+		CIDRFile:           fixture.CIDRFile,
+		CIDRIPCol:          ipColumn,
+		CIDRIPCidrCol:      cidrColumn,
+		PortFile:           fixture.PortFile,
+		ResumeInput:        fixture.Resume,
+		Output:             fixture.Output,
+		Workers:            fixture.Workers,
+		DialTimeout:        fixture.Timeout,
+		DispatchDelay:      fixture.Delay,
+		BucketRate:         fixture.BucketRate,
+		BucketCapacity:     fixture.BucketCapacity,
+		LogLevel:           fixture.LogLevel,
+		Format:             format,
+		Quiet:              fixture.Quiet,
+		OutputFlushResults: outputFlushResults,
+		Pressure:           policy,
 	}}
 }

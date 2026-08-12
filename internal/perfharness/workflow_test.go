@@ -88,7 +88,7 @@ func TestRunFailureSmokeExecutesProductionSnapshotAndPressureFailures(t *testing
 	t.Parallel()
 
 	var harness perfharness.Harness = perfharness.New()
-	for _, scenario := range []string{"snapshot-save-failure", "pressure-fatal-error"} {
+	for _, scenario := range []string{"output-failure", "snapshot-save-failure", "pressure-fatal-error"} {
 		result, err := harness.RunFailureSmoke(context.Background(), perfharness.FailureSpec{
 			OutputDir: filepath.Join(t.TempDir(), scenario),
 			Items:     100,

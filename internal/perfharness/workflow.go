@@ -124,7 +124,7 @@ func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResul
 		CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: portPath, ResumeInput: snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
 		Workers: spec.Workers, DialTimeout: time.Second, BucketRate: ratelimit.MaxRate,
-		BucketCapacity: ratelimit.MaxCapacity, LogLevel: "error", Format: "json", Quiet: true,
+		BucketCapacity: ratelimit.MaxCapacity, OutputFlushResults: 1000, LogLevel: "error", Format: "json", Quiet: true,
 		Pressure: config.PressureDisabled(),
 	})
 	if err != nil {
@@ -246,19 +246,20 @@ func runRichProduction(ctx context.Context, outputDir string, items uint64, work
 		return WorkflowResult{}, fmt.Errorf("create rich-deny bucket configuration: %w", err)
 	}
 	scanConfig, err := config.NewScan(config.ScanValues{
-		CIDRFile:       manifest.ArtifactPath,
-		CIDRIPCol:      "src_ip",
-		CIDRIPCidrCol:  "src_network_segment",
-		ResumeInput:    snapshotPath,
-		Output:         filepath.Join(outputDir, "results.csv"),
-		Workers:        workers,
-		DialTimeout:    time.Second,
-		BucketRate:     ratelimit.MaxRate,
-		BucketCapacity: ratelimit.MaxCapacity,
-		LogLevel:       "error",
-		Format:         "json",
-		Quiet:          true,
-		Pressure:       config.PressureDisabled(),
+		CIDRFile:           manifest.ArtifactPath,
+		CIDRIPCol:          "src_ip",
+		CIDRIPCidrCol:      "src_network_segment",
+		ResumeInput:        snapshotPath,
+		Output:             filepath.Join(outputDir, "results.csv"),
+		OutputFlushResults: 1000,
+		Workers:            workers,
+		DialTimeout:        time.Second,
+		BucketRate:         ratelimit.MaxRate,
+		BucketCapacity:     ratelimit.MaxCapacity,
+		LogLevel:           "error",
+		Format:             "json",
+		Quiet:              true,
+		Pressure:           config.PressureDisabled(),
 	})
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny scan configuration: %w", err)
@@ -391,21 +392,22 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 		return WorkflowResult{}, fmt.Errorf("create bucket configuration: %w", err)
 	}
 	scanConfig, err := config.NewScan(config.ScanValues{
-		CIDRFile:       manifest.ArtifactPath,
-		CIDRIPCol:      "ip",
-		CIDRIPCidrCol:  "ip_cidr",
-		PortFile:       portPath,
-		ResumeInput:    snapshotPath,
-		Output:         filepath.Join(spec.OutputDir, "results.csv"),
-		Workers:        spec.Workers,
-		DialTimeout:    time.Second,
-		DispatchDelay:  0,
-		BucketRate:     ratelimit.MaxRate,
-		BucketCapacity: ratelimit.MaxCapacity,
-		LogLevel:       "error",
-		Format:         "json",
-		Quiet:          true,
-		Pressure:       config.PressureDisabled(),
+		CIDRFile:           manifest.ArtifactPath,
+		CIDRIPCol:          "ip",
+		CIDRIPCidrCol:      "ip_cidr",
+		PortFile:           portPath,
+		ResumeInput:        snapshotPath,
+		Output:             filepath.Join(spec.OutputDir, "results.csv"),
+		OutputFlushResults: 1000,
+		Workers:            spec.Workers,
+		DialTimeout:        time.Second,
+		DispatchDelay:      0,
+		BucketRate:         ratelimit.MaxRate,
+		BucketCapacity:     ratelimit.MaxCapacity,
+		LogLevel:           "error",
+		Format:             "json",
+		Quiet:              true,
+		Pressure:           config.PressureDisabled(),
 	})
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create scan configuration: %w", err)

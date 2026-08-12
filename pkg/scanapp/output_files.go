@@ -11,14 +11,14 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
-// batchOutputs holds file handles and writers for scan result output.
-// Scan and open-only results are written DIRECTLY to their final paths (no
-// intermediate ".tmp"): rows already written survive a graceful Ctrl+C
-// (design §3.6) and a -resume run reopens the same files in append mode
-// (design §3.7). Finalize only closes the handles.
+// batchOutputs holds the file handles and writers for scan result output.
+// Both result files use their final paths. The output committer flushes them as
+// one batch. A resume run opens the same files in append mode.
 type batchOutputs struct {
 	scanFile       *os.File
 	openOnlyFile   *os.File
+	scanPath       string
+	openOnlyPath   string
 	scanWriter     recordWriter
 	openOnlyWriter recordWriter
 }
@@ -131,16 +131,23 @@ func scanWriterFor(file *os.File, needsHeader bool) (*writer.CSVWriter, error) {
 
 // openBatchOutputs opens the scan_results and opened_results writers. In append
 // mode (a -resume run) each file's header is validated (A2) and appended to; a
-// graceful Ctrl+C leaves both files ending at a complete record with the snapshot
-// cursor matching, so the append continues exactly. appendMode false creates them
-// fresh with a header.
+// graceful Ctrl+C flushes the final batch before snapshot persistence.
+// appendMode false creates both files with a header.
 func openBatchOutputs(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+	return openBatchOutputsWithMode(scanPath, openPath, appendMode, false)
+}
+
+func openBufferedBatchOutputs(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+	return openBatchOutputsWithMode(scanPath, openPath, appendMode, true)
+}
+
+func openBatchOutputsWithMode(scanPath, openPath string, appendMode, buffered bool) (*batchOutputs, error) {
 	scanFile, scanNeedsHeader, err := openResultCSV(scanPath, appendMode)
 	if err != nil {
 		return nil, err
 	}
 
-	scanWriter, err := scanWriterFor(scanFile, scanNeedsHeader)
+	scanWriter, err := scanWriterForMode(scanFile, scanNeedsHeader, buffered)
 	if err != nil {
 		if closeErr := scanFile.Close(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "failed to close scan file: %v\n", closeErr)
@@ -156,7 +163,7 @@ func openBatchOutputs(scanPath, openPath string, appendMode bool) (*batchOutputs
 		return nil, err
 	}
 
-	openInner, err := scanWriterFor(openOnlyFile, openNeedsHeader)
+	openInner, err := scanWriterForMode(openOnlyFile, openNeedsHeader, buffered)
 	if err != nil {
 		if closeErr := openOnlyFile.Close(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "failed to close open-only file: %v\n", closeErr)
@@ -170,9 +177,59 @@ func openBatchOutputs(scanPath, openPath string, appendMode bool) (*batchOutputs
 	return &batchOutputs{
 		scanFile:       scanFile,
 		openOnlyFile:   openOnlyFile,
+		scanPath:       scanPath,
+		openOnlyPath:   openPath,
 		scanWriter:     scanWriter,
 		openOnlyWriter: writer.NewOpenOnlyWriter(openInner),
 	}, nil
+}
+
+func scanWriterForMode(file *os.File, needsHeader, buffered bool) (*writer.CSVWriter, error) {
+	if !buffered {
+		return scanWriterFor(file, needsHeader)
+	}
+	var result *writer.CSVWriter
+	if needsHeader {
+		result = writer.NewBufferedCSVWriter(file)
+	} else {
+		result = writer.NewBufferedCSVWriterAppending(file)
+	}
+	if err := result.WriteHeader(); err != nil {
+		return nil, err
+	}
+	if err := result.Flush(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+type recordFlusher interface {
+	Flush() error
+}
+
+func (b *batchOutputs) write(record writer.Record) error {
+	if err := b.scanWriter.Write(record); err != nil {
+		return fmt.Errorf("%w: file %s stage write: %w", errScanOutputWrite, b.scanPath, err)
+	}
+	if err := b.openOnlyWriter.Write(record); err != nil {
+		return fmt.Errorf("%w: file %s stage write: %w", errScanOutputWrite, b.openOnlyPath, err)
+	}
+	return nil
+}
+
+func (b *batchOutputs) flush() error {
+	var firstErr error
+	if flusher, ok := b.scanWriter.(recordFlusher); ok {
+		if err := flusher.Flush(); err != nil {
+			firstErr = fmt.Errorf("%w: file %s stage flush: %w", errScanOutputWrite, b.scanPath, err)
+		}
+	}
+	if flusher, ok := b.openOnlyWriter.(recordFlusher); ok {
+		if err := flusher.Flush(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%w: file %s stage flush: %w", errScanOutputWrite, b.openOnlyPath, err)
+		}
+	}
+	return firstErr
 }
 
 func openUnreachableOutput(finalPath string) (*unreachableOutput, error) {
@@ -195,10 +252,8 @@ func openUnreachableOutput(finalPath string) (*unreachableOutput, error) {
 	}, nil
 }
 
-// Finalize closes the output file handles. The scan results and the open-only
-// results go directly to their final paths, so there is no promotion step.
-// Every row that the run already wrote is durable at the final path
-// (design §3.6).
+// Finalize closes the output file handles. It does not flush a failed batch.
+// The output committer flushes successful batches before Finalize runs.
 func (b *batchOutputs) Finalize() error {
 	if b == nil {
 		return nil

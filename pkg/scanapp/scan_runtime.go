@@ -22,6 +22,7 @@ type scanRuntimeInput struct {
 	pressureLimit            int
 	disableKeyboard          bool
 	progressInterval         int
+	outputFlushResults       int
 	dashboardRefreshInterval time.Duration
 }
 
@@ -287,6 +288,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		ctrl:                   ctrl,
 		progressStep:           progressStep,
 		quiet:                  cfg.Quiet,
+		outputFlushResults:     r.input.outputFlushResults,
 		resultObserverCallback: r.adapters.resultObserver,
 	})
 	if inFlight, abandoned, stopStarted := executorTelemetry.snapshot(); !stopStarted.IsZero() {

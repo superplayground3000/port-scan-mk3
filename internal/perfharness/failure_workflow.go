@@ -67,11 +67,32 @@ func (Suite) RunFailureSmoke(ctx context.Context, spec FailureSpec) (FailureResu
 		runErr := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{})
 		return expectedFailure(spec.Scenario, runErr, "write snapshot")
 	}
-	if spec.Scenario != "pressure-fatal-error" {
-		return FailureResult{}, fmt.Errorf("unsupported failure scenario %q", spec.Scenario)
-	}
 	if err := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); err != nil {
 		return FailureResult{}, err
+	}
+	if spec.Scenario == "output-failure" {
+		blocker := filepath.Join(spec.OutputDir, "output-parent-is-a-file")
+		if err := os.WriteFile(blocker, []byte("block output directory creation"), 0o644); err != nil {
+			return FailureResult{}, fmt.Errorf("write output blocker: %w", err)
+		}
+		scanConfig, err := config.NewScan(config.ScanValues{
+			CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+			PortFile: portPath, ResumeInput: snapshotPath, Output: filepath.Join(blocker, "results.csv"),
+			Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: time.Millisecond,
+			BucketRate: 1, BucketCapacity: 1, OutputFlushResults: 1000,
+			LogLevel: "error", Format: "json", Quiet: true, Pressure: config.PressureDisabled(),
+		})
+		if err != nil {
+			return FailureResult{}, err
+		}
+		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			DisableKeyboard: true,
+			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+		})
+		return expectedFailure(spec.Scenario, runErr, blocker)
+	}
+	if spec.Scenario != "pressure-fatal-error" {
+		return FailureResult{}, fmt.Errorf("unsupported failure scenario %q", spec.Scenario)
 	}
 	pressurePolicy, err := config.SimplePressure("http://performance.invalid", time.Millisecond)
 	if err != nil {
@@ -81,7 +102,7 @@ func (Suite) RunFailureSmoke(ctx context.Context, spec FailureSpec) (FailureResu
 		CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: portPath, ResumeInput: snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
 		Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: time.Millisecond,
-		BucketRate: 1, BucketCapacity: 1, LogLevel: "error", Format: "json", Quiet: true,
+		BucketRate: 1, BucketCapacity: 1, OutputFlushResults: 1000, LogLevel: "error", Format: "json", Quiet: true,
 		Pressure: pressurePolicy,
 	})
 	if err != nil {

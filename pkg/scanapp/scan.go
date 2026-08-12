@@ -46,7 +46,7 @@ type RunOptions struct {
 	TaskObserver func(ip string, port int)
 	// ResumeObserver receives completed resume chunks during runtime rebuild.
 	ResumeObserver func(completed, total int)
-	// ResultObserver receives the count after each persisted result row.
+	// ResultObserver receives the count after each committed result.
 	ResultObserver      func(completed uint64)
 	PressureLimit       int
 	DisableKeyboard     bool
@@ -104,7 +104,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 
 	openOutputs := opts.batchOutputsOpener
 	if openOutputs == nil {
-		openOutputs = openBatchOutputs
+		openOutputs = openBufferedBatchOutputs
 	}
 
 	logger := newLoggerWithQuiet(values.LogLevel, values.Format == "json", stderr, values.Quiet)
@@ -117,6 +117,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		pressureLimit:            opts.PressureLimit,
 		disableKeyboard:          opts.DisableKeyboard,
 		progressInterval:         opts.ProgressInterval,
+		outputFlushResults:       values.OutputFlushResults,
 		dashboardRefreshInterval: opts.dashboardRefreshInterval,
 	}, scanRuntimeAdapters{
 		deps:                      defaultRunDependencies(),

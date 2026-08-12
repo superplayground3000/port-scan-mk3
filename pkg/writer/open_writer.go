@@ -47,3 +47,11 @@ func (w *OpenOnlyWriter) WriteHeader() error {
 	}
 	return w.inner.WriteHeader()
 }
+
+// Flush writes the buffered open-only CSV data to the underlying writer.
+func (w *OpenOnlyWriter) Flush() error {
+	if w == nil || w.inner == nil {
+		return nil
+	}
+	return w.inner.Flush()
+}

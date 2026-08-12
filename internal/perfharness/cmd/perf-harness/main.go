@@ -95,6 +95,13 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
+	outputMatrix := outputSpecs(profile, smokeItems)
+	if required := requiredOutputBytes(outputMatrix); freeDiskBytes > 0 && freeDiskBytes < required {
+		if writeErr := writeStatus(stderr, "insufficient free space for output matrix: have %d bytes, require %d bytes\n", freeDiskBytes, required); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		if writeErr := writeStatus(stderr, "create matrix directory: %v\n", err); writeErr != nil {
 			return 1
@@ -129,6 +136,25 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
+	}
+	outputScales := make([]uint64, 0, len(outputMatrix)/3)
+	for index, spec := range outputMatrix {
+		caseDir := filepath.Join(casesDir, fmt.Sprintf("output-%02d-results-%d-flush-%d", index, spec.Results, spec.FlushResults))
+		spec.OutputDir = caseDir
+		result, err := harness.RunOutputCase(context.Background(), spec)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run output results=%d flush=%d: %v\n", spec.Results, spec.FlushResults, err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		results = append(results, result)
+		if spec.FlushResults == 1 {
+			outputScales = append(outputScales, spec.Results)
+		}
 		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
 			return 1
 		}
@@ -238,7 +264,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	for _, scenario := range []string{"snapshot-save-failure", "pressure-fatal-error"} {
+	for _, scenario := range []string{"output-failure", "snapshot-save-failure", "pressure-fatal-error"} {
 		result, err := runFailureCase(context.Background(), harness, filepath.Join(casesDir, "failure-"+scenario), 100, 16, scenario)
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run failure scenario=%s: %v\n", scenario, err); writeErr != nil {
@@ -305,6 +331,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			matrixPassed = false
 		}
 	}
+	if !applyOutputThresholds(results, harness, outputScales) {
+		matrixPassed = false
+	}
 
 	report := perfharness.Report{
 		SchemaVersion: perfharness.SchemaVersion,
@@ -343,6 +372,73 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func outputSpecs(profile string, smokeItems uint64) []perfharness.OutputSpec {
+	counts := []uint64{smokeItems}
+	if profile == "full" {
+		counts = []uint64{10_000, 100_000, 1_000_000, 10_000_000}
+	}
+	specs := make([]perfharness.OutputSpec, 0, len(counts)*3)
+	for _, count := range counts {
+		for _, interval := range []int{1, 1000, 0} {
+			specs = append(specs, perfharness.OutputSpec{Results: count, FlushResults: interval})
+		}
+	}
+	return specs
+}
+
+func requiredOutputBytes(specs []perfharness.OutputSpec) uint64 {
+	var largest uint64
+	for _, spec := range specs {
+		if spec.Results > largest {
+			largest = spec.Results
+		}
+	}
+	const estimatedBytesPerResultForBothFiles = uint64(512)
+	return largest * estimatedBytesPerResultForBothFiles
+}
+
+func applyOutputThresholds(results []perfharness.CaseResult, harness perfharness.Harness, scales []uint64) bool {
+	passed := true
+	for _, interval := range []int{1, 1000, 0} {
+		for index := 1; index < len(scales); index++ {
+			smallName := fmt.Sprintf("output-heavy/results-%d/flush-%d", scales[index-1], interval)
+			largeName := fmt.Sprintf("output-heavy/results-%d/flush-%d", scales[index], interval)
+			if !applyGrowthThreshold(results, harness, smallName, largeName) {
+				passed = false
+			}
+		}
+	}
+	if len(scales) < 2 {
+		return passed
+	}
+	for _, scale := range scales[len(scales)-2:] {
+		each := findCase(results, fmt.Sprintf("output-heavy/results-%d/flush-1", scale))
+		batched := findCase(results, fmt.Sprintf("output-heavy/results-%d/flush-1000", scale))
+		disabled := findCase(results, fmt.Sprintf("output-heavy/results-%d/flush-0", scale))
+		if each == nil || batched == nil || disabled == nil {
+			passed = false
+			continue
+		}
+		if batched.SteadyMedian.WallTime > each.SteadyMedian.WallTime/2 {
+			batched.Verdict.Passed = false
+			batched.Verdict.Failures = append(batched.Verdict.Failures, perfharness.Failure{
+				Rule:   "output-flush-vs-each",
+				Detail: "flush interval 1000 is less than twice as fast as interval 1",
+			})
+			passed = false
+		}
+		if float64(batched.SteadyMedian.WallTime) > float64(disabled.SteadyMedian.WallTime)*1.15 {
+			batched.Verdict.Passed = false
+			batched.Verdict.Failures = append(batched.Verdict.Failures, perfharness.Failure{
+				Rule:   "output-flush-vs-disabled",
+				Detail: "flush interval 1000 is more than 15 percent slower than disabled periodic flushes",
+			})
+			passed = false
+		}
+	}
+	return passed
 }
 
 func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfharness.Harness) bool {

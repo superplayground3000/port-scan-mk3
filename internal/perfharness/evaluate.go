@@ -18,6 +18,7 @@ type Observation struct {
 	OutputBytes            uint64        `json:"output_bytes"`
 	WallTime               time.Duration `json:"wall_time_ns"`
 	ThroughputPerSecond    float64       `json:"throughput_per_second"`
+	MegabytesPerSecond     float64       `json:"megabytes_per_second"`
 	GoAllocatedBytes       uint64        `json:"go_allocated_bytes"`
 	GoAllocationCount      uint64        `json:"go_allocation_count"`
 	GoPeakHeapBytes        uint64        `json:"go_peak_heap_bytes"`

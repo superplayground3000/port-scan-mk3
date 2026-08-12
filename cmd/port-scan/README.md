@@ -80,6 +80,7 @@ compatibility.
 | `-cidr-file` | (required) | Path to the CIDR input CSV |
 | `-port-file` | (required in basic mode) | Path to the port input file (one `port/tcp` per line). Not required in rich mode. |
 | `-output` | `scan_results.csv` | Base path for result CSV files. Actual files are `scan_results-<ts>.csv` and `opened_results-<ts>.csv` written in the same directory as the output path. |
+| `-output-flush-results` | `1000` | Number of probe results in one output batch. `1` flushes each result. `0` disables periodic flushes. |
 | `-timeout` | `100ms` | Per-scan TCP connection timeout (duration string) |
 | `-pre-scan-ping-timeout` | `100ms` | Pre-scan ping reachability timeout (duration string, must be > 0) |
 | `-delay` | `10ms` | Pause between dispatching consecutive tasks |
@@ -218,6 +219,12 @@ Basic mode rows carry `ip`, `ip_cidr`, `port`, `status`, `response_time_ms`, `fa
 ### opened_results-*.csv
 
 This file has the same schema as `scan_results-*.csv`. It contains only the rows where `status=open`.
+
+The scan treats both result files as one commit batch. It updates progress only
+after both writers flush. A controlled stop flushes the final batch.
+
+If a write or flush fails, the scan rewinds the complete current batch. A
+resumed scan can duplicate rows from that batch, but it does not omit them.
 
 ### resume_state.json
 

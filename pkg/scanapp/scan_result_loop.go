@@ -2,7 +2,6 @@ package scanapp
 
 import (
 	"context"
-	"errors"
 	"io"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
@@ -31,6 +30,7 @@ type resultLoopDeps struct {
 	ctrl                   *speedctrl.Controller
 	progressStep           int
 	quiet                  bool
+	outputFlushResults     int
 	resultObserverCallback func(completed uint64)
 }
 
@@ -55,6 +55,21 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 	dispatchErrCh := chans.dispatchErrCh
 	resultCh := chans.resultCh
 	abandonedCh := chans.abandonedCh
+	var committer *outputCommitter
+	if deps.outputs != nil {
+		committer = newOutputCommitter(outputCommitterConfig{
+			outputs:                deps.outputs,
+			flushInterval:          deps.outputFlushResults,
+			runtimes:               deps.runtimes,
+			resultObserver:         deps.resultObserver,
+			resultObserverCallback: deps.resultObserverCallback,
+			stdout:                 deps.stdout,
+			logger:                 deps.logger,
+			ctrl:                   deps.ctrl,
+			progressStep:           deps.progressStep,
+			quiet:                  deps.quiet,
+		})
+	}
 
 	// The loop must also keep running while executorErrCh is still open
 	// (executorErrCh != nil): a recovered worker panic and the result-channel
@@ -93,26 +108,11 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			// Only a result that reached the output file counts as scanned. A late
 			// in-flight result is still written after a non-output fatal error. An
 			// output error prevents later writes because their result is unknown.
-			persisted := false
-			if !errors.Is(runErr, errScanOutputWrite) {
-				if err := writeScanRecord(deps.outputs.scanWriter, deps.outputs.openOnlyWriter, res.record); err != nil {
-					if runErr == nil {
-						runErr = err
-					}
-					deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)
+			if committer != nil {
+				if err := committer.Accept(res); err != nil {
+					runErr = err
 					cancel()
-				} else {
-					persisted = true
 				}
-			}
-			if persisted {
-				applyScanResult(deps.runtimes, res, &summary, deps.resultObserver)
-				if deps.resultObserverCallback != nil {
-					deps.resultObserverCallback(uint64(summary.written))
-				}
-				emitScanResultEvents(deps.stdout, deps.logger, deps.ctrl, deps.progressStep, deps.runtimes, res, &summary, deps.quiet)
-			} else if errors.Is(runErr, errScanOutputWrite) {
-				deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)
 			}
 		case abandoned, ok := <-abandonedCh:
 			if !ok {
@@ -121,6 +121,13 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			}
 			deps.runtimes[abandoned.chunkIdx].tracker.MarkUnwritten(abandoned.taskIdx)
 		}
+	}
+	if committer != nil {
+		if err := committer.Finish(); err != nil {
+			runErr = err
+			cancel()
+		}
+		summary = committer.Summary()
 	}
 
 	return summary, dispatchErr, runErr

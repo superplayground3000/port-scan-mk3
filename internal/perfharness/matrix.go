@@ -29,6 +29,7 @@ type Harness interface {
 	RunTargetLimitCase(context.Context, TargetLimitSpec) (CaseResult, error)
 	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
+	RunOutputCase(context.Context, OutputSpec) (CaseResult, error)
 }
 
 var _ Harness = Suite{}

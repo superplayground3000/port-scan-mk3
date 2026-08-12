@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -87,6 +88,65 @@ func TestApplyGrowthThresholdBlocksNonlinearMedianGrowth(t *testing.T) {
 	}
 }
 
+func TestOutputSpecsContainTheApprovedFullAndSmokeMatrix(t *testing.T) {
+	full := outputSpecs("full", 100_000)
+	if len(full) != 12 {
+		t.Fatalf("full output case count = %d, want 12", len(full))
+	}
+	for _, results := range []uint64{10_000, 100_000, 1_000_000, 10_000_000} {
+		for _, interval := range []int{1, 1000, 0} {
+			if !containsOutputSpec(full, results, interval) {
+				t.Fatalf("full matrix lacks results=%d interval=%d", results, interval)
+			}
+		}
+	}
+	smoke := outputSpecs("smoke", 100_000)
+	if len(smoke) != 3 {
+		t.Fatalf("smoke output case count = %d, want 3", len(smoke))
+	}
+}
+
+func TestApplyOutputThresholdsBlocksGrowthAndFlushSpeedViolations(t *testing.T) {
+	results := []perfharness.CaseResult{
+		outputThresholdCase(100_000, 1, 4*time.Second, 100),
+		outputThresholdCase(100_000, 1000, 3*time.Second, 100),
+		outputThresholdCase(100_000, 0, time.Second, 100),
+		outputThresholdCase(1_000_000, 1, 40*time.Second, 1_000),
+		outputThresholdCase(1_000_000, 1000, 30*time.Second, 1_200),
+		outputThresholdCase(1_000_000, 0, 10*time.Second, 1_000),
+	}
+
+	if applyOutputThresholds(results, perfharness.New(), []uint64{100_000, 1_000_000}) {
+		t.Fatal("output thresholds accepted slow flush=1000 cases")
+	}
+	large := findCase(results, "output-heavy/results-1000000/flush-1000")
+	if large == nil || !large.Verdict.HasFailure("output-flush-vs-each") ||
+		!large.Verdict.HasFailure("output-flush-vs-disabled") ||
+		!large.Verdict.HasFailure("growth-allocated-bytes") {
+		t.Fatalf("large output verdict = %+v", large)
+	}
+}
+
+func containsOutputSpec(specs []perfharness.OutputSpec, results uint64, interval int) bool {
+	for _, spec := range specs {
+		if spec.Results == results && spec.FlushResults == interval {
+			return true
+		}
+	}
+	return false
+}
+
+func outputThresholdCase(results uint64, interval int, elapsed time.Duration, allocated uint64) perfharness.CaseResult {
+	return perfharness.CaseResult{
+		Name: fmt.Sprintf("output-heavy/results-%d/flush-%d", results, interval),
+		SteadyMedian: perfharness.Observation{
+			WallTime:         elapsed,
+			GoAllocatedBytes: allocated,
+		},
+		Verdict: perfharness.Verdict{Passed: true},
+	}
+}
+
 func TestApplyWorkerParityBlocksTaskOrderDifference(t *testing.T) {
 	t.Parallel()
 
@@ -129,8 +189,8 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 47 {
-		t.Fatalf("case count = %d, want fixture, fake-worker, rich-deny, cancellation, CRLF, and loopback-worker cases", len(report.Cases))
+	if len(report.Cases) != 51 {
+		t.Fatalf("case count = %d, want all smoke, output, failure, and platform cases", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
 		t.Fatalf("evidence label = %q", report.Hardware.EvidenceLabel)
@@ -145,7 +205,14 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	failureCases := 0
 	richAcceptedCases := 0
 	targetLimitCases := 0
+	outputCases := 0
 	for _, result := range report.Cases {
+		if strings.HasPrefix(result.Name, "output-heavy/results-") {
+			outputCases++
+			if len(result.Runs) != 5 || !result.Verdict.Passed || result.SteadyMedian.MegabytesPerSecond <= 0 {
+				t.Fatalf("output case failed: %+v", result)
+			}
+		}
 		if strings.HasPrefix(result.Name, "limit/target-") {
 			targetLimitCases++
 			if !result.Verdict.Passed || !result.Correctness.ExpectedValues {
@@ -212,14 +279,17 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if resumeCases != 3 {
 		t.Fatalf("resume case count = %d, want 3", resumeCases)
 	}
-	if failureCases != 2 {
-		t.Fatalf("failure case count = %d, want 2", failureCases)
+	if failureCases != 3 {
+		t.Fatalf("failure case count = %d, want 3", failureCases)
 	}
 	if richAcceptedCases != 4 {
 		t.Fatalf("accepted rich case count = %d, want 4", richAcceptedCases)
 	}
 	if targetLimitCases != 12 {
 		t.Fatalf("target limit case count = %d, want 12", targetLimitCases)
+	}
+	if outputCases != 3 {
+		t.Fatalf("output case count = %d, want 3", outputCases)
 	}
 }
 

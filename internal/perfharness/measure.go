@@ -98,6 +98,7 @@ func measure(ctx context.Context, inputBytes, units uint64, action MeasuredActio
 	}
 	if elapsed > 0 {
 		observation.ThroughputPerSecond = float64(units) / elapsed.Seconds()
+		observation.MegabytesPerSecond = float64(outputBytes) / 1_000_000 / elapsed.Seconds()
 	}
 	return observation, err
 }

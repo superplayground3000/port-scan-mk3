@@ -164,6 +164,7 @@ func TestRun_WhenCanceled_RewindsAbandonedQueueToLowestUnwritten(t *testing.T) {
 	cfg, _, snapshotPath := newInterruptibleScanConfig(t)
 	cfg.Workers = 1
 	cfg.Delay = 0
+	cfg.OutputFlushResults = 1000
 	ctx, cancel := context.WithCancel(context.Background())
 	var once sync.Once
 

@@ -102,6 +102,107 @@ func TestBatchOutputs_WhenFreshMode_WritesDirectlyToFinalPathNoTmp(t *testing.T)
 	}
 }
 
+func TestBufferedBatchOutputsPublishRowsOnlyAfterBothWritersFlush(t *testing.T) {
+	dir := t.TempDir()
+	scanPath := filepath.Join(dir, "scan.csv")
+	openPath := filepath.Join(dir, "open.csv")
+	outputs, err := openBufferedBatchOutputs(scanPath, openPath, false)
+	if err != nil {
+		t.Fatalf("openBufferedBatchOutputs() error = %v", err)
+	}
+	defer func() { _ = outputs.Finalize() }()
+
+	record := writer.Record{IP: "192.0.2.1", IPCidr: "192.0.2.1/32", Port: 443, Status: "open"}
+	if err := outputs.write(record); err != nil {
+		t.Fatalf("write() error = %v", err)
+	}
+	before, err := os.ReadFile(scanPath)
+	if err != nil {
+		t.Fatalf("ReadFile() before flush error = %v", err)
+	}
+	if strings.Contains(string(before), "192.0.2.1") {
+		t.Fatalf("scan row became visible before flush: %q", before)
+	}
+	if err := outputs.flush(); err != nil {
+		t.Fatalf("flush() error = %v", err)
+	}
+	for _, path := range []string{scanPath, openPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", path, err)
+		}
+		if !strings.Contains(string(data), "192.0.2.1") {
+			t.Fatalf("output %s lacks the flushed row: %q", path, data)
+		}
+	}
+}
+
+func TestBufferedBatchOutputsAppendWithoutAnotherHeader(t *testing.T) {
+	dir := t.TempDir()
+	scanPath := filepath.Join(dir, "scan.csv")
+	openPath := filepath.Join(dir, "open.csv")
+	for _, path := range []string{scanPath, openPath} {
+		if err := os.WriteFile(path, []byte(writer.CanonicalHeader()+"\n"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", path, err)
+		}
+	}
+	outputs, err := openBufferedBatchOutputs(scanPath, openPath, true)
+	if err != nil {
+		t.Fatalf("openBufferedBatchOutputs() error = %v", err)
+	}
+	if err := outputs.write(writer.Record{IP: "192.0.2.1", Status: "open"}); err != nil {
+		t.Fatalf("write() error = %v", err)
+	}
+	if err := outputs.flush(); err != nil {
+		t.Fatalf("flush() error = %v", err)
+	}
+	if err := outputs.Finalize(); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	for _, path := range []string{scanPath, openPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Count(string(data), writer.CanonicalHeader()) != 1 || !strings.Contains(string(data), "192.0.2.1") {
+			t.Fatalf("unexpected appended output %s: %q", path, data)
+		}
+	}
+}
+
+func TestBufferedBatchOutputsReportEitherFileOpenFailure(t *testing.T) {
+	dir := t.TempDir()
+	blockedParent := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blockedParent, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("seed blocked parent: %v", err)
+	}
+	tests := []struct {
+		name     string
+		scanPath string
+		openPath string
+	}{
+		{
+			name:     "scan output",
+			scanPath: filepath.Join(blockedParent, "scan.csv"),
+			openPath: filepath.Join(dir, "unused.csv"),
+		},
+		{
+			name:     "open output",
+			scanPath: filepath.Join(dir, "scan.csv"),
+			openPath: filepath.Join(blockedParent, "open.csv"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			outputs, err := openBufferedBatchOutputs(tc.scanPath, tc.openPath, false)
+			if err == nil {
+				_ = outputs.Finalize()
+				t.Fatal("openBufferedBatchOutputs() error = nil")
+			}
+		})
+	}
+}
+
 func TestBatchOutputs_WhenWritten_ContainsWrittenData(t *testing.T) {
 	dir := t.TempDir()
 	scanPath := filepath.Join(dir, "scan.csv")
@@ -256,5 +357,34 @@ func TestUnreachableOutput_WhenFinalizeCalledOnSuccess_RenamesTmpToFinal(t *test
 	}
 	if _, err := os.Stat(finalPath + ".tmp"); !os.IsNotExist(err) {
 		t.Fatalf("expected no tmp unreachable file, got: %v", err)
+	}
+}
+
+func TestOutputFinalizersAreNilSafe(t *testing.T) {
+	var outputs *batchOutputs
+	if err := outputs.Finalize(); err != nil {
+		t.Fatalf("nil batch Finalize() error = %v", err)
+	}
+	var unreachable *unreachableOutput
+	if err := unreachable.Finalize(true); err != nil {
+		t.Fatalf("nil unreachable Finalize() error = %v", err)
+	}
+}
+
+func TestUnreachableOutputFailedRunLeavesOnlyTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	finalPath := filepath.Join(dir, "unreachable.csv")
+	output, err := openUnreachableOutput(finalPath)
+	if err != nil {
+		t.Fatalf("openUnreachableOutput() error = %v", err)
+	}
+	if err := output.Finalize(false); err != nil {
+		t.Fatalf("Finalize(false) error = %v", err)
+	}
+	if _, err := os.Stat(finalPath); !os.IsNotExist(err) {
+		t.Fatalf("failed run published the final output: %v", err)
+	}
+	if _, err := os.Stat(finalPath + ".tmp"); err != nil {
+		t.Fatalf("failed run removed the temporary output: %v", err)
 	}
 }

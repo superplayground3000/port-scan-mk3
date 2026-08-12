@@ -63,4 +63,9 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 	if !strings.Contains(string(markdown), "hardware-qualified") || !strings.Contains(string(markdown), "record-heavy") {
 		t.Fatalf("Markdown report lacks required labels:\n%s", markdown)
 	}
+	for _, metric := range []string{"Output bytes", "Results/s", "MB/s", "Allocations", "Allocated bytes", "Peak heap"} {
+		if !strings.Contains(string(markdown), metric) {
+			t.Fatalf("Markdown report lacks %q:\n%s", metric, markdown)
+		}
+	}
 }

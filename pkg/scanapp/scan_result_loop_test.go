@@ -1,8 +1,14 @@
 package scanapp
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
+	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
 // TestRunResultLoop_WhenDispatchDoneAndExecutorErrorQueued_SurfacesError drives
@@ -38,5 +44,48 @@ func TestRunResultLoop_WhenDispatchDoneAndExecutorErrorQueued_SurfacesError(t *t
 	}
 	if !canceled {
 		t.Fatal("expected cancel() to be called when a fatal executor error is observed")
+	}
+}
+
+func TestRunResultLoopFlushesPendingOutputAfterANonOutputError(t *testing.T) {
+	wantErr := errors.New("injected executor failure")
+	executorErrCh := make(chan error, 1)
+	executorErrCh <- wantErr
+	close(executorErrCh)
+	resultCh := make(chan scanResult, 1)
+	resultCh <- scanResult{chunkIdx: 0, taskIdx: 0, record: writer.Record{IP: "192.0.2.1", Status: "open"}}
+	close(resultCh)
+	scanWriter := &flushCountingWriter{}
+	openWriter := &flushCountingWriter{}
+	chunk := &task.Chunk{CIDR: "192.0.2.1/32", TotalCount: 1, NextIndex: 1, Status: "scanning"}
+	runtimes := []*chunkRuntime{{state: chunk, tracker: newChunkStateTracker(chunk)}}
+
+	summary, _, runErr := runResultLoop(func() {}, true, resultLoopChannels{
+		executorErrCh: executorErrCh,
+		resultCh:      resultCh,
+	}, resultLoopDeps{
+		outputs: &batchOutputs{
+			scanPath:       "scan.csv",
+			openOnlyPath:   "opened.csv",
+			scanWriter:     scanWriter,
+			openOnlyWriter: openWriter,
+		},
+		runtimes:           runtimes,
+		logger:             newLogger("error", false, &bytes.Buffer{}),
+		ctrl:               speedctrl.NewController(),
+		outputFlushResults: 1000,
+	})
+
+	if !errors.Is(runErr, wantErr) {
+		t.Fatalf("run error = %v, want executor failure", runErr)
+	}
+	if summary.written != 1 || runtimes[0].tracker.ScannedCount() != 1 {
+		t.Fatalf("final committed state = summary:%+v chunk:%+v", summary, runtimes[0].tracker.Snapshot())
+	}
+	if scanWriter.flushes != 1 || openWriter.flushes != 1 {
+		t.Fatalf("final flushes = scan:%d open:%d, want one each", scanWriter.flushes, openWriter.flushes)
+	}
+	if errors.Is(runErr, context.Canceled) {
+		t.Fatalf("run error lost the non-output cause: %v", runErr)
 	}
 }
