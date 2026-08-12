@@ -158,6 +158,31 @@ func TestGenerateBuckets_NoBlocklist_ScansAll(t *testing.T) {
 	}
 }
 
+func TestGenerateBuckets_WhenRichInputIsDenied_WritesEmptySnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich-denied.csv")
+	if err := os.WriteFile(cidrFile, []byte(richBucketCSVHeader+
+		"10.1.0.10,10.1.0.0/24,10.0.0.8,10.0.0.0/24,https,tcp,443,deny,P-1,MATCH_POLICY_DENY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(tmp, "buckets.json")
+
+	if err := GenerateBuckets(context.Background(), bucketConfig(t, cidrFile, "", out, 1), &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	snapshot, err := state.LoadSnapshot(out)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if len(snapshot.Chunks) != 0 {
+		t.Fatalf("GenerateBuckets() wrote %d chunks, want an empty snapshot", len(snapshot.Chunks))
+	}
+	if !snapshot.RichDenyExcluded {
+		t.Fatal("GenerateBuckets() did not mark the snapshot as deny-filtered")
+	}
+}
+
 func TestGenerateBuckets_StampsEnabledTrue(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := writeRichBucketCSV(t, tmp)

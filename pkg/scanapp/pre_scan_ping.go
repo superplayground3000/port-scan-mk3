@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
@@ -50,15 +49,13 @@ func sortedUniqueIPv4U32(values []uint32) []uint32 {
 }
 
 func collectUniquePreScanIPs(inputs runInputs) ([]string, error) {
+	targets, _, err := authorizedPreScanTargets(inputs)
+	if err != nil {
+		return nil, err
+	}
 	uniq := make(map[uint32]string)
-	for _, rec := range inputs.cidrRecords {
-		targets, err := preScanTargetsFromRecord(rec)
-		if err != nil {
-			return nil, err
-		}
-		for _, target := range targets {
-			uniq[ipv4ToUint32(target.ip)] = target.ip
-		}
+	for _, target := range targets {
+		uniq[ipv4ToUint32(target.ip)] = target.ip
 	}
 
 	keys := make([]uint32, 0, len(uniq))
@@ -184,46 +181,44 @@ func runReachabilityChecksWithProgress(ctx context.Context, checker Reachability
 
 func collectUnreachableRows(inputs runInputs, reachable func(string) bool, reason string) ([]writer.UnreachableRecord, error) {
 	predicate := normalizeReachablePredicate(reachable)
+	targets, richMode, err := authorizedPreScanTargets(inputs)
+	if err != nil {
+		return nil, err
+	}
 	rows := make([]writer.UnreachableRecord, 0)
 	richOrder := make([]string, 0)
 	richRows := make(map[string]writer.UnreachableRecord)
-	for _, rec := range inputs.cidrRecords {
-		targets, err := preScanTargetsFromRecord(rec)
-		if err != nil {
-			return nil, err
+	for _, target := range targets {
+		if predicate(target.ip) {
+			continue
 		}
-		for _, target := range targets {
-			if predicate(target.ip) {
-				continue
-			}
-			row := writer.UnreachableRecord{
-				IP:                target.ip,
-				IPCidr:            target.ipCidr,
-				Status:            "unreachable",
-				Reason:            reason,
-				FabName:           target.meta.fabName,
-				CIDRName:          target.meta.cidrName,
-				ServiceLabel:      target.meta.serviceLabel,
-				Decision:          target.meta.decision,
-				PolicyID:          target.meta.policyID,
-				ExecutionKey:      target.meta.executionKey,
-				SrcIP:             target.meta.srcIP,
-				SrcNetworkSegment: target.meta.srcNetworkSegment,
-			}
-			if !rec.IsRich {
-				rows = append(rows, row)
-				continue
-			}
+		row := writer.UnreachableRecord{
+			IP:                target.ip,
+			IPCidr:            target.ipCidr,
+			Status:            "unreachable",
+			Reason:            reason,
+			FabName:           target.meta.fabName,
+			CIDRName:          target.meta.cidrName,
+			ServiceLabel:      target.meta.serviceLabel,
+			Decision:          target.meta.decision,
+			PolicyID:          target.meta.policyID,
+			ExecutionKey:      target.meta.executionKey,
+			SrcIP:             target.meta.srcIP,
+			SrcNetworkSegment: target.meta.srcNetworkSegment,
+		}
+		if !richMode {
+			rows = append(rows, row)
+			continue
+		}
 
-			key := richUnreachableRowKey(row)
-			existing, ok := richRows[key]
-			if !ok {
-				richRows[key] = row
-				richOrder = append(richOrder, key)
-				continue
-			}
-			richRows[key] = mergeUnreachableRecord(existing, row)
+		key := richUnreachableRowKey(row)
+		existing, ok := richRows[key]
+		if !ok {
+			richRows[key] = row
+			richOrder = append(richOrder, key)
+			continue
 		}
+		richRows[key] = mergeUnreachableRecord(existing, row)
 	}
 	for _, key := range richOrder {
 		rows = append(rows, richRows[key])
@@ -231,19 +226,37 @@ func collectUnreachableRows(inputs runInputs, reachable func(string) bool, reaso
 	return rows, nil
 }
 
-func preScanTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
-	if rec.IsRich {
-		if !rec.IsValid {
-			return nil, nil
+func authorizedPreScanTargets(inputs runInputs) ([]scanTarget, bool, error) {
+	if hasRichRecords(inputs.cidrRecords) {
+		groups, err := buildRichGroups(inputs.cidrRecords)
+		if err != nil {
+			return nil, true, err
 		}
-		return richTargetsFromRecord(rec)
+		keys := make([]string, 0, len(groups))
+		for key := range groups {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		targets := make([]scanTarget, 0)
+		for _, key := range keys {
+			targets = append(targets, groups[key].targets...)
+		}
+		return targets, true, nil
 	}
 
 	strategy := basicGroupStrategy{}
-	if _, err := strategy.Key(rec); err != nil {
-		return nil, err
+	targets := make([]scanTarget, 0)
+	for _, rec := range inputs.cidrRecords {
+		if _, err := strategy.Key(rec); err != nil {
+			return nil, false, err
+		}
+		recordTargets, err := strategy.targets(rec)
+		if err != nil {
+			return nil, false, err
+		}
+		targets = append(targets, recordTargets...)
 	}
-	return strategy.targets(rec)
+	return targets, false, nil
 }
 
 func richUnreachableRowKey(row writer.UnreachableRecord) string {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
@@ -244,6 +245,12 @@ func filterRecordsByChunkKey(records []input.CIDRRecord, keys map[string]struct{
 	}
 	out := make([]input.CIDRRecord, 0, len(records))
 	for _, rec := range records {
+		// Deny rows apply to execution keys across group keys. Keep them so an
+		// incomplete chunk cannot regain work that another group denies.
+		if richRecordDenied(rec) {
+			out = append(out, rec)
+			continue
+		}
 		key, err := chunkKeyForRecord(rec)
 		if err != nil {
 			continue
@@ -273,6 +280,16 @@ func hasRichRecords(cidrRecords []input.CIDRRecord) bool {
 		}
 	}
 	return false
+}
+
+func validateSnapshotAuthorization(snapshot state.Snapshot, records []input.CIDRRecord) error {
+	if snapshot.RichDenyExcluded || len(snapshot.Chunks) == 0 || len(deniedRichExecutionKeys(records)) == 0 {
+		return nil
+	}
+
+	// A legacy snapshot has target counts but no execution keys. A matching
+	// count cannot prove that the snapshot excluded a denied key.
+	return fmt.Errorf("resume snapshot does not prove rich deny exclusion for %s; run generate-buckets to create a new snapshot", snapshot.Chunks[0].CIDR)
 }
 
 func buildRichChunks(cidrRecords []input.CIDRRecord) ([]task.Chunk, error) {

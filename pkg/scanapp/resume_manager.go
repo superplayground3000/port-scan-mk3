@@ -17,7 +17,7 @@ import (
 // that did not reach all output writers. The trackers rewind to the first such
 // task before this function saves the snapshot. A resumed run can write some
 // rows again, but it cannot skip an unwritten row.
-func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, dispatchErr, runErr error) error {
+func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, dispatchErr, runErr error) error {
 	rewoundChunks := 0
 	if errors.Is(runErr, errScanOutputWrite) {
 		for _, rt := range runtimes {
@@ -32,9 +32,10 @@ func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chun
 	}
 
 	if err := state.SaveSnapshot(savePath, state.Snapshot{
-		Chunks:      collectChunkStates(runtimes),
-		PreScanPing: preScanPing,
-		Output:      output,
+		Chunks:           collectChunkStates(runtimes),
+		PreScanPing:      preScanPing,
+		Output:           output,
+		RichDenyExcluded: richDenyExcluded,
 	}); err != nil {
 		return err
 	}

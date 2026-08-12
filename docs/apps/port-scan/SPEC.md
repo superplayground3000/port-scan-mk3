@@ -149,7 +149,13 @@ Auto-detected when all required columns are present. No port file needed.
 | `matched_policy_id` | Yes | Policy rule identifier |
 | `reason` | Yes | Policy match reason |
 
-Rows with `decision=accept` become scan targets; `decision=deny` rows are skipped.
+Rows with `decision=accept` become scan targets. Rows with `decision=deny` never become network targets.
+
+A deny row overrides an accept row with the same normalized `execution_key`. This rule applies before ICMP, bucket generation, resume rebuild, and TCP dispatch.
+
+The `validate` command rejects malformed deny rows. A deny-only input succeeds with no probes, an empty snapshot, header-only results, and a zero-task summary.
+
+Generated snapshots record that rich deny rows were excluded. If an unmarked snapshot has rich deny input, `scan` stops before TCP dispatch.
 
 ### CIDR Expansion in Rich Mode
 

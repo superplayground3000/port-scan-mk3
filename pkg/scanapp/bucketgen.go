@@ -122,7 +122,8 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	sort.Slice(chunks, func(i, j int) bool { return chunks[i].CIDR < chunks[j].CIDR })
 
 	snap := state.Snapshot{
-		Chunks: chunks,
+		Chunks:           chunks,
+		RichDenyExcluded: true,
 		PreScanPing: state.PreScanPingState{
 			Enabled:            true,
 			TimeoutMS:          0,

@@ -138,6 +138,10 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 - `port-scan` selects rich CSV mode automatically when all rich fields exist:
   - `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`
   - `service_label`, `protocol`, `port`, `decision`, `policy_id`, `reason`
+  - A valid `decision=deny` row never becomes a network target.
+  - A deny row overrides an accept row with the same normalized `execution_key`.
+  - The authorization rule applies before ICMP, bucket generation, resume rebuild, and TCP dispatch.
+  - `validate` still rejects each malformed deny row.
 - Port file format: one line per port in `<port>/tcp` (for example `443/tcp`)
   - Required in default CIDR mode
   - Optional in rich CSV mode
@@ -148,6 +152,8 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 - `generate-buckets`: build the resume bucket snapshot from targets minus an optional blocklist (`-buckets-out` required)
 - `scan`: pure TCP scan of a bucket snapshot (`-resume` required. It dispatches, probes, writes output, and persists resume state in place)
 - `validate`: parse and validate input files only
+
+`generate-buckets` marks snapshots that exclude rich deny rows. If an unmarked snapshot has rich deny input, `scan` stops before TCP dispatch.
 
 Exit code behavior:
 

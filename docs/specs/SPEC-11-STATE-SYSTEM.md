@@ -15,9 +15,10 @@ scan failure     -> state.SaveSnapshot -> corrected snapshot JSON
 
 ```go
 type Snapshot struct {
-    Chunks      []task.Chunk
-    PreScanPing PreScanPingState
-    Output      *OutputState
+    Chunks            []task.Chunk
+    PreScanPing       PreScanPingState
+    Output            *OutputState
+    RichDenyExcluded bool
 }
 ```
 
@@ -26,6 +27,8 @@ IPv4 values. `OutputState` stores the all-results and open-only CSV paths.
 
 A nil `Output` means that the snapshot has no recorded output paths. The scan
 runtime then creates new timestamped paths.
+
+`RichDenyExcluded` records that bucket generation applied rich deny authorization. Legacy snapshots omit this optional JSON field.
 
 ## 2. Snapshot loading
 
@@ -100,10 +103,13 @@ the scan workflow.
 
 - Keep current and legacy snapshot decoding.
 - Keep snapshots that omit `output` readable.
+- Keep snapshots that omit `rich_deny_excluded` readable.
 - Keep recovery for older chunks that omit `total_count`.
 - Resolve recorded relative output paths with the documented compatibility
   rule in `pkg/scanapp`.
 - Do not change JSON fields without a version and migration decision.
+
+If an unmarked snapshot has rich deny input, `scan` rejects it before TCP dispatch. The error tells the operator to run `generate-buckets` again.
 
 ## 9. Main files
 

@@ -1,20 +1,41 @@
-// mock-target opens a configurable set of TCP ports (OPEN_PORTS), optionally installs
-// iptables DROP rules for FILTERED_PORTS (requires NET_ADMIN) to produce real connect
-// timeouts, and always listens on HEALTH_PORT for the container healthcheck.
-// Invoked with -healthcheck it dials HEALTH_PORT and exits 0/1.
+// mock-target opens TCP ports and can count accepted connections. It can also
+// install container-local firewall rules for deterministic timeouts.
 package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+type probeCounter struct {
+	value atomic.Uint64
+}
+
+func (c *probeCounter) add() {
+	c.value.Add(1)
+}
+
+func probeCounterHandler(counter *probeCounter) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/count", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintln(w, counter.value.Load())
+	})
+	mux.HandleFunc("/reset", func(w http.ResponseWriter, _ *http.Request) {
+		counter.value.Store(0)
+		_, _ = fmt.Fprintln(w, 0)
+	})
+	return mux
+}
 
 func main() {
 	healthcheck := flag.Bool("healthcheck", false, "probe local health port and exit")
@@ -39,19 +60,30 @@ func main() {
 		log.Printf("installed DROP rule for tcp/%s", p)
 	}
 
-	startListener(healthPort)
+	startListener(healthPort, nil)
 	for _, p := range splitPorts(os.Getenv("OPEN_PORTS")) {
-		startListener(p)
+		startListener(p, nil)
 	}
-	log.Printf("mock-target ready health=%s open=%q filtered=%q",
-		healthPort, os.Getenv("OPEN_PORTS"), os.Getenv("FILTERED_PORTS"))
+	counter := &probeCounter{}
+	for _, p := range splitPorts(os.Getenv("COUNTED_PORTS")) {
+		startListener(p, counter.add)
+	}
+	if controlPort := strings.TrimSpace(os.Getenv("CONTROL_PORT")); controlPort != "" {
+		go func() {
+			if err := http.ListenAndServe(":"+controlPort, probeCounterHandler(counter)); err != nil {
+				log.Fatalf("probe counter control server failed: %v", err)
+			}
+		}()
+	}
+	log.Printf("mock-target ready health=%s open=%q counted=%q filtered=%q",
+		healthPort, os.Getenv("OPEN_PORTS"), os.Getenv("COUNTED_PORTS"), os.Getenv("FILTERED_PORTS"))
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 }
 
-func startListener(port string) {
+func startListener(port string, onAccept func()) {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Fatalf("listen on %s failed: %v", port, err)
@@ -61,6 +93,9 @@ func startListener(port string) {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
+			}
+			if onAccept != nil {
+				onAccept()
 			}
 			_ = conn.Close()
 		}

@@ -38,6 +38,24 @@ services:
       timeout: 3s
       retries: 10
 
+  # Only B4 targets this service. Its control endpoint records every TCP
+  # connection to port 8080, so the matrix can prove that deny sends no probe.
+  target-denied:
+    build: ./mock-target
+    image: psmk3-mock-target
+    restart: "no"
+    environment:
+      COUNTED_PORTS: "8080"
+      CONTROL_PORT: "19998"
+      HEALTH_PORT: "19999"
+    networks:
+      lab: { ipv4_address: 172.30.0.13 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:19998/count"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
   target-filtered:
     build: ./mock-target
     image: psmk3-mock-target
@@ -175,6 +193,7 @@ services:
     depends_on:
       target-open: { condition: service_healthy }
       target-closed: { condition: service_healthy }
+      target-denied: { condition: service_healthy }
       target-filtered: { condition: service_healthy }
       pressure-ok: { condition: service_healthy }
       pressure-high: { condition: service_healthy }

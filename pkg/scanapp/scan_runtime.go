@@ -79,6 +79,17 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		return err
 	}
 
+	if err := validateSnapshotAuthorization(snapshot, inputs.cidrRecords); err != nil {
+		return err
+	}
+	// A successful legacy check proves that the snapshot contains no denied
+	// work. A later progress save can record this fact and skip the check.
+	snapshot.RichDenyExcluded = true
+	// The snapshot blocklist supplies the reachable predicate. The scan does not
+	// use ping to calculate reachability. An empty blocklist makes all targets
+	// reachable.
+	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
+
 	// Resolve output paths after the snapshot. A snapshot from an interrupted run
 	// makes this run append to the same files (design §3.7). A new snapshot gets
 	// new timestamped paths for a later resume.
@@ -111,11 +122,6 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		openPath = outputPaths.openPath
 	}
 	outputState := &state.OutputState{ScanPath: scanPath, OpenPath: openPath}
-
-	// The snapshot blocklist supplies the reachable predicate. The scan does not
-	// use ping to calculate reachability. An empty blocklist makes all targets
-	// reachable.
-	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
 
 	progressStep := r.input.progressInterval
 	if progressStep <= 0 {
@@ -259,7 +265,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
-	if err := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
+	if err := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, dispatchErr, runErr); err != nil {
 		emitCompletionSummary(logger, summary, startedAt, err)
 		return err
 	}

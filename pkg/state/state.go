@@ -57,12 +57,15 @@ type Snapshot struct {
 	Chunks      []task.Chunk     `json:"chunks"`
 	PreScanPing PreScanPingState `json:"pre_scan_ping,omitempty"`
 	Output      *OutputState     `json:"output,omitempty"`
+	// RichDenyExcluded is true when the target builder excluded rich deny rows.
+	RichDenyExcluded bool `json:"rich_deny_excluded,omitempty"`
 }
 
 type snapshotEnvelope struct {
-	Chunks      *[]task.Chunk        `json:"chunks"`
-	PreScanPing *preScanPingEnvelope `json:"pre_scan_ping,omitempty"`
-	Output      *OutputState         `json:"output,omitempty"`
+	Chunks           *[]task.Chunk        `json:"chunks"`
+	PreScanPing      *preScanPingEnvelope `json:"pre_scan_ping,omitempty"`
+	Output           *OutputState         `json:"output,omitempty"`
+	RichDenyExcluded bool                 `json:"rich_deny_excluded,omitempty"`
 }
 
 type preScanPingEnvelope struct {
@@ -102,7 +105,8 @@ var fileOps = defaultSnapshotFileOps()
 // SaveSnapshot writes resume state as the current JSON envelope.
 func SaveSnapshot(path string, snap Snapshot) error {
 	env := snapshotEnvelope{
-		Chunks: &snap.Chunks,
+		Chunks:           &snap.Chunks,
+		RichDenyExcluded: snap.RichDenyExcluded,
 	}
 	if hasPreScanPingState(snap.PreScanPing) {
 		enabled := snap.PreScanPing.Enabled
@@ -232,7 +236,10 @@ func LoadSnapshot(path string) (Snapshot, error) {
 		if env.Chunks == nil {
 			return Snapshot{}, errors.New("resume snapshot missing required chunks field")
 		}
-		snap := Snapshot{Chunks: *env.Chunks}
+		snap := Snapshot{
+			Chunks:           *env.Chunks,
+			RichDenyExcluded: env.RichDenyExcluded,
+		}
 		if env.PreScanPing != nil {
 			if env.PreScanPing.Enabled == nil {
 				return Snapshot{}, errors.New("resume snapshot pre_scan_ping missing required enabled field")

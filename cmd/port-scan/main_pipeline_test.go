@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/csv"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 // TestRunMain_PrePing_WritesUnreachable drives the standalone pre-ping subcommand
@@ -175,5 +178,79 @@ func TestRunMain_Scan_RejectsPingFlags(t *testing.T) {
 		"-pre-scan-ping-timeout", "1s",
 	}, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
 		t.Fatalf("expected exit 2 for scan with -pre-scan-ping-timeout, got %d", code)
+	}
+}
+
+func TestRunMain_WhenRichInputIsDenied_CompletesWorkflowWithNoNetworkResults(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich-denied.csv")
+	output := filepath.Join(tmp, "out.csv")
+	snapshotPath := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte(
+		"src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n"+
+			"127.0.0.1,127.0.0.1/32,127.0.0.1,127.0.0.1/32,https,tcp,443,deny,P-1,MATCH_POLICY_DENY\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var prePingOut, prePingErr bytes.Buffer
+	if code := runMain([]string{
+		"pre-ping",
+		"-cidr-file", cidrFile,
+		"-output", output,
+		"-workers", "1",
+	}, &prePingOut, &prePingErr); code != 0 {
+		t.Fatalf("pre-ping exit = %d, want 0; stderr=%s", code, prePingErr.String())
+	}
+	assertCSVRowCount(t, strings.TrimSpace(prePingOut.String()), 1)
+
+	var bucketErr bytes.Buffer
+	if code := runMain([]string{
+		"generate-buckets",
+		"-cidr-file", cidrFile,
+		"-buckets-out", snapshotPath,
+		"-workers", "1",
+	}, &bytes.Buffer{}, &bucketErr); code != 0 {
+		t.Fatalf("generate-buckets exit = %d, want 0; stderr=%s", code, bucketErr.String())
+	}
+	snapshot, err := state.LoadSnapshot(snapshotPath)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if len(snapshot.Chunks) != 0 {
+		t.Fatalf("snapshot contains %d chunks, want no denied work", len(snapshot.Chunks))
+	}
+
+	var scanErr bytes.Buffer
+	if code := runMain([]string{
+		"scan",
+		"-cidr-file", cidrFile,
+		"-resume", snapshotPath,
+		"-output", output,
+		"-disable-api",
+		"-format", "json",
+	}, &bytes.Buffer{}, &scanErr); code != 0 {
+		t.Fatalf("scan exit = %d, want 0; stderr=%s", code, scanErr.String())
+	}
+	if !strings.Contains(scanErr.String(), `"total_tasks":0`) {
+		t.Fatalf("scan summary does not contain zero tasks: %s", scanErr.String())
+	}
+	assertCSVRowCount(t, mustFindOneMain(t, filepath.Join(tmp, "scan_results-*.csv")), 1)
+	assertCSVRowCount(t, mustFindOneMain(t, filepath.Join(tmp, "opened_results-*.csv")), 1)
+}
+
+func assertCSVRowCount(t *testing.T, path string, want int) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != want {
+		t.Fatalf("%s contains %d rows, want %d", path, len(rows), want)
 	}
 }

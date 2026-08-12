@@ -135,7 +135,13 @@ One specification per line in `port/tcp` format.
 
 ### Rich Mode: Firewall-Policy CSV
 
-`port-scan` detects this mode when all the required columns are present. You do not need a port file, because each row gives its own dst_ip, dst_network_segment, port, and decision. Rows with `decision=accept` become scan targets. `port-scan` skips the rows with `decision=deny`.
+`port-scan` detects this mode when all required columns are present. You do not need a port file because each row contains its port.
+
+Rows with `decision=accept` become scan targets. Rows with `decision=deny` never become network targets.
+
+A deny row overrides an accept row with the same normalized `execution_key`. This rule applies before ICMP, bucket generation, resume rebuild, and TCP dispatch.
+
+The `validate` command still rejects malformed deny rows. A deny-only input succeeds and produces empty scan artifacts.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -149,6 +155,8 @@ One specification per line in `port/tcp` format.
 | `decision` | Yes | `accept` (scan) or `deny` (skip) |
 | `matched_policy_id` | Yes | Policy rule identifier |
 | `reason` | Yes | Policy match reason |
+
+If an unmarked snapshot has rich deny input, `scan` rejects it before TCP dispatch. Run `generate-buckets` to create a new snapshot.
 
 **Example:**
 ```csv

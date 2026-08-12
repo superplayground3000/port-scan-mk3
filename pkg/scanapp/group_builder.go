@@ -243,6 +243,7 @@ func buildRichGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, erro
 
 func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
 	predicate := normalizeReachablePredicate(reachable)
+	deniedKeys := deniedRichExecutionKeys(cidrRecords)
 	builders := make(map[string]*richGroupBuilder)
 	ownerByExecutionKey := make(map[string]string)
 	hasValidRichInput := false
@@ -252,6 +253,9 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 			continue
 		}
 		hasValidRichInput = true
+		if richRecordDenied(rec) {
+			continue
+		}
 		cidr, err := richCIDRKey(rec)
 		if err != nil {
 			return nil, err
@@ -260,6 +264,7 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 		if err != nil {
 			return nil, err
 		}
+		targets = filterAuthorizedRichTargets(targets, deniedKeys)
 		targets = filterScanTargets(targets, predicate)
 		if len(targets) == 0 {
 			continue
@@ -304,6 +309,41 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 	}
 	sortRichGroups(groups)
 	return groups, nil
+}
+
+func deniedRichExecutionKeys(records []input.CIDRRecord) map[string]struct{} {
+	var denied map[string]struct{}
+	for _, rec := range records {
+		if !richRecordDenied(rec) {
+			continue
+		}
+		key := strings.TrimSpace(rec.ExecutionKey)
+		if key != "" {
+			if denied == nil {
+				denied = make(map[string]struct{})
+			}
+			denied[key] = struct{}{}
+		}
+	}
+	return denied
+}
+
+func richRecordDenied(rec input.CIDRRecord) bool {
+	return rec.IsRich && rec.IsValid && strings.EqualFold(strings.TrimSpace(rec.Decision), "deny")
+}
+
+func filterAuthorizedRichTargets(targets []scanTarget, denied map[string]struct{}) []scanTarget {
+	if len(denied) == 0 {
+		return targets
+	}
+	authorized := make([]scanTarget, 0, len(targets))
+	for _, target := range targets {
+		if _, denied := denied[strings.TrimSpace(target.meta.executionKey)]; denied {
+			continue
+		}
+		authorized = append(authorized, target)
+	}
+	return authorized
 }
 
 // richGroupBuilder accumulates the targets of a single rich group during

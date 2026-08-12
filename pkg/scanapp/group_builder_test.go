@@ -51,3 +51,77 @@ func TestBuildGroups_WhenRichStrategy_ProducesSameResultAsBuildRichGroups(t *tes
 		t.Fatalf("expected target port 80, got %d", g.targets[0].port)
 	}
 }
+
+func TestBuildRichChunks_WhenRowDecisionIsDeny_ReturnsNoTarget(t *testing.T) {
+	records := []input.CIDRRecord{{
+		IsRich:            true,
+		IsValid:           true,
+		DstIP:             "10.0.0.8",
+		DstNetworkSegment: "10.0.0.0/24",
+		Protocol:          "tcp",
+		Port:              443,
+		Decision:          "deny",
+		ExecutionKey:      "10.0.0.8:443/tcp",
+		RowNumber:         2,
+	}}
+
+	chunks, err := buildRichChunks(records)
+	if err != nil {
+		t.Fatalf("buildRichChunks() error = %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("buildRichChunks() returned %d chunks, want no denied targets", len(chunks))
+	}
+}
+
+func TestBuildRichChunks_WhenAcceptedAndDeniedRowsShareExecutionKey_DenyWins(t *testing.T) {
+	accepted := input.CIDRRecord{
+		IsRich:            true,
+		IsValid:           true,
+		DstIP:             "10.0.0.8",
+		DstNetworkSegment: "10.0.0.0/24",
+		Protocol:          "tcp",
+		Port:              443,
+		Decision:          "accept",
+		ExecutionKey:      "10.0.0.8:443/tcp",
+		RowNumber:         2,
+	}
+	denied := accepted
+	denied.Decision = "deny"
+	denied.RowNumber = 3
+
+	for _, records := range [][]input.CIDRRecord{
+		{accepted, denied},
+		{denied, accepted},
+	} {
+		chunks, err := buildRichChunks(records)
+		if err != nil {
+			t.Fatalf("buildRichChunks() error = %v", err)
+		}
+		if len(chunks) != 0 {
+			t.Fatalf("buildRichChunks() returned %d chunks, want deny to override accept", len(chunks))
+		}
+	}
+}
+
+func TestBuildRichChunks_WhenRowDecisionIsAccept_ReturnsTarget(t *testing.T) {
+	records := []input.CIDRRecord{{
+		IsRich:            true,
+		IsValid:           true,
+		DstIP:             "10.0.0.8",
+		DstNetworkSegment: "10.0.0.0/24",
+		Protocol:          "tcp",
+		Port:              443,
+		Decision:          "accept",
+		ExecutionKey:      "10.0.0.8:443/tcp",
+		RowNumber:         2,
+	}}
+
+	chunks, err := buildRichChunks(records)
+	if err != nil {
+		t.Fatalf("buildRichChunks() error = %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].TotalCount != 1 {
+		t.Fatalf("buildRichChunks() returned %+v, want one accepted target", chunks)
+	}
+}

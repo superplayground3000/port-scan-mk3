@@ -233,7 +233,7 @@ func TestBuildRichGroups_WhenDuplicateExecutionKey_PreservesMergedContext(t *tes
 			FabName:           "10.0.0.11",
 			CIDRName:          "web",
 			ServiceLabel:      "web",
-			Decision:          "deny",
+			Decision:          "accept",
 			PolicyID:          "P-2",
 			Reason:            "audit",
 			SrcIP:             "10.0.0.11",
@@ -257,7 +257,7 @@ func TestBuildRichGroups_WhenDuplicateExecutionKey_PreservesMergedContext(t *tes
 	if got.targets[0].meta.policyID != "P-1|P-2" {
 		t.Fatalf("unexpected merged policy id: %s", got.targets[0].meta.policyID)
 	}
-	if got.targets[0].meta.decision != "accept|deny" {
+	if got.targets[0].meta.decision != "accept" {
 		t.Fatalf("unexpected merged decision: %s", got.targets[0].meta.decision)
 	}
 }
@@ -284,7 +284,7 @@ func TestBuildRichGroups_WhenExecutionKeyAppearsAcrossCIDRs_DedupGloballyToFirst
 			DstNetworkSegment: "127.0.0.0/25",
 			Port:              8080,
 			PolicyID:          "P-2",
-			Decision:          "deny",
+			Decision:          "accept",
 			Reason:            "audit",
 			SrcIP:             "10.0.0.11",
 		},

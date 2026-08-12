@@ -103,7 +103,7 @@ Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binar
 | B1 | basic mode, `-disable-api -disable-pre-scan-ping` | `target-open` ports → `status=open` in `opened_results-*.csv` |
 | B2 | same | `target-closed` → `status=close` |
 | B3 | `-timeout 300ms -disable-api -disable-pre-scan-ping` | `target-filtered` → `status=close(timeout)` |
-| B4 | rich-mode fixture (auto-detect), `-disable-api -disable-pre-scan-ping` | all `tcp` rows scanned regardless of `decision` (decision carried through as output metadata); non-`tcp` (udp) rows excluded; 14-col schema correct |
+| B4 | rich-mode fixture through `generate-buckets` and `scan` | Accepted `tcp` row scanned. A dedicated target counter stays at zero for the denied row. Non-`tcp` row excluded. |
 | B5 | `-cidr-ip-col source_ip -cidr-ip-cidr-col source_range` + custom-header fixture | custom columns parsed; open found |
 | B6 | `-bucket-rate 500 -bucket-capacity 500 -delay 5ms -workers 20` | completes; open found (rate flags accepted) |
 | B7 | `-output /out/custom/run.csv` | files written as `run-<ts>.csv` + `opened_results-<ts>.csv` under that dir |
@@ -216,7 +216,7 @@ Driver: `scripts/smoke-test.sh`. Each case is a named function that runs a binar
 
 The following supersede any earlier claims above. Discovered by running the lab; the shipped lab and product reflect these.
 
-1. **Rich-mode scanning is not decision-filtered.** `port-scan scan` in rich mode scans **every `protocol=tcp` row regardless of `decision`**, carrying `decision` through as output metadata; only non-`tcp` rows are excluded. (Earlier text said "only `decision=accept`".) B4 asserts this: accept `.10`→open, deny `.11`→close (both scanned, decision preserved), udp `.12` excluded. Whether scanning `decision=deny` paths is desirable is a **product question flagged for review**, not a lab defect.
+1. **Rich-mode authorization is decision-filtered.** `port-scan` scans accepted TCP rows. A denied row produces no ICMP probe, TCP probe, or result row. B4 verifies this rule.
 2. **E2 is a guard test, not a successful resume.** E2 feeds a crafted resume file whose `total_count` mismatches the input and asserts the abort `chunk total_count mismatch` (nonzero exit). E1 remains the authentic SIGINT→resume success case.
 3. **D3/D4/D8 assert fail-safe abort, not "no crash".** After 3 consecutive pressure-fetch failures the scan aborts (`pressure api failed 3 times`, exit 1). D4 uses `-timeout 3s` so the scan outlives the ~7s needed for 3 timeout-mode strikes.
 4. **preprocess output path** is `<output-dir>/<fab>/<ts>/input.csv` (not `<fab>-<ts>.csv`); F2 with no closed CIDRs keeps all rows.

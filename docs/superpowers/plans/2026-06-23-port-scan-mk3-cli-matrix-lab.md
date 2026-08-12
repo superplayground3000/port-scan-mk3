@@ -30,7 +30,7 @@ Design spec: `docs/superpowers/specs/2026-06-23-port-scan-mk3-cli-matrix-lab-des
 - **unreachable_results header** (`pkg/writer/unreachable_writer.go:29`): `ip,ip_cidr,status,reason,fab_name,cidr_name,service_label,decision,matched_policy_id,execution_key,src_ip,src_network_segment`.
 - **Pressure** (`pkg/scanapp/pressure_monitor.go`): threshold default 60, pause when `pressure >= 60`. Per-poll success log: `[API] pressure api status=ok pressure=%.1f%% threshold=%.1f`. Pause: `[API] router pressure overload — scan automatically paused …`. Resume: `[API] router pressure recovered — scan automatically resumed …`. On fetch error: failures 1–2 log `pressure api request failed (N/3): …` and continue; the **3rd consecutive** failure sends `pressure api failed 3 times: …` to the error channel and the scan aborts (exit 1).
 - **validate output** (`pkg/cli/output.go`): JSON `{"valid":<bool>,"detail":<string>}`; human `valid=%t detail=%s`. Exit codes (`cmd/port-scan/command_handlers.go`): validate valid→0, invalid→1, parse error→2; scan ok→0, error→1, SIGINT→130; unknown subcommand→2. Basic-mode validation requires `-port-file` (`detail` = `-port-file is required when cidr input is not rich mode`).
-- **Rich-mode auto-detect** (`pkg/input/header_match.go`, `rich_types.go`): triggered when all 10 headers present (in order): `src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason`. In rich mode `-cidr-ip-col`/`-cidr-ip-cidr-col` are ignored; all `protocol=tcp` rows are scanned **regardless of `decision`** (the `decision` value is carried through as output metadata, not used as a scan filter), and non-`tcp` rows are excluded. Basic-mode required headers default `ip`,`ip_cidr`. (Corrected post-implementation — see Errata.)
+- **Rich-mode auto-detect** (`pkg/input/header_match.go`, `rich_types.go`): all ten rich headers trigger this mode. Accepted TCP rows become targets. Denied rows produce no network work. Non-TCP rows remain invalid. Basic-mode headers default to `ip` and `ip_cidr`.
 - **Resume** (`pkg/task/types.go`, `pkg/scanapp/chunk_lifecycle.go:147-152`, `resume_path.go`): chunk JSON tags `cidr,cidr_name,ports,next_index,scanned_count,total_count,status`; ports in `<port>/tcp` form; resume file written to `dir(-output)/resume_state.json` on SIGINT; on `-resume`, if a chunk's `total_count` ≠ `targets×ports` the run aborts with `chunk total_count mismatch for <cidr>: state=N expected=M`; if a chunk CIDR is absent from the input it aborts with `cidr <c> from chunk not found in cidr file`.
 - **preprocess** (`pkg/preprocess/filter.go:28`, `loader.go`): `Filter.Keep` returns true when `dst_network_segment` is **NOT** within a closed CIDR ⇒ preprocess **removes** rows whose `dst_network_segment` falls in a closed CIDR. cleaned-cidrs columns `fab,segment,status`; only `status=close` rows matching `--fab-name` form the closed tree. Output path `<output-dir>/<fab-name>/<ts>/input.csv` (pass-through columns).
 - **enrich-targets**: input cols `host,port`; `--cidr-list` first column CIDR; `--service-map` cols `port,service_label`; output 10-col rich schema (`src_ip` default `10.59.42.39`, `decision=accept`, `matched_policy_id=enriched`, `reason=MATCH_POLICY_ACCEPT`); invalid-host rows skipped.
@@ -133,11 +133,13 @@ rich-mode detection, resume schema, and helper IO.
 
 ## Design
 
-Topology: 3 images → 9 services on bridge 172.30.0.0/24 with static IPs. Filtered ports via
+Topology: 3 images → 10 services on bridge 172.30.0.0/24 with static IPs. Filtered ports via
 in-container `iptables DROP` (cap NET_ADMIN) for genuine connect timeouts; scanner gets cap
 NET_RAW so pre-scan `ping` works (else reachable hosts misclassify as unreachable). Pressure
 healthchecks hit a dedicated non-consuming `/healthz` so they never advance the pressure
 sequence. Multi-source auth needs two distinct `/data` URLs ⇒ two auth containers.
+
+The rich deny case uses a dedicated target with a resettable TCP connection counter. No other case uses this target.
 
 Rejected: stock images (can't deterministically produce close(timeout)); single auth container
 (won't exercise MultiSourcePressureFetcher); exhaustive cartesian flag product (infeasible).
@@ -1281,7 +1283,7 @@ git commit -m "fix(lab): validation adjustments" || echo "nothing to commit"
 
 The shipped lab differs from the task text above in these ways (the running lab is the source of truth; `validate_lab.sh` → 81/81, exit 0):
 
-1. **B4 rich-mode contract corrected.** Rich mode scans **all `tcp` rows regardless of `decision`** and carries `decision` as output metadata; only non-`tcp` rows are excluded. B4 now asserts deny `.11` IS scanned (`close`, decision=deny) and udp `.12` is excluded. (The "Exact contracts" rich-mode bullet was corrected accordingly.) Scanning `decision=deny` paths is flagged for product review.
+1. **B4 rich-mode contract corrected.** Rich mode scans accepted TCP rows. B4 verifies that deny `.11` produces no result and UDP `.12` is excluded.
 2. **D4** uses `-timeout 3s` (was `1s`) so the scan outlives the ~7s to the 3rd timeout-mode pressure failure; otherwise the 6s scan finished first.
 3. **D2** depends on `pressure-high` oscillating `90,10` with `loop=true` (compose) so pause+resume are deterministic regardless of prior GET consumption of the sequence.
 4. **mock-pressure** gained stateless bearer-token validation in `/data` (accept any `mock-token-*`) so the two auth containers share a trust domain (required for D7 multi-source). D8 still fails correctly (bad creds rejected at `/auth`).
