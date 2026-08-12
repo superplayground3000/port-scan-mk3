@@ -331,6 +331,9 @@ func assertFailedSaveLeftSnapshotIntact(t *testing.T, path string, before []byte
 		if !strings.Contains(err.Error(), stage) {
 			t.Errorf("expected the error to identify the %q stage, got %v", stage, err)
 		}
+		if !strings.Contains(err.Error(), "previous snapshot remains usable") {
+			t.Errorf("expected the error to state that the previous snapshot remains usable, got %v", err)
+		}
 	}
 
 	after, readErr := os.ReadFile(path)

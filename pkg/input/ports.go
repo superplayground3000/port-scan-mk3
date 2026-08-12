@@ -2,6 +2,7 @@ package input
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -30,9 +31,21 @@ import (
 //	specs, err := input.LoadPorts(f)
 //	fmt.Println("Loaded", len(specs), "port specs")
 func LoadPorts(r io.Reader) ([]PortSpec, error) {
+	return LoadPortsContext(context.Background(), r)
+}
+
+// LoadPortsContext loads port rows and stops at a row transition when ctx is
+// canceled.
+func LoadPortsContext(ctx context.Context, r io.Reader) ([]PortSpec, error) {
 	scanner := bufio.NewScanner(r)
 	out := make([]PortSpec, 0)
-	for scanner.Scan() {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !scanner.Scan() {
+			break
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue

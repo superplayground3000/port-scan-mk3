@@ -68,7 +68,30 @@ port-scan validate -cidr-file <path> [-port-file <path>] [-format human|json]
 - `0` — success (inputs valid / snapshot written / scan completed)
 - `1` — runtime error (file write failure, config error during run, validation failure)
 - `2` — CLI or config error (missing required flags, unknown flag, invalid value)
-- `130` — canceled by SIGINT (`scan` persists progress to the `-resume` path)
+- `130` — canceled by SIGINT after successful snapshot persistence
+
+### Scan cancellation
+
+The first Ctrl+C or Windows Ctrl+Break starts graceful cancellation. Parent
+context cancellation and fatal runtime errors use the same stop flow.
+
+Parsing and runtime rebuild read the context at row and chunk transitions.
+Inner expansion and deduplication loops read it within 4,096 items.
+
+Rate, pause, send, and `-delay` waits stop after cancellation. Queued probes do
+not start. Each started probe finishes with its original `-timeout`.
+
+The result loop persists every completed in-flight result. It abandons queued
+tasks and rewinds each chunk to its lowest unwritten index.
+
+A resumed run can repeat a persisted row after a rewind. It cannot skip an
+unwritten task.
+
+The second Ctrl+C or Ctrl+Break forces exit code `130`. This exit does not
+promise a current snapshot or finalized output handles.
+
+A snapshot-save error replaces cancellation and returns exit code `1`. The
+error states whether the previous snapshot remains usable.
 
 ## CLI Flags
 

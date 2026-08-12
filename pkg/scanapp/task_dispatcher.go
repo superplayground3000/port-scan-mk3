@@ -46,6 +46,9 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 		// Active scan — advance index and transition tracker to "scanning" state.
 		rt.tracker.AdvanceNextIndex(snap.NextIndex)
 		for i := snap.NextIndex; i < snap.TotalCount; i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			obs.OnBucketWaitStart(ch.CIDR, i)
 			// Note: target/port use ch.CIDR and 0 because actual target/port are not yet
 			// determined at bucket wait; they are derived from index after gate release.
@@ -87,7 +90,15 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 			rt.tracker.AdvanceNextIndex(i + 1)
 			logger.debugf("dispatch cidr=%s target=%s:%d next_index=%d/%d", ch.CIDR, target.ip, port, i+1, snap.TotalCount)
 			if policy.delay > 0 {
-				time.Sleep(policy.delay)
+				timer := time.NewTimer(policy.delay)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+					return ctx.Err()
+				case <-timer.C:
+				}
 			}
 		}
 	}

@@ -206,7 +206,14 @@ This file has the same schema as `scan_results-*.csv`. It contains only the rows
 
 ### resume_state.json
 
-`port-scan` writes this file on SIGINT or on a scan failure. It contains the completed task keys. Thus you can continue the scan at the point where it stopped.
+`port-scan` updates this file after graceful cancellation or a scan failure.
+The file records completed work and the lowest unwritten task in each chunk.
+
+Queued probes do not start after cancellation. Started probes finish with their
+original timeout, and the command writes their results before snapshot persistence.
+
+Press Ctrl+C or Ctrl+Break one time for graceful cancellation. Press it again
+to force exit code `130` without a current-snapshot guarantee.
 
 ## Usage Examples
 
@@ -319,7 +326,7 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv -quiet
 | `0` | Success | The scan completed, and the command wrote the result CSVs |
 | `1` | Runtime error | File write failure, config error during run, or validation failure |
 | `2` | CLI or config error | Missing required flags, invalid flag values, parse failure |
-| `130` | Scan canceled | The scan received SIGINT, and the command wrote `resume_state.json` |
+| `130` | Scan canceled | The first interrupt saved the snapshot, or the second interrupt forced an emergency exit |
 
 **Validation exit codes:**
 - `validate` with `0` — all inputs valid
@@ -349,7 +356,11 @@ go test ./...
 
 ## Implementation Notes
 
-The scanner uses the Go standard library `net.DialTimeout` for TCP connections. The workers are goroutines that share a bounded task channel. A single writer goroutine serializes the results at write time.
+The scanner uses the Go standard library `net.Dialer.DialContext` for TCP connections.
+Workers share a bounded task channel. One result loop serializes output writes.
+
+Cancellation stops queue consumption before the next dial. It does not change
+the context or timeout of a dial that already started.
 
 For pressure control, the task dispatcher consults a `speedctrl.Controller` before it releases each task. The controller accumulates tokens from the leaky-bucket scheduler and from the pressure API (when it is enabled). Keyboard input (`p` to pause, `r` to resume) updates the controller directly.
 

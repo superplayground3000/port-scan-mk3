@@ -137,6 +137,15 @@ The command validates input files only. It never scans and never pings.
   *same* files (one continuous file, a single header). It mints no new
   timestamped pair. If you delete the earlier output file before the resume, the
   command creates that file again with a header.
+
+  The first Ctrl+C or Windows Ctrl+Break starts graceful cancellation. Queued
+  probes are abandoned. Started probes finish with their original `-timeout`.
+
+  The snapshot rewinds to the lowest unwritten task. A resume can repeat a
+  persisted row, but it cannot skip an unwritten task.
+
+  Press Ctrl+C or Ctrl+Break again to force exit code `130`. This emergency
+  exit does not promise a current snapshot or finalized output handles.
 - **The snapshot records output paths as absolute paths.** A relative `-output`
   (the default `scan_results.csv` is one) resolves against the working directory
   *one time*, when the command first mints the batch paths. The snapshot stores

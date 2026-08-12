@@ -1,16 +1,15 @@
 # Interrupt handling: which terminations are graceful, and which are not
 
-`port-scan` treats exactly one class of event as a *graceful stop*: an OS
-interrupt signal. `pkg/state/signal.go` subscribes to it (`WithSIGINTCancel`).
-`cmd/port-scan/command_handlers.go` wires it into `pre-ping`, `generate-buckets`
-and `scan`.
+`port-scan` treats an OS interrupt as a graceful stop. The `scan` command uses
+`WithInterruptEscalation`. The other commands use `WithSIGINTCancel`.
 
 A graceful stop means all of the following, and operators can rely on it:
 
-- `port-scan` cancels the scan context, and in-flight dials finish or time out
-  normally. It shortens no dial deadline and no dispatch delay.
-- `port-scan` writes a resume snapshot to the bucket file. The snapshot records
-  the dispatch cursor and the output paths (`pkg/scanapp/resume_manager.go`).
+- `port-scan` stops input parsing, runtime rebuild, dispatch waits, and task sends.
+- Queued probes do not start. Started probes finish with their original timeout.
+- The result loop writes results from the started probes.
+- The snapshot rewinds each chunk to its lowest unwritten task.
+- `port-scan` writes the resume snapshot to the bucket file.
 - `port-scan` closes every output handle, so you can rename, move or delete
   `scan_results-*.csv` and `opened_results-*.csv` immediately.
 - the process exits **130**.
@@ -18,6 +17,13 @@ A graceful stop means all of the following, and operators can rely on it:
 Everything else terminates the process without that sequence. This page records
 which terminations are graceful. The difference is invisible from the command
 line, and it decides what an operator must do next.
+
+After the first interrupt, the command explains the emergency-exit option.
+Press Ctrl+C or Ctrl+Break again to force exit code `130`.
+
+The second interrupt does not wait for probes or snapshot persistence. It does
+not promise finalized output handles. The previous snapshot stays protected by
+the temp-file and rename sequence until replacement.
 
 ## Windows
 
@@ -106,21 +112,12 @@ time. Reconcile both `scan_results-*.csv` and `opened_results-*.csv` before you
 use them. For one clean file, run `generate-buckets` again and scan into a fresh
 output path.
 
-A graceful stop has neither problem. Its snapshot records exactly which tasks the
-dispatcher sent, and the resumed run appends to the same file with no gap and no
-duplicate.
+A graceful stop can repeat a persisted row after a rewind. It cannot skip an
+unwritten task. A resumed run appends to the same output files.
 
-That statement needs precision, because the dispatch cursor advances when the
-dispatcher *enqueues* a task, not when `port-scan` writes its row. That is the
-same asymmetry that made issue #51 a data-loss bug. It is safe here for two
-reasons. First, the cursor advances only *after* the dispatcher gives a task to a
-worker: `pkg/scanapp/task_dispatcher.go` advances `NextIndex` after the send
-succeeds, and it returns without an advance when the context is already canceled.
-Second, the workers drain every task that they received, and the result loop runs
-until the result channel closes. So on a cancel, every task that the cursor
-counted produced a row. The invariant that does *not* hold is the one from
-issue #51: if the output write fails, `port-scan` deliberately saves no
-snapshot.
+The dispatch cursor advances after a task enters the queue. Cancellation can
+leave that task unwritten. The runtime marks such tasks and rewinds each chunk
+before it saves the snapshot.
 
 ## Where this is verified
 
@@ -132,6 +129,10 @@ snapshot.
   CI gate (`.github/workflows/ci.yml`).
 - `pkg/state/signal_unix_test.go` delivers a real `SIGINT` to the test process
   and asserts the context cancels — the POSIX counterpart.
+- `cmd/port-scan/interrupt_unix_test.go` sends two real `SIGINT` events. It
+  makes sure that the first message and the second exit request are correct.
+- `pkg/state/interrupt_escalation_test.go` makes sure that the platform-neutral
+  first and second interrupt state is correct.
 - `pkg/state/signal_test.go` pins the subscription list itself. It covers the
   `signal.Notify` trap: an *empty* list subscribes to every signal.
 

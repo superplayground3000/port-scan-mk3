@@ -40,6 +40,7 @@
 package input
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
@@ -79,12 +80,21 @@ import (
 //	    records, summary, err := input.ParseRichRows(allRows, headerIdx)
 //	}
 func ParseRichRows(rows [][]string, idx map[string]int) ([]CIDRRecord, RichParseSummary, error) {
+	return ParseRichRowsContext(context.Background(), rows, idx)
+}
+
+// ParseRichRowsContext parses rich rows and stops at a row transition when ctx
+// is canceled.
+func ParseRichRowsContext(ctx context.Context, rows [][]string, idx map[string]int) ([]CIDRRecord, RichParseSummary, error) {
 	summary := RichParseSummary{
 		TotalRows:       max(0, len(rows)-1),
 		FailureByReason: map[string]int{},
 	}
 	out := make([]CIDRRecord, 0, summary.TotalRows)
 	for i := 1; i < len(rows); i++ {
+		if err := ctx.Err(); err != nil {
+			return out, summary, err
+		}
 		rec, code, err := parseRichRow(rows[i], i+1, idx)
 		if err != nil {
 			summary.InvalidRows++

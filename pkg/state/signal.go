@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 )
 
 // interruptSignals returns every OS signal that must cancel the scan context.
@@ -77,4 +78,61 @@ func interruptSignals() []os.Signal {
 func WithSIGINTCancel(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := signal.NotifyContext(parent, interruptSignals()...)
 	return ctx, cancel
+}
+
+// WithInterruptEscalation returns a context for graceful cancellation. The
+// first OS interrupt calls onFirst and cancels the context. A second interrupt
+// calls forceExit with code 130.
+//
+// The caller must call stop after graceful finalization. The forceExit
+// function normally is os.Exit. Tests can supply a recorder.
+func WithInterruptEscalation(parent context.Context, onFirst func(), forceExit func(int)) (context.Context, context.CancelFunc) {
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, interruptSignals()...)
+	return withInterruptChannel(parent, signals, onFirst, forceExit, func() {
+		signal.Stop(signals)
+	})
+}
+
+func withInterruptChannel(parent context.Context, signals <-chan os.Signal, onFirst func(), forceExit func(int), stopSignals func()) (context.Context, context.CancelFunc) {
+	ctx, cancelContext := context.WithCancel(parent)
+	done := make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			if stopSignals != nil {
+				stopSignals()
+			}
+			close(done)
+			cancelContext()
+		})
+	}
+
+	go func() {
+		parentDone := parent.Done()
+		first := false
+		for {
+			select {
+			case <-done:
+				return
+			case <-parentDone:
+				cancelContext()
+				parentDone = nil
+			case <-signals:
+				if !first {
+					first = true
+					if onFirst != nil {
+						onFirst()
+					}
+					cancelContext()
+					continue
+				}
+				if forceExit != nil {
+					forceExit(130)
+				}
+			}
+		}
+	}()
+
+	return ctx, stop
 }

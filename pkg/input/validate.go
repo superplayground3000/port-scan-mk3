@@ -1,6 +1,7 @@
 package input
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -39,7 +40,16 @@ func ValidateNoOverlap(networks []CIDRRecord) error {
 //	    log.Fatalf("validation failed: %v", err)
 //	}
 func ValidateIPRows(rows []CIDRRecord) error {
+	return ValidateIPRowsContext(context.Background(), rows)
+}
+
+// ValidateIPRowsContext validates CIDR records and stops within one row when
+// ctx is canceled.
+func ValidateIPRowsContext(ctx context.Context, rows []CIDRRecord) error {
 	for i := range rows {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if rows[i].Net == nil || rows[i].Selector == nil {
 			return fmt.Errorf("row %d is not parsed", i+1)
 		}
@@ -47,6 +57,9 @@ func ValidateIPRows(rows []CIDRRecord) error {
 
 	seenPair := make(map[string]int, len(rows))
 	for i, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		key := duplicateRowKey(row)
 		if prev, ok := seenPair[key]; ok {
 			src, dst := duplicateTupleSrcDst(row)
@@ -59,6 +72,9 @@ func ValidateIPRows(rows []CIDRRecord) error {
 	}
 
 	for i := 0; i < len(rows); i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !networkContains(rows[i].Net, rows[i].Selector) {
 			return fmt.Errorf("ip selector %s is outside ip_cidr %s (row %d)", rows[i].Selector.String(), rows[i].Net.String(), i+1)
 		}

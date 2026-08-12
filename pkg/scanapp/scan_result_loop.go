@@ -16,6 +16,7 @@ type resultLoopChannels struct {
 	executorErrCh <-chan error
 	dispatchErrCh <-chan error
 	resultCh      <-chan scanResult
+	abandonedCh   <-chan scanTask
 }
 
 // resultLoopDeps carries the collaborators the loop needs to persist results
@@ -52,6 +53,7 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 	executorErrCh := chans.executorErrCh
 	dispatchErrCh := chans.dispatchErrCh
 	resultCh := chans.resultCh
+	abandonedCh := chans.abandonedCh
 
 	// The loop must also keep running while executorErrCh is still open
 	// (executorErrCh != nil): a recovered worker panic and the result-channel
@@ -62,7 +64,7 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 	// sending, and the workerWG waiter closes it via the same sync.Once after all
 	// workers finish — so draining it to nil is guaranteed and the loop still
 	// terminates.
-	for !dispatchDone || resultCh != nil || executorErrCh != nil {
+	for !dispatchDone || resultCh != nil || executorErrCh != nil || abandonedCh != nil {
 		select {
 		case apiErr := <-apiErrCh:
 			if apiErr != nil && runErr == nil {
@@ -87,15 +89,16 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 				resultCh = nil
 				continue
 			}
-			// Only a result that reached the output file counts as scanned. A
-			// result written after runErr was set is never attempted, and a write
-			// that failed persisted nothing — counting either would inflate the
-			// scanned counter and the completion summary past the rows actually on
-			// disk (issue #51).
+			// Only a result that reached the output file counts as scanned. A late
+			// in-flight result is still written after a non-output fatal error. An
+			// output error prevents later writes because their result is unknown.
 			persisted := false
-			if runErr == nil {
+			if !errors.Is(runErr, errScanOutputWrite) {
 				if err := writeScanRecord(deps.outputs.scanWriter, deps.outputs.openOnlyWriter, res.record); err != nil {
-					runErr = err
+					if runErr == nil {
+						runErr = err
+					}
+					deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)
 					cancel()
 				} else {
 					persisted = true
@@ -107,6 +110,12 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			} else if errors.Is(runErr, errScanOutputWrite) {
 				deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)
 			}
+		case abandoned, ok := <-abandonedCh:
+			if !ok {
+				abandonedCh = nil
+				continue
+			}
+			deps.runtimes[abandoned.chunkIdx].tracker.MarkUnwritten(abandoned.taskIdx)
 		}
 	}
 

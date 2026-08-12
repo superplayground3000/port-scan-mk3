@@ -40,6 +40,7 @@
 package input
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -97,8 +98,15 @@ func LoadCIDRs(r io.Reader) ([]CIDRRecord, error) {
 //
 //	records, err := input.LoadCIDRsWithColumns(os.Stdin, "ip", "ip_cidr")
 func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
+	return LoadCIDRsWithColumnsContext(context.Background(), r, ipCol, ipCidrCol)
+}
+
+// LoadCIDRsWithColumnsContext loads CIDR records and stops at a row transition
+// when ctx is canceled. The function reads the context before each CSV row,
+// parse step, and validation step.
+func LoadCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
 	cr := csv.NewReader(r)
-	rows, err := cr.ReadAll()
+	rows, err := readCSVRowsContext(ctx, cr)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +121,7 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 	}
 
 	if richIdx, ok := detectRichHeaderIndices(rows[0]); ok {
-		records, _, err := ParseRichRows(rows, richIdx)
+		records, _, err := ParseRichRowsContext(ctx, rows, richIdx)
 		if err != nil {
 			return nil, err
 		}
@@ -135,6 +143,9 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 
 	out := make([]CIDRRecord, 0, len(rows)-1)
 	for i := 1; i < len(rows); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		row := rows[i]
 		if len(row) <= max(ipIdx, ipCidrIdx) {
 			return nil, fmt.Errorf("invalid cidr row %d", i+1)
@@ -171,10 +182,27 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 		}
 		out = append(out, rec)
 	}
-	if err := ValidateIPRows(out); err != nil {
+	if err := ValidateIPRowsContext(ctx, out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func readCSVRowsContext(ctx context.Context, reader *csv.Reader) ([][]string, error) {
+	rows := make([][]string, 0)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		row, err := reader.Read()
+		if err == io.EOF {
+			return rows, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
 }
 
 // Parse validates and normalizes a CIDRRecord. It parses the IPRaw selector and

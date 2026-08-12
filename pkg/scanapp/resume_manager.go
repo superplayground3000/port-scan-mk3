@@ -17,18 +17,16 @@ import (
 // that did not reach all output writers. The trackers rewind to the first such
 // task before this function saves the snapshot. A resumed run can write some
 // rows again, but it cannot skip an unwritten row.
-func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, dispatchErr, runErr error) error {
+func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, dispatchErr, runErr error) (int, error) {
 	rewoundChunks := 0
-	if errors.Is(runErr, errScanOutputWrite) {
-		for _, rt := range runtimes {
-			if rt.tracker.RewindUnwritten() {
-				rewoundChunks++
-			}
+	for _, rt := range runtimes {
+		if rt.tracker.RewindUnwritten() {
+			rewoundChunks++
 		}
 	}
 	incomplete := hasIncomplete(runtimes)
 	if !incomplete && runErr == nil && !shouldSaveOnDispatchErr(dispatchErr) {
-		return nil
+		return rewoundChunks, nil
 	}
 
 	if err := state.SaveSnapshot(savePath, state.Snapshot{
@@ -37,16 +35,22 @@ func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chun
 		Output:           output,
 		RichDenyExcluded: richDenyExcluded,
 	}); err != nil {
-		return err
+		return rewoundChunks, err
 	}
 	if rewoundChunks > 0 {
+		reason := "queued_tasks_abandoned"
+		if errors.Is(runErr, errScanOutputWrite) {
+			reason = "scan_output_write_failed"
+		} else if runErr != nil {
+			reason = "terminal_error"
+		}
 		logger.eventf("resume_state_rewound", "", 0, "resume_state_rewound", LogEventRuntimeErr, map[string]any{
-			"reason":           "scan_output_write_failed",
+			"reason":           reason,
 			"resume_path":      savePath,
 			"rewound_chunks":   rewoundChunks,
 			"duplicate_policy": "resuming can duplicate persisted rows, but it cannot skip an unwritten row",
 		})
 	}
 	logger.infof("resume state saved to %s", savePath)
-	return nil
+	return rewoundChunks, nil
 }

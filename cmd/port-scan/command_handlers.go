@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/cli"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
@@ -69,6 +70,15 @@ func handlePrePingCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func newScanInterruptContext(parent context.Context, stderr io.Writer, forceExit func(int)) (context.Context, context.CancelFunc) {
+	return state.WithInterruptEscalation(parent, func() {
+		fmt.Fprintln(stderr, "scan cancellation requested")
+		fmt.Fprintln(stderr, "graceful finalization is in progress")
+		fmt.Fprintln(stderr, "press Ctrl+C or Ctrl+Break again to force exit 130")
+		fmt.Fprintln(stderr, "the emergency exit does not save the current snapshot or finalize output files")
+	}, forceExit)
+}
+
 // handleGenerateBucketsCommand builds a resume bucket snapshot from the target
 // inputs (minus an optional unreachable blocklist) and writes it to -buckets-out.
 // It performs no network I/O. Exit codes: parse error (including missing
@@ -101,7 +111,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	ctx, cancel := state.WithSIGINTCancel(context.Background())
+	ctx, cancel := newScanInterruptContext(context.Background(), stderr, os.Exit)
 	defer cancel()
 
 	err = scanapp.Run(ctx, cfg, stdout, stderr, scanapp.RunOptions{})

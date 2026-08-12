@@ -104,6 +104,7 @@ var fileOps = defaultSnapshotFileOps()
 
 // SaveSnapshot writes resume state as the current JSON envelope.
 func SaveSnapshot(path string, snap Snapshot) error {
+	_, previousStatErr := os.Stat(path)
 	env := snapshotEnvelope{
 		Chunks:           &snap.Chunks,
 		RichDenyExcluded: snap.RichDenyExcluded,
@@ -126,7 +127,17 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	if err != nil {
 		return err
 	}
-	return writeFileViaTempRename(path, data, snapshotFileMode)
+	if err := writeFileViaTempRename(path, data, snapshotFileMode); err != nil {
+		switch {
+		case previousStatErr == nil:
+			return fmt.Errorf("save snapshot failed: previous snapshot remains usable: %w", err)
+		case os.IsNotExist(previousStatErr):
+			return fmt.Errorf("save snapshot failed: no previous snapshot is available: %w", err)
+		default:
+			return fmt.Errorf("save snapshot failed: previous snapshot usability is unknown: %w", err)
+		}
+	}
+	return nil
 }
 
 // snapshotFileMode is the permission the snapshot file ends up with, matching

@@ -133,21 +133,24 @@ runtime control without adding CLI flags.
 
 ### Stage 1: Input Loading (`input_loader.go`)
 
-`loadRunInputs(inputConfiguration, deps)` returns
+`loadRunInputsContext(ctx, inputConfiguration, deps)` returns
 `runInputs{cidrRecords, portSpecs}`. `inputConfiguration` is private and
 contains only paths, column names, and the missing-port rule.
 
-1. `readCIDRFile(cidrFile)` → `input.LoadCIDRsWithColumns()` — auto-detects basic or rich mode
-2. `readPortFile(portFile)` → `input.LoadPorts()` when a port file is present
+1. `readCIDRFileContext` calls `input.LoadCIDRsWithColumnsContext`.
+2. `readPortFileContext` calls `input.LoadPortsContext` when a port file is present.
 
 ### Stage 2: Plan Building (`runtime_builder.go`, `group_builder.go`, `chunk_lifecycle.go`)
 
 `scanRuntime.execute` loads the required bucket snapshot before it builds the
 runtime plan. The scan workflow does not build fresh chunks.
 
-`prepareRuntimePlan` rebuilds each incomplete snapshot chunk. Each
+`prepareRuntimePlanContext` rebuilds each incomplete snapshot chunk. Each
 `chunkRuntime` contains targets, a state tracker, and a leaky-bucket rate
 limiter. A completed chunk does not produce runtime work.
+
+The rebuild reads the context during record filters, expansion, grouping,
+deduplication, and target filters. Inner loops read it within 4,096 items.
 
 The snapshot can contain prior output paths. The runtime uses these paths in
 append mode. Otherwise, it creates new timestamped paths.
@@ -169,12 +172,17 @@ selected run error.
 
 ### Stage 4: Executor (`executor.go`)
 
-`startScanExecutor(workers, timeout, dial, taskCh)` creates a goroutine pool:
+`startCancellableScanExecutor(ctx, workers, timeout, dial, taskCh)` creates a
+goroutine pool. The context controls queued work but not a started dial.
 
 ```go
 for w := 0; w < workers; w++ {
     go func() {
         for task := range taskCh {
+            if canceled {
+                abandon(task)
+                continue
+            }
             r := scanner.ScanTCP(dial, task.ip, task.port, timeout)
             result := scanResult{chunkIdx: task.chunkIdx, record: ...}
             resultCh <- result
@@ -183,8 +191,11 @@ for w := 0; w < workers; w++ {
 }
 ```
 
-Workers share a bounded task channel. The executor closes its result and error
-channels after all workers stop. The runtime result loop serializes output.
+Workers share a bounded task channel. A worker does not start a probe after
+cancellation. It reports each abandoned task to the result loop.
+
+An in-flight probe finishes with its original timeout. The executor closes its
+result, error, and abandoned-task channels after all workers stop.
 
 ### Stage 5: Dispatch (`task_dispatcher.go`)
 
@@ -194,7 +205,7 @@ channels after all workers stop. The runtime result loop serializes output.
 - Acquires rate limit token from leaky bucket
 - Blocks on pause gate (`<-ctrl.Gate()`)
 - Creates `scanTask{chunkIdx, ipCidr, ip, port, meta}` and sends to task channel
-- Updates tracker and applies configured delay
+- Updates the tracker and waits for the cancellable configured delay
 
 The runtime starts dispatch in one goroutine. This goroutine closes the task
 channel after `dispatchTasks` returns.
@@ -209,14 +220,16 @@ cancellation.
 - `applyScanResult()` — updates runtime tracker and summary counters
 - `emitScanResultEvents()` — logs to stdout/logger at progress intervals
 
-A result is committed only after all required writes succeed. After an output
-error, the loop marks each later result as unwritten.
+A result is committed only after all required writes succeed. The loop writes
+late in-flight results after cancellation or a non-output runtime error.
+
+After an output error, the loop marks each later result as unwritten. It also
+marks every abandoned queued task as unwritten.
 
 ### Stage 7: Resume (`resume_manager.go`)
 
-`persistResumeSnapshot` rewinds each affected chunk after an output error. It
-then saves incomplete work, canceled work, or fatal work. A clean completed run
-does not save a snapshot.
+`persistResumeSnapshot` rewinds every chunk with unwritten work. It then saves
+incomplete, canceled, or fatal work. A clean completed run saves no snapshot.
 
 The configured `-resume` path is the only snapshot path. The runtime loads the
 snapshot from this path. It saves updated state to the same path when the run
@@ -225,6 +238,9 @@ does not finish cleanly.
 The runtime saves the snapshot before it selects the final error. A snapshot
 save error replaces a runtime error. A runtime error replaces a dispatcher
 error.
+
+The runtime logs `probe_drain_complete` and `snapshot_save_complete` separately.
+These events include in-flight, abandoned, rewind, and duration values.
 
 ### Stage 8: Finalize (`output_files.go`)
 

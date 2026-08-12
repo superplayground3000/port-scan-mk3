@@ -108,9 +108,16 @@ func countIncompleteChunks(chunks []task.Chunk) int {
 // Intentional, benign behavior change: a completed chunk whose CIDR was removed
 // from the CSV no longer errors, because completed chunks are never looked up.
 func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy, reachable func(string) bool, report chunkExpandReporter) ([]*chunkRuntime, error) {
+	return buildRuntimeWithPredicateContext(context.Background(), chunks, cidrRecords, defaultPorts, policy, reachable, report)
+}
+
+func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy, reachable func(string) bool, report chunkExpandReporter) ([]*chunkRuntime, error) {
 	incompleteKeys := make(map[string]struct{}, len(chunks))
 	allIncompleteHaveTotal := true
 	for i := range chunks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if chunkIsCompleted(&chunks[i]) {
 			continue
 		}
@@ -130,7 +137,11 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 	// build to reproduce ownership exactly.
 	records := cidrRecords
 	if len(incompleteKeys) > 0 && allIncompleteHaveTotal {
-		records = filterRecordsByChunkKey(cidrRecords, incompleteKeys)
+		var err error
+		records, err = filterRecordsByChunkKeyContext(ctx, cidrRecords, incompleteKeys)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Decide richMode on exactly the records the build consumes, so the group
 	// builder and the port-defaulting branch below agree on the mode.
@@ -142,9 +153,9 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 	)
 	if len(incompleteKeys) > 0 {
 		if richMode {
-			groups, err = buildRichGroupsWithPredicate(records, reachable)
+			groups, err = buildRichGroupsWithPredicateContext(ctx, records, reachable)
 		} else {
-			groups, err = buildCIDRGroupsWithPredicate(records, reachable)
+			groups, err = buildCIDRGroupsWithPredicateContext(ctx, records, reachable)
 		}
 		if err != nil {
 			return nil, err
@@ -153,6 +164,9 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 
 	runtimes := make([]*chunkRuntime, 0, len(chunks))
 	for i := range chunks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		ch := &chunks[i]
 		if chunkIsCompleted(ch) {
 			// Lightweight runtime: no expansion, no leaky-bucket goroutine. Match
@@ -187,7 +201,7 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 			}
 			ch.Ports = append(ch.Ports, portRows...)
 		}
-		ports, err := parsePortRows(portRows)
+		ports, err := parsePortRowsContext(ctx, portRows)
 		if err != nil {
 			return nil, err
 		}
@@ -240,11 +254,21 @@ func chunkIsCompleted(ch *task.Chunk) bool {
 // keyable segment/CIDR cannot belong to any chunk (chunk keys are always valid
 // CIDR strings), so it is skipped rather than erroring.
 func filterRecordsByChunkKey(records []input.CIDRRecord, keys map[string]struct{}) []input.CIDRRecord {
+	out, _ := filterRecordsByChunkKeyContext(context.Background(), records, keys)
+	return out
+}
+
+func filterRecordsByChunkKeyContext(ctx context.Context, records []input.CIDRRecord, keys map[string]struct{}) ([]input.CIDRRecord, error) {
 	if len(keys) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]input.CIDRRecord, 0, len(records))
-	for _, rec := range records {
+	for i, rec := range records {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		// Deny rows apply to execution keys across group keys. Keep them so an
 		// incomplete chunk cannot regain work that another group denies.
 		if richRecordDenied(rec) {
@@ -259,7 +283,7 @@ func filterRecordsByChunkKey(records []input.CIDRRecord, keys map[string]struct{
 			out = append(out, rec)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // chunkKeyForRecord returns the group key a record contributes to: the rich

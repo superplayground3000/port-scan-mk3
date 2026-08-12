@@ -1,12 +1,66 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
 )
+
+type scanExecutorTelemetry struct {
+	mu             sync.Mutex
+	stopping       bool
+	inFlight       int
+	inFlightAtStop int
+	abandoned      int
+	stopStartedAt  time.Time
+}
+
+func (t *scanExecutorTelemetry) markStopping() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopping {
+		return
+	}
+	t.stopping = true
+	t.inFlightAtStop = t.inFlight
+	t.stopStartedAt = time.Now()
+}
+
+func (t *scanExecutorTelemetry) startProbe(ctx context.Context) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopping || ctx.Err() != nil {
+		return false
+	}
+	t.inFlight++
+	return true
+}
+
+func (t *scanExecutorTelemetry) finishProbe(ctx context.Context) {
+	t.mu.Lock()
+	if !t.stopping && ctx.Err() != nil {
+		t.stopping = true
+		t.inFlightAtStop = t.inFlight
+		t.stopStartedAt = time.Now()
+	}
+	t.inFlight--
+	t.mu.Unlock()
+}
+
+func (t *scanExecutorTelemetry) abandon() {
+	t.mu.Lock()
+	t.abandoned++
+	t.mu.Unlock()
+}
+
+func (t *scanExecutorTelemetry) snapshot() (int, int, time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.inFlightAtStop, t.abandoned, t.stopStartedAt
+}
 
 // startScanExecutor launches worker goroutines that consume scanTask items from taskCh,
 // execute TCP scans, and emit structured log events for each result.
@@ -24,7 +78,21 @@ import (
 //   - resultCh: closed when all workers finish scanning.
 //   - errCh: receives a fatal executor error (for example, recovered worker panic).
 func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger *scanLogger, taskCh <-chan scanTask) (<-chan scanResult, <-chan error) {
+	resultCh, errCh, _, _ := startCancellableScanExecutor(context.Background(), workers, timeout, dial, logger, taskCh)
+	return resultCh, errCh
+}
+
+func startCancellableScanExecutor(ctx context.Context, workers int, timeout time.Duration, dial DialFunc, logger *scanLogger, taskCh <-chan scanTask) (<-chan scanResult, <-chan error, <-chan scanTask, *scanExecutorTelemetry) {
+	executorCtx, stopExecutor := context.WithCancel(ctx)
 	resultCh := make(chan scanResult, queueCapacityFor(workers))
+	abandonedCh := make(chan scanTask, queueCapacityFor(workers))
+	telemetry := &scanExecutorTelemetry{}
+	if ctx.Done() != nil {
+		go func() {
+			<-ctx.Done()
+			telemetry.markStopping()
+		}()
+	}
 	workers = effectiveWorkerCount(workers)
 	errCh := make(chan error, 1)
 
@@ -36,6 +104,8 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 		}
 		errOnce.Do(func() {
 			logger.errorf("%v", err)
+			telemetry.markStopping()
+			stopExecutor()
 			errCh <- err
 			close(errCh)
 		})
@@ -65,13 +135,50 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 		workerWG.Add(1)
 		go func() {
 			defer workerWG.Done()
+			var activeTask scanTask
+			active := false
 			defer func() {
 				if r := recover(); r != nil {
+					if active {
+						telemetry.finishProbe(executorCtx)
+						telemetry.abandon()
+						abandonedCh <- activeTask
+					}
 					reportFatal(fmt.Errorf("executor worker panic: %v", r))
+					for abandoned := range taskCh {
+						telemetry.abandon()
+						abandonedCh <- abandoned
+					}
 				}
 			}()
-			for t := range taskCh {
+			for {
+				var (
+					t  scanTask
+					ok bool
+				)
+				select {
+				case <-executorCtx.Done():
+					telemetry.markStopping()
+					for abandoned := range taskCh {
+						telemetry.abandon()
+						abandonedCh <- abandoned
+					}
+					return
+				case t, ok = <-taskCh:
+					if !ok {
+						return
+					}
+				}
+				if !telemetry.startProbe(executorCtx) {
+					telemetry.abandon()
+					abandonedCh <- t
+					continue
+				}
+				activeTask = t
+				active = true
 				res := scanner.ScanTCP(dial, t.ip, t.port, timeout)
+				telemetry.finishProbe(executorCtx)
+				active = false
 				state := LogEventScanned
 				errCause := LogEventNone
 				if res.Error != "" {
@@ -95,11 +202,13 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 
 	go func() {
 		workerWG.Wait()
+		stopExecutor()
 		close(resultCh)
+		close(abandonedCh)
 		errOnce.Do(func() {
 			close(errCh)
 		})
 	}()
 
-	return resultCh, errCh
+	return resultCh, errCh, abandonedCh, telemetry
 }

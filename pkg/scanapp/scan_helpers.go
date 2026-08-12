@@ -1,6 +1,7 @@
 package scanapp
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -50,8 +51,15 @@ func ipv4ToUint32(ip string) uint32 {
 }
 
 func parsePortRows(rows []string) ([]int, error) {
+	return parsePortRowsContext(context.Background(), rows)
+}
+
+func parsePortRowsContext(ctx context.Context, rows []string) ([]int, error) {
 	ports := make([]int, 0, len(rows))
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		parts := strings.Split(strings.TrimSpace(row), "/")
 		if len(parts) != 2 || strings.ToLower(parts[1]) != "tcp" {
 			return nil, fmt.Errorf("invalid chunk port row: %s", row)

@@ -60,7 +60,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		return err
 	}
 
-	inputs, err := loadRunInputs(inputConfiguration{
+	inputs, err := loadRunInputsContext(ctx, inputConfiguration{
 		cidrFile:         cfg.CIDRFile,
 		cidrIPCol:        cfg.CIDRIPCol,
 		cidrIPCidrCol:    cfg.CIDRIPCidrCol,
@@ -144,7 +144,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		parseReporter = bucketProgress.Inc
 	}
 
-	plan, err := prepareRuntimePlan(runtimePolicy{
+	plan, err := prepareRuntimePlanContext(ctx, runtimePolicy{
 		bucketRate:     cfg.BucketRate,
 		bucketCapacity: cfg.BucketCapacity,
 	}, inputs, reachable, snapshot.Chunks, parseReporter)
@@ -220,7 +220,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	}
 
 	taskCh := make(chan scanTask, queueSize)
-	resultCh, executorErrCh := startScanExecutor(workers, cfg.DialTimeout, r.adapters.dial, logger, taskCh)
+	resultCh, executorErrCh, abandonedCh, executorTelemetry := startCancellableScanExecutor(runCtx, workers, cfg.DialTimeout, r.adapters.dial, logger, taskCh)
 
 	dispatchPolicy := dispatchPolicy{delay: cfg.DispatchDelay, observer: noopDispatchObserver{}}
 	if dashboardState != nil {
@@ -246,6 +246,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		executorErrCh: executorErrCh,
 		dispatchErrCh: dispatchErrCh,
 		resultCh:      resultCh,
+		abandonedCh:   abandonedCh,
 	}, resultLoopDeps{
 		outputs:        outputs,
 		runtimes:       plan.runtimes,
@@ -256,6 +257,13 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		progressStep:   progressStep,
 		quiet:          cfg.Quiet,
 	})
+	if inFlight, abandoned, stopStarted := executorTelemetry.snapshot(); !stopStarted.IsZero() {
+		logger.eventf("probe_drain_complete", "", 0, "probe_drain_complete", LogEventNone, map[string]any{
+			"duration_ms":            time.Since(stopStarted).Milliseconds(),
+			"in_flight_probes":       inFlight,
+			"abandoned_queued_tasks": abandoned,
+		})
+	}
 
 	for _, rt := range plan.runtimes {
 		if rt.bkt != nil {
@@ -265,9 +273,15 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
-	if err := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, dispatchErr, runErr); err != nil {
-		emitCompletionSummary(logger, summary, startedAt, err)
-		return err
+	snapshotStartedAt := time.Now()
+	rewoundChunks, snapshotErr := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, dispatchErr, runErr)
+	logger.eventf("snapshot_save_complete", "", 0, "snapshot_save_complete", errorCause(snapshotErr), map[string]any{
+		"duration_ms":    time.Since(snapshotStartedAt).Milliseconds(),
+		"rewound_chunks": rewoundChunks,
+	})
+	if snapshotErr != nil {
+		emitCompletionSummary(logger, summary, startedAt, snapshotErr)
+		return snapshotErr
 	}
 
 	if runErr != nil {

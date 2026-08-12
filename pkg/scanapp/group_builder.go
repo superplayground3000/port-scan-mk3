@@ -1,6 +1,7 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sort"
@@ -98,6 +99,10 @@ func (s basicGroupStrategy) MergeGroup(existing cidrGroup, rec input.CIDRRecord)
 func (basicGroupStrategy) RequireNonEmpty() bool { return false }
 
 func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
+	return (basicGroupStrategy{}).targetsContext(context.Background(), rec)
+}
+
+func (basicGroupStrategy) targetsContext(ctx context.Context, rec input.CIDRRecord) ([]scanTarget, error) {
 	cidr := rec.CIDR
 	if cidr == "" && rec.Net != nil {
 		cidr = rec.Net.String()
@@ -115,7 +120,7 @@ func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
 		return nil, fmt.Errorf("record for cidr %s missing selector", cidr)
 	}
 
-	ips, err := task.ExpandIPSelectors([]string{selector})
+	ips, err := task.ExpandIPSelectorsContext(ctx, []string{selector})
 	if err != nil {
 		return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
 	}
@@ -125,7 +130,12 @@ func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
 	ips = task.FilterBoundaryBroadcast(ips, rec.Net)
 
 	targets := make([]scanTarget, 0, len(ips))
-	for _, ip := range ips {
+	for i, ip := range ips {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		targets = append(targets, scanTarget{
 			ip:     ip,
 			ipCidr: cidr,
@@ -206,19 +216,31 @@ func buildCIDRGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, erro
 }
 
 func buildCIDRGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
+	return buildCIDRGroupsWithPredicateContext(context.Background(), cidrRecords, reachable)
+}
+
+func buildCIDRGroupsWithPredicateContext(ctx context.Context, cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
 	strategy := basicGroupStrategy{}
 	predicate := normalizeReachablePredicate(reachable)
 	out := make(map[string]cidrGroup)
-	for _, rec := range cidrRecords {
+	for i, rec := range cidrRecords {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		key, err := strategy.Key(rec)
 		if err != nil {
 			return nil, err
 		}
-		targets, err := strategy.targets(rec)
+		targets, err := strategy.targetsContext(ctx, rec)
 		if err != nil {
 			return nil, err
 		}
-		targets = filterScanTargets(targets, predicate)
+		targets, err = filterScanTargetsContext(ctx, targets, predicate)
+		if err != nil {
+			return nil, err
+		}
 		if len(targets) == 0 {
 			continue
 		}
@@ -242,13 +264,22 @@ func buildRichGroups(cidrRecords []input.CIDRRecord) (map[string]cidrGroup, erro
 }
 
 func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
+	return buildRichGroupsWithPredicateContext(context.Background(), cidrRecords, reachable)
+}
+
+func buildRichGroupsWithPredicateContext(ctx context.Context, cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
 	predicate := normalizeReachablePredicate(reachable)
 	deniedKeys := deniedRichExecutionKeys(cidrRecords)
 	builders := make(map[string]*richGroupBuilder)
 	ownerByExecutionKey := make(map[string]string)
 	hasValidRichInput := false
 
-	for _, rec := range cidrRecords {
+	for recordIndex, rec := range cidrRecords {
+		if recordIndex%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if !rec.IsRich || !rec.IsValid {
 			continue
 		}
@@ -260,17 +291,25 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 		if err != nil {
 			return nil, err
 		}
-		targets, err := richTargetsFromRecord(rec)
+		targets, err := richTargetsFromRecordContext(ctx, rec)
 		if err != nil {
 			return nil, err
 		}
 		targets = filterAuthorizedRichTargets(targets, deniedKeys)
-		targets = filterScanTargets(targets, predicate)
+		targets, err = filterScanTargetsContext(ctx, targets, predicate)
+		if err != nil {
+			return nil, err
+		}
 		if len(targets) == 0 {
 			continue
 		}
 
-		for _, target := range targets {
+		for targetIndex, target := range targets {
+			if targetIndex%4096 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			// Normalize the execution key once, here at ingest, instead of on
 			// every intra-group comparison (design.md §3.1).
 			key := strings.TrimSpace(target.meta.executionKey)
@@ -304,8 +343,15 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 	}
 
 	groups := make(map[string]cidrGroup, len(builders))
+	groupIndex := 0
 	for cidr, b := range builders {
+		if groupIndex%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		groups[cidr] = cidrGroup{targets: b.targets}
+		groupIndex++
 	}
 	sortRichGroups(groups)
 	return groups, nil
@@ -387,6 +433,10 @@ func richCIDRKey(rec input.CIDRRecord) (string, error) {
 }
 
 func richTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
+	return richTargetsFromRecordContext(context.Background(), rec)
+}
+
+func richTargetsFromRecordContext(ctx context.Context, rec input.CIDRRecord) ([]scanTarget, error) {
 	key := strings.TrimSpace(rec.ExecutionKey)
 	if key == "" {
 		return nil, fmt.Errorf("rich record missing execution_key at row %d", rec.RowNumber)
@@ -395,7 +445,7 @@ func richTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-	ips, err := richTargetIPs(rec)
+	ips, err := richTargetIPsContext(ctx, rec)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +455,12 @@ func richTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
 		ips = task.FilterBoundaryBroadcast(ips, seg)
 	}
 	targets := make([]scanTarget, 0, len(ips))
-	for _, ip := range ips {
+	for i, ip := range ips {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		executionKey := key
 		if strings.TrimSpace(ip) != strings.TrimSpace(rec.DstIP) {
 			executionKey, err = task.BuildExecutionKey(ip, rec.Port, richProtocol(rec))
@@ -440,6 +495,10 @@ const (
 )
 
 func richTargetIPs(rec input.CIDRRecord) ([]string, error) {
+	return richTargetIPsContext(context.Background(), rec)
+}
+
+func richTargetIPsContext(ctx context.Context, rec input.CIDRRecord) ([]string, error) {
 	reason := strings.TrimSpace(rec.Reason)
 	switch {
 	case strings.EqualFold(reason, reasonPrecheckAllowAll):
@@ -447,7 +506,7 @@ func richTargetIPs(rec input.CIDRRecord) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		ips, err := task.ExpandIPSelectors([]string{cidr})
+		ips, err := task.ExpandIPSelectorsContext(ctx, []string{cidr})
 		if err != nil {
 			return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
 		}
@@ -533,13 +592,23 @@ func normalizeReachablePredicate(reachable func(string) bool) func(string) bool 
 }
 
 func filterScanTargets(targets []scanTarget, reachable func(string) bool) []scanTarget {
+	filtered, _ := filterScanTargetsContext(context.Background(), targets, reachable)
+	return filtered
+}
+
+func filterScanTargetsContext(ctx context.Context, targets []scanTarget, reachable func(string) bool) ([]scanTarget, error) {
 	filtered := make([]scanTarget, 0, len(targets))
-	for _, target := range targets {
+	for i, target := range targets {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if reachable(target.ip) {
 			filtered = append(filtered, target)
 		}
 	}
-	return filtered
+	return filtered, nil
 }
 
 func sortRichGroups(groups map[string]cidrGroup) {

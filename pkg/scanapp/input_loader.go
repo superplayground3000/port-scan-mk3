@@ -1,6 +1,7 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -21,7 +22,25 @@ type inputConfiguration struct {
 }
 
 func loadRunInputs(cfg inputConfiguration, deps runDependencies) (runInputs, error) {
-	cidrRecords, err := deps.loadCIDRRecords(cfg.cidrFile, cfg.cidrIPCol, cfg.cidrIPCidrCol)
+	return loadRunInputsContext(context.Background(), cfg, deps)
+}
+
+func loadRunInputsContext(ctx context.Context, cfg inputConfiguration, deps runDependencies) (runInputs, error) {
+	var (
+		cidrRecords []input.CIDRRecord
+		err         error
+	)
+	if deps.loadCIDRRecordsContext != nil {
+		cidrRecords, err = deps.loadCIDRRecordsContext(ctx, cfg.cidrFile, cfg.cidrIPCol, cfg.cidrIPCidrCol)
+	} else {
+		if err := ctx.Err(); err != nil {
+			return runInputs{}, err
+		}
+		cidrRecords, err = deps.loadCIDRRecords(cfg.cidrFile, cfg.cidrIPCol, cfg.cidrIPCidrCol)
+		if err == nil {
+			err = ctx.Err()
+		}
+	}
 	if err != nil {
 		return runInputs{}, err
 	}
@@ -37,7 +56,18 @@ func loadRunInputs(cfg inputConfiguration, deps runDependencies) (runInputs, err
 		}
 		return runInputs{}, fmt.Errorf("-port-file is required when cidr input is not rich mode")
 	}
-	portSpecs, err := deps.loadPortSpecs(cfg.portFile)
+	var portSpecs []input.PortSpec
+	if deps.loadPortSpecsContext != nil {
+		portSpecs, err = deps.loadPortSpecsContext(ctx, cfg.portFile)
+	} else {
+		if err := ctx.Err(); err != nil {
+			return runInputs{}, err
+		}
+		portSpecs, err = deps.loadPortSpecs(cfg.portFile)
+		if err == nil {
+			err = ctx.Err()
+		}
+	}
 	if err != nil {
 		return runInputs{}, err
 	}
@@ -60,19 +90,27 @@ func loadPrePingInputs(cidrFile, cidrIPCol, cidrIPCidrCol string, deps runDepend
 }
 
 func readCIDRFile(path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error) {
+	return readCIDRFileContext(context.Background(), path, ipCol, ipCidrCol)
+}
+
+func readCIDRFileContext(ctx context.Context, path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return input.LoadCIDRsWithColumns(f, ipCol, ipCidrCol)
+	return input.LoadCIDRsWithColumnsContext(ctx, f, ipCol, ipCidrCol)
 }
 
 func readPortFile(path string) ([]input.PortSpec, error) {
+	return readPortFileContext(context.Background(), path)
+}
+
+func readPortFileContext(ctx context.Context, path string) ([]input.PortSpec, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return input.LoadPorts(f)
+	return input.LoadPortsContext(ctx, f)
 }
