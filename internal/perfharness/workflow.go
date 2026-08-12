@@ -33,11 +33,13 @@ type WorkflowSpec struct {
 
 // WorkflowResult records correctness data from the production workflow.
 type WorkflowResult struct {
-	ProbeCount        uint64             `json:"probe_count"`
-	ReachabilityCount uint64             `json:"reachability_count"`
-	PrePingCompleted  bool               `json:"pre_ping_completed"`
-	ScanRows          uint64             `json:"scan_rows"`
-	OpenRows          uint64             `json:"open_rows"`
+	ProbeCount        uint64 `json:"probe_count"`
+	ReachabilityCount uint64 `json:"reachability_count"`
+	PrePingCompleted  bool   `json:"pre_ping_completed"`
+	ScanRows          uint64 `json:"scan_rows"`
+	OpenRows          uint64 `json:"open_rows"`
+	// SnapshotCompleted means the production run completed all remaining work.
+	// It does not mean that the successful run rewrote the input snapshot file.
 	SnapshotCompleted bool               `json:"snapshot_completed"`
 	ScanDigest        string             `json:"scan_digest"`
 	OpenDigest        string             `json:"open_digest"`
@@ -174,7 +176,12 @@ func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResul
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	return workflowResultFromFiles(probes.Load(), 0, true, Observation{}, stage, scanPath, openPath, taskEvidence)
+	result, err := workflowResultFromFiles(probes.Load(), 0, true, Observation{}, stage, scanPath, openPath, taskEvidence)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	result.Semantic.Cursor = uint64(completed) + result.ScanRows
+	return result, nil
 }
 
 // RunProductionSmoke runs production parsing, bucket, resume, scan, and writer paths.

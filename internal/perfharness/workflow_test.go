@@ -142,6 +142,12 @@ func TestRunResumeSmokeRebuildsRemainingProductionWork(t *testing.T) {
 		if result.ProbeCount != wantRemaining || result.ScanRows != wantRemaining || result.OpenRows != wantRemaining {
 			t.Fatalf("percent=%d result=%+v, want remaining=%d", percent, result, wantRemaining)
 		}
+		if result.Semantic.TaskCount != wantRemaining || result.Semantic.Cursor != 100 {
+			t.Fatalf("percent=%d semantic=%+v, want task count=%d and final cursor=100", percent, result.Semantic, wantRemaining)
+		}
+		if !result.SnapshotCompleted {
+			t.Fatalf("percent=%d did not report a completed production run", percent)
+		}
 	}
 }
 
