@@ -1270,6 +1270,11 @@ FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
 The adapters now sample current native values. The case sampler calculates
 the peak inside each case.
 
+The second full run showed one more source of cross-case contamination.
+The Go runtime retained unused heap pages after large cases. The measurement
+boundary now releases unused pages before it reads the baseline. This work
+occurs before the case timer starts.
+
 Focused green commands and result:
 
 ```text

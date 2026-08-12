@@ -3,6 +3,7 @@ package perfharness
 import (
 	"context"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,9 @@ func measure(ctx context.Context, inputBytes, units uint64, action MeasuredActio
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err
 	}
+	// Release unused pages before the case starts. This isolates process peaks.
+	runtime.GC()
+	debug.FreeOSMemory()
 	processBefore, err := sampler()
 	if err != nil {
 		return Observation{}, err
