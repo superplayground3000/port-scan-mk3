@@ -65,6 +65,10 @@ The accepted cases run pre-ping, snapshot generation, resume, scan, and both wri
 The matrix executes resume cases at 0%, 50%, and 99% completion.
 It also executes snapshot-save and pressure fatal failures.
 
+The matrix executes six cases for each target expansion limit.
+These cases cover the exact default, default plus one, a positive override,
+`0`, a negative value, and overflow. The estimator does not allocate targets.
+
 The production fake-probe cases use 1, 16, and 256 workers.
 The native loopback cases use 1 and 32 workers.
 All network activity in these cases stays in `127.0.0.0/8`.

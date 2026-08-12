@@ -129,7 +129,7 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 35 {
+	if len(report.Cases) != 47 {
 		t.Fatalf("case count = %d, want fixture, fake-worker, rich-deny, cancellation, CRLF, and loopback-worker cases", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
@@ -144,7 +144,14 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	resumeCases := 0
 	failureCases := 0
 	richAcceptedCases := 0
+	targetLimitCases := 0
 	for _, result := range report.Cases {
+		if strings.HasPrefix(result.Name, "limit/target-") {
+			targetLimitCases++
+			if !result.Verdict.Passed || !result.Correctness.ExpectedValues {
+				t.Fatalf("target limit case failed: %+v", result)
+			}
+		}
 		if strings.HasPrefix(result.Name, "production-rich/") {
 			richAcceptedCases++
 			if !result.Verdict.Passed {
@@ -210,6 +217,9 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	}
 	if richAcceptedCases != 4 {
 		t.Fatalf("accepted rich case count = %d, want 4", richAcceptedCases)
+	}
+	if targetLimitCases != 12 {
+		t.Fatalf("target limit case count = %d, want 12", targetLimitCases)
 	}
 }
 

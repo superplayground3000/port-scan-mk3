@@ -1284,3 +1284,28 @@ ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.017s
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOTOOLCHAIN=go1.24.4 go test -c ./internal/perfharness -o /tmp/perfharness-706f295.test.exe
 exit 0
 ```
+
+### Executed target expansion limit matrix
+
+Red commands and reasons:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunTargetLimitCaseExecutesEveryRequiredBypassKind -count=1
+harness.RunTargetLimitCase undefined
+undefined: perfharness.TargetLimitSpec
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandWritesSmokeReports -count=1 -timeout=60s
+case count = 35, want fixture, fake-worker, rich-deny, cancellation, CRLF, and loopback-worker cases
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness
+```
+
+Green commands and results:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./internal/perfharness -run TestRunTargetLimitCaseExecutesEveryRequiredBypassKind -count=1
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.059s
+
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandWritesSmokeReports -count=1 -timeout=60s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 17.026s
+```

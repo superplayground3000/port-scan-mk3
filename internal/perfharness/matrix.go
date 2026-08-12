@@ -26,6 +26,7 @@ type Harness interface {
 	RunResumeSmoke(context.Context, ResumeSpec) (WorkflowResult, error)
 	RunFailureSmoke(context.Context, FailureSpec) (FailureResult, error)
 	RunRichSmoke(context.Context, RichSpec) (WorkflowResult, error)
+	RunTargetLimitCase(context.Context, TargetLimitSpec) (CaseResult, error)
 	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
 }

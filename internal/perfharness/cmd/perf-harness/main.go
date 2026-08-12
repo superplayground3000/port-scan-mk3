@@ -133,6 +133,28 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	for _, limits := range contract.Limits {
+		if limits.Flag != "-target-count-limit" && limits.Flag != "-target-memory-limit-gb" {
+			continue
+		}
+		for _, bypass := range limits.Cases {
+			result, err := harness.RunTargetLimitCase(context.Background(), perfharness.TargetLimitSpec{
+				OutputDir: filepath.Join(casesDir, "limit-"+strings.TrimPrefix(limits.Flag, "-")+"-"+string(bypass.Kind)),
+				Flag:      limits.Flag,
+				Case:      bypass,
+			})
+			if err != nil {
+				if writeErr := writeStatus(stderr, "run limit %s %s: %v\n", limits.Flag, bypass.Kind, err); writeErr != nil {
+					return 1
+				}
+				return 1
+			}
+			results = append(results, result)
+			if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+				return 1
+			}
+		}
+	}
 
 	workflowItems := smokeItems
 	for _, workers := range contract.FakeWorkers {
