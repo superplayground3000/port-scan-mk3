@@ -27,7 +27,7 @@ A dirty diagnostic smoke run completed in `1:16.88` with exit code `0`.
 The report metadata names base commit `0ec8bd5`, but the worktree contained changes.
 Therefore this run is diagnostic evidence only.
 
-The separate 100 MB results were:
+The first separate 100 MB diagnostic results were:
 
 | Operation | Median time | Allocated bytes | Peak heap | Committed memory |
 | --- | ---: | ---: | ---: | ---: |
@@ -41,8 +41,8 @@ The 10 MB to 100 MB growth ratios were:
 | Load | `10.3746x` | `9.6317x` |
 | Save | `11.8922x` | `8.6114x` |
 
-All ratios are within the `12.5x` time limit and `11x` allocation limit.
-The evidence did not justify a production snapshot change before the exact 1 GB run.
+These early ratios passed. The later complete matrix found failures at other scales.
+The final implementation and results are in the sections below.
 
 ## CIDR loader RED and GREEN
 
@@ -78,3 +78,110 @@ The six-run before and after benchmark medians were:
 
 No benchmark metric regressed by more than 10 percent.
 Raw benchmarks and memory profiles are in `/media/hp/secondary/issue151-profiles/`.
+
+## Final CIDR results
+
+The final CIDR loader uses a compact table for duplicate detection.
+The table stores an 8-byte hash and row index in each slot.
+It compares the complete semantic key after a hash match.
+Therefore, a hash collision cannot hide a duplicate.
+
+The 100,000-row heap test has a 70,000,000-byte limit.
+Three final runs used `69,328,896`, `69,337,088`, and `69,337,088` bytes.
+An earlier test increase to 75,000,000 bytes was invalid and was reverted.
+
+The 1,000,000-row benchmark changed as follows:
+
+| Metric | Before | Final | Change |
+| --- | ---: | ---: | ---: |
+| Median time | `1.0197s` | `0.6619s` | `-35.1%` |
+| Allocated bytes | `1,043,963,648` | `792,794,000` | `-24.1%` |
+| Allocations | `24,004,344` | `12,000,100` | `-50.0%` |
+
+An index-sort prototype took `2.616s` and was rejected.
+The raw rejected result is `cidr-100mb-index-sort.txt` in the profile directory.
+
+## Final snapshot load and save results
+
+The loader reads a regular file into one exact-size byte slice.
+It rejects a file that grows or shrinks after the size check.
+It also preallocates only the unreachable-IP slice from a safe size hint.
+
+The schema scan rejects unknown object fields before `json.Unmarshal`.
+The standard decoder still controls JSON syntax, numbers, null values, and duplicate fields.
+
+The saver writes indented JSON through a 256 KB buffer.
+It streams the large arrays and preserves the old `json.MarshalIndent` bytes.
+The size limiter stops after `limit + 1` bytes.
+A zero size limit disables this limit.
+
+The final allocation results were:
+
+| Operation | 1 MB | 10 MB | 100 MB | 1 GB |
+| --- | ---: | ---: | ---: | ---: |
+| Load | `1,681,368` | `16,672,968` | `166,684,776` | `1,666,680,936` |
+| Save | `270,752` | `270,752` | `270,848` | `270,848` |
+
+The load growth ratios were `9.916x`, `9.998x`, and `9.998x`.
+The save allocation did not grow with the serialized data size.
+
+Two snapshot prototypes were rejected:
+
+- Per-value `json.Decoder` was too slow.
+- `json.RawMessage` batching used `251.3ms` and `145.9MB` at 10 MB.
+
+## Final Linux matrix
+
+The final report uses commit `d800a3fdb34ee19bade8259abe2e100f2e01c456`.
+It is hardware-qualified evidence, not minimum-profile certification.
+
+The host had these properties:
+
+- Linux AMD64 and Go `1.24.4`.
+- AMD RYZEN AI MAX+ 395 CPU, with 16 physical and 32 logical cores.
+- `131,891,437,568` bytes of RAM.
+- WD_BLACK SN7100 2TB storage.
+- The recorded power mode was `powersave`.
+
+The matrix completed 152 cases and 900 measured runs.
+All 152 verdicts passed.
+The wall time was `23:12.12`.
+The process maximum RSS was `18,347,828` KB.
+It recorded 8 major page faults, 67,142,513 minor page faults, and no swaps.
+
+Important results were:
+
+| Case | Steady time | Steady committed memory | Contract |
+| --- | ---: | ---: | ---: |
+| CIDR 1 GB | `7.909s` | `7,222,046,720` | `< 300s`, `< 8GB` |
+| Snapshot load 1 GB | `8.150s` | `1,794,101,248` | `< 120s`, `< 6GB` |
+| Snapshot save 1 GB | `1.690s` | `502,669,312` | `< 120s`, `< 6GB` |
+
+The 10-million-result output case without periodic flushes reached `555.82 MB/s`.
+The slowest cancellation observation stopped in `218,736,808ns`.
+The contract limit is `1,000,000,000ns`.
+
+All 152 cases recorded expected-value correctness.
+Seventy-eight cases recorded deterministic digest correctness.
+Eighty-six cases included a semantic artifact for report comparison.
+
+The final artifacts are:
+
+- `/media/hp/secondary/issue151-performance-d800a3f/report/performance-report.json`
+- `/media/hp/secondary/issue151-performance-d800a3f/report/performance-report.md`
+- `/media/hp/secondary/issue151-performance-d800a3f/matrix-os-metrics.txt`
+
+## Quality gates and Windows status
+
+`GOTOOLCHAIN=go1.24.4 make verify` passed at the final production commit.
+The coverage gate reported `85.0%`.
+
+`COMPOSE_PROJECT_NAME=issue151_scale_d800a3f make verify-e2e` passed.
+It removed all Docker resources after the test.
+
+The Windows cross-build passed for all five commands.
+All Windows test packages also compiled with `CGO_ENABLED=0 GOOS=windows GOARCH=amd64`.
+A synthetic Windows copy of the Linux report passed the report comparison.
+This comparison validates the comparison path only. It is not Native Windows evidence.
+
+The complete Native Windows matrix is still pending in issue 99.
