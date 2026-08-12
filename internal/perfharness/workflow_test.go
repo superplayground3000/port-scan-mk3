@@ -191,6 +191,56 @@ func TestRunFailureSmokeSeparatesPreparationAndStageEvidence(t *testing.T) {
 	}
 }
 
+func TestRunFailureSmokeRecoversEveryTaskAfterARealOutputWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	const items = 20
+	result, err := perfharness.New().RunFailureSmoke(context.Background(), perfharness.FailureSpec{
+		OutputDir: filepath.Join(t.TempDir(), "output write failure"),
+		Items:     items,
+		Workers:   4,
+		Scenario:  "output-failure",
+	})
+	if err != nil {
+		t.Fatalf("RunFailureSmoke: %v", err)
+	}
+	if result.Operation != "output-write" || result.ErrorClass != "output" || result.Output == nil {
+		t.Fatalf("output failure identity = %+v", result)
+	}
+	evidence := result.Output
+	if evidence.FailureAtResult == 0 || evidence.RewoundChunks == 0 || evidence.ProbeStartsAfterFailure != 0 || !evidence.HandlesReleased {
+		t.Fatalf("output failure evidence = %+v", evidence)
+	}
+	if evidence.SavedCursor+evidence.Remaining != items || !evidence.RecoveryCompleted ||
+		evidence.RecoveryTaskCount != evidence.Remaining || evidence.RecoveryTaskDigest == "" ||
+		evidence.RecoveryTaskDigest != evidence.ReferenceTaskDigest ||
+		evidence.FinalScanRows != evidence.RowsBeforeRecovery+evidence.Remaining ||
+		evidence.FinalOpenRows != evidence.OpenRowsBeforeRecovery+evidence.Remaining || evidence.FinalCursor != items {
+		t.Fatalf("output recovery evidence = %+v", evidence)
+	}
+}
+
+func TestFailureResultCorrectRequiresOutputRecoveryProof(t *testing.T) {
+	t.Parallel()
+
+	result := perfharness.FailureResult{
+		Scenario: "output-failure", Observed: true, ErrorText: "failure",
+		ErrorClass: "output", Operation: "output-write", TotalItems: 10,
+	}
+	if result.Correct() {
+		t.Fatal("FailureResult.Correct accepted missing output recovery evidence")
+	}
+	result.Output = &perfharness.FailureOutputEvidence{
+		FailureAtResult: 5, RewoundChunks: 1, HandlesReleased: true,
+		SavedCursor: 4, Remaining: 6, RowsBeforeRecovery: 4, OpenRowsBeforeRecovery: 4,
+		RecoveryCompleted: true, RecoveryTaskCount: 6, RecoveryTaskDigest: "same",
+		ReferenceTaskDigest: "same", FinalScanRows: 10, FinalOpenRows: 10, FinalCursor: 10,
+	}
+	if !result.Correct() {
+		t.Fatalf("FailureResult.Correct rejected complete output evidence: %+v", result)
+	}
+}
+
 func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
 	t.Parallel()
 

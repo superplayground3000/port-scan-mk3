@@ -8,12 +8,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
+	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 // FailureSpec defines one bounded production failure run.
@@ -26,20 +29,66 @@ type FailureSpec struct {
 
 // FailureResult records an expected production failure.
 type FailureResult struct {
-	Scenario         string      `json:"scenario"`
-	Observed         bool        `json:"observed"`
-	ErrorText        string      `json:"error_text"`
-	ErrorClass       string      `json:"error_class"`
-	Operation        string      `json:"operation"`
-	TotalItems       uint64      `json:"total_items"`
-	Preparation      Observation `json:"preparation"`
-	StageObservation Observation `json:"stage_observation"`
+	Scenario         string                 `json:"scenario"`
+	Observed         bool                   `json:"observed"`
+	ErrorText        string                 `json:"error_text"`
+	ErrorClass       string                 `json:"error_class"`
+	Operation        string                 `json:"operation"`
+	TotalItems       uint64                 `json:"total_items"`
+	Preparation      Observation            `json:"preparation"`
+	StageObservation Observation            `json:"stage_observation"`
+	Output           *FailureOutputEvidence `json:"output,omitempty"`
+}
+
+// Correct reports whether one failure run has the required stable evidence.
+func (result FailureResult) Correct() bool {
+	common := result.Observed && result.ErrorText != "" && result.ErrorClass != "" && result.Operation != "" && result.TotalItems > 0
+	if !common {
+		return false
+	}
+	if result.Scenario != "output-failure" {
+		return true
+	}
+	output := result.Output
+	return output != nil && output.FailureAtResult > 0 && output.RewoundChunks > 0 &&
+		output.ProbeStartsAfterFailure == 0 && output.SavedCursor+output.Remaining == result.TotalItems &&
+		output.HandlesReleased && output.RecoveryCompleted && output.RecoveryTaskCount == output.Remaining &&
+		output.RecoveryTaskDigest != "" && output.RecoveryTaskDigest == output.ReferenceTaskDigest &&
+		output.FinalScanRows == output.RowsBeforeRecovery+output.Remaining &&
+		output.FinalOpenRows == output.OpenRowsBeforeRecovery+output.Remaining && output.FinalCursor == result.TotalItems
+}
+
+// FailureOutputEvidence records output rewind and recovery correctness.
+type FailureOutputEvidence struct {
+	FailureAtResult         uint64 `json:"failure_at_result"`
+	RewoundChunks           uint64 `json:"rewound_chunks"`
+	ProbeStarts             uint64 `json:"probe_starts"`
+	ProbeStartsAfterFailure uint64 `json:"probe_starts_after_failure"`
+	SavedCursor             uint64 `json:"saved_cursor"`
+	Remaining               uint64 `json:"remaining"`
+	RowsBeforeRecovery      uint64 `json:"rows_before_recovery"`
+	OpenRowsBeforeRecovery  uint64 `json:"open_rows_before_recovery"`
+	HandlesReleased         bool   `json:"handles_released"`
+	RecoveryCompleted       bool   `json:"recovery_completed"`
+	RecoveryTaskCount       uint64 `json:"recovery_task_count"`
+	RecoveryTaskDigest      string `json:"recovery_task_digest"`
+	ReferenceTaskDigest     string `json:"reference_task_digest"`
+	FinalScanRows           uint64 `json:"final_scan_rows"`
+	FinalOpenRows           uint64 `json:"final_open_rows"`
+	FinalCursor             uint64 `json:"final_cursor"`
 }
 
 type failureInputs struct {
 	manifest     Manifest
 	portPath     string
 	snapshotPath string
+}
+
+type failureStageState struct {
+	scanConfig        config.ScanConfig
+	outputFailAt      uint64
+	probeTelemetry    scanapp.ProbeTelemetry
+	snapshotTelemetry scanapp.SnapshotTelemetry
 }
 
 // RunFailureSmoke executes one expected production failure.
@@ -60,8 +109,9 @@ func (Suite) RunFailureSmoke(ctx context.Context, spec FailureSpec) (FailureResu
 		return FailureResult{}, err
 	}
 	var result FailureResult
+	var stageState failureStageState
 	stage, err := New().Measure(ctx, inputs.manifest.ActualBytes, spec.Items, func(stageCtx context.Context) (uint64, error) {
-		observed, stageErr := runFailureStage(stageCtx, spec, inputs)
+		observed, stageErr := runFailureStage(stageCtx, spec, inputs, &stageState)
 		result = observed
 		return 0, stageErr
 	})
@@ -71,6 +121,12 @@ func (Suite) RunFailureSmoke(ctx context.Context, spec FailureSpec) (FailureResu
 	result.TotalItems = spec.Items
 	result.Preparation = preparation
 	result.StageObservation = stage
+	if result.Scenario == "output-failure" {
+		result.Output, err = completeOutputFailureEvidence(ctx, spec, inputs, stageState)
+		if err != nil {
+			return FailureResult{}, err
+		}
+	}
 	return result, nil
 }
 
@@ -112,7 +168,7 @@ func failureBucketConfig(spec FailureSpec, inputs failureInputs, snapshotPath st
 	})
 }
 
-func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs) (FailureResult, error) {
+func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs, state *failureStageState) (FailureResult, error) {
 	switch spec.Scenario {
 	case "snapshot-save-failure":
 		snapshotPath := filepath.Join(spec.OutputDir, "missing", "buckets.json")
@@ -123,25 +179,33 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 		runErr := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{})
 		return expectedFailure(spec.Scenario, "snapshot-create-temp", "snapshot-save", runErr, "write snapshot")
 	case "output-failure":
-		blocker := filepath.Join(spec.OutputDir, "output-parent-is-a-file")
-		if err := os.WriteFile(blocker, []byte("block output directory creation"), 0o644); err != nil {
-			return FailureResult{}, fmt.Errorf("write output blocker: %w", err)
-		}
 		scanConfig, err := config.NewScan(config.ScanValues{
 			CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
-			PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(blocker, "results.csv"),
-			Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: time.Millisecond,
-			BucketRate: 1, BucketCapacity: 1, OutputFlushResults: 1000,
+			PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
+			Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: 0,
+			BucketRate: ratelimit.MaxRate, BucketCapacity: ratelimit.MaxCapacity, OutputFlushResults: failureFlushResults(spec.Items),
 			LogLevel: "error", Format: "json", Quiet: true, Pressure: config.PressureDisabled(),
 		})
 		if err != nil {
 			return FailureResult{}, err
 		}
+		state.scanConfig = scanConfig
+		state.outputFailAt = max(uint64(1), spec.Items/2)
 		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			DisableKeyboard: true,
 			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			OutputFailure:   &scanapp.OutputFailureInjection{FailOnResult: state.outputFailAt},
+			ProbeTelemetryObserver: func(telemetry scanapp.ProbeTelemetry) {
+				state.probeTelemetry = telemetry
+			},
+			SnapshotTelemetryObserver: func(telemetry scanapp.SnapshotTelemetry) {
+				state.snapshotTelemetry = telemetry
+			},
 		})
-		return expectedFailure(spec.Scenario, "output-open", "output", runErr, blocker)
+		if !errors.Is(runErr, scanapp.ErrInjectedOutputFailure) {
+			return FailureResult{}, fmt.Errorf("scenario %s error = %v, want injected output failure", spec.Scenario, runErr)
+		}
+		return expectedFailure(spec.Scenario, "output-write", "output", runErr, "injected output write failure")
 	case "pressure-fatal-error":
 		pressurePolicy, err := config.SimplePressure("http://performance.invalid", time.Millisecond)
 		if err != nil {
@@ -168,6 +232,111 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 	default:
 		return FailureResult{}, fmt.Errorf("unsupported failure scenario %q", spec.Scenario)
 	}
+}
+
+func failureFlushResults(items uint64) int {
+	return int(min(uint64(1000), max(uint64(1), items/10)))
+}
+
+func completeOutputFailureEvidence(ctx context.Context, spec FailureSpec, inputs failureInputs, stage failureStageState) (*FailureOutputEvidence, error) {
+	snapshot, err := state.LoadSnapshot(inputs.snapshotPath)
+	if err != nil {
+		return nil, fmt.Errorf("load output-failure snapshot: %w", err)
+	}
+	var savedCursor uint64
+	var remaining uint64
+	for _, chunk := range snapshot.Chunks {
+		savedCursor += uint64(chunk.NextIndex)
+		remaining += uint64(chunk.Remaining())
+	}
+	if snapshot.Output == nil {
+		return nil, fmt.Errorf("output-failure snapshot has no output paths")
+	}
+	scanPath := snapshot.Output.ScanPath
+	openPath := snapshot.Output.OpenPath
+	scanRows, err := countCSVRows(scanPath)
+	if err != nil {
+		return nil, err
+	}
+	openRows, err := countCSVRows(openPath)
+	if err != nil {
+		return nil, err
+	}
+	handlesReleased := outputHandlesReleased(scanPath, openPath)
+	reference, err := failureCandidateTaskEvidence(snapshot, spec.Items)
+	if err != nil {
+		return nil, fmt.Errorf("build output-failure task reference: %w", err)
+	}
+	recoveryTasks := newOrderedTaskEvidence()
+	if remaining > 0 {
+		if err := scanapp.Run(ctx, stage.scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			DisableKeyboard: true,
+			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			TaskObserver: func(ip string, port int) {
+				recoveryTasks.Observe(net.JoinHostPort(ip, strconv.Itoa(port)) + "/tcp")
+			},
+		}); err != nil {
+			return nil, fmt.Errorf("recover output-failure scan: %w", err)
+		}
+	}
+	recovered := recoveryTasks.Snapshot()
+	finalScanRows, err := countCSVRows(scanPath)
+	if err != nil {
+		return nil, err
+	}
+	finalOpenRows, err := countCSVRows(openPath)
+	if err != nil {
+		return nil, err
+	}
+	finalCursor := savedCursor + recovered.Count
+	return &FailureOutputEvidence{
+		FailureAtResult:         stage.outputFailAt,
+		RewoundChunks:           stage.snapshotTelemetry.RewoundChunks,
+		ProbeStarts:             stage.probeTelemetry.TotalStarted,
+		ProbeStartsAfterFailure: stage.probeTelemetry.StartsAfterStop,
+		SavedCursor:             savedCursor,
+		Remaining:               remaining,
+		RowsBeforeRecovery:      scanRows,
+		OpenRowsBeforeRecovery:  openRows,
+		HandlesReleased:         handlesReleased,
+		RecoveryCompleted: savedCursor+remaining == spec.Items && recovered.Count == remaining && recovered.Digest == reference.Digest &&
+			finalScanRows == scanRows+remaining && finalOpenRows == openRows+remaining && finalCursor == spec.Items,
+		RecoveryTaskCount:   recovered.Count,
+		RecoveryTaskDigest:  recovered.Digest,
+		ReferenceTaskDigest: reference.Digest,
+		FinalScanRows:       finalScanRows,
+		FinalOpenRows:       finalOpenRows,
+		FinalCursor:         finalCursor,
+	}, nil
+}
+
+func failureCandidateTaskEvidence(snapshot state.Snapshot, items uint64) (taskEvidenceSnapshot, error) {
+	if len(snapshot.Chunks) != 1 {
+		return taskEvidenceSnapshot{}, fmt.Errorf("failure reference has %d chunks, want one", len(snapshot.Chunks))
+	}
+	chunk := snapshot.Chunks[0]
+	if chunk.TotalCount < 0 || uint64(chunk.TotalCount) != items || chunk.NextIndex < 0 || chunk.NextIndex > chunk.TotalCount ||
+		len(chunk.Ports) != 1 || chunk.Ports[0] != "443/tcp" {
+		return taskEvidenceSnapshot{}, fmt.Errorf("failure reference snapshot does not match the candidate fixture")
+	}
+	evidence := newOrderedTaskEvidence()
+	for index := uint64(chunk.NextIndex); index < items; index++ {
+		evidence.Observe(net.JoinHostPort(fixtureIPv4(index), "443") + "/tcp")
+	}
+	return evidence.Snapshot(), nil
+}
+
+func outputHandlesReleased(paths ...string) bool {
+	for index, path := range paths {
+		moved := path + fmt.Sprintf(".handle-check-%d", index)
+		if err := os.Rename(path, moved); err != nil {
+			return false
+		}
+		if err := os.Rename(moved, path); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func expectedFailure(scenario, operation, errorClass string, err error, expected string) (FailureResult, error) {

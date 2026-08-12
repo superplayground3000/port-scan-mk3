@@ -127,6 +127,14 @@ func TestCompareReportsKeepsStableFailureEvidence(t *testing.T) {
 				ErrorClass: "output",
 				Operation:  "output-write",
 				TotalItems: perfharness.FullItemCount,
+				Output: &perfharness.FailureOutputEvidence{
+					FailureAtResult:         perfharness.FullItemCount / 2,
+					RewoundChunks:           1,
+					ProbeStartsAfterFailure: 0,
+					HandlesReleased:         true,
+					RecoveryCompleted:       true,
+					FinalCursor:             perfharness.FullItemCount,
+				},
 			}},
 		},
 	}}}
@@ -134,6 +142,8 @@ func TestCompareReportsKeepsStableFailureEvidence(t *testing.T) {
 	right.Cases = append([]perfharness.CaseResult(nil), left.Cases...)
 	rightEvidence := *left.Cases[0].Failure
 	rightEvidence.Runs = append([]perfharness.FailureResult(nil), left.Cases[0].Failure.Runs...)
+	rightOutput := *left.Cases[0].Failure.Runs[0].Output
+	rightEvidence.Runs[0].Output = &rightOutput
 	rightEvidence.Runs[0].ErrorText = "windows text"
 	rightEvidence.Runs[0].StageObservation.WallTime = time.Second
 	right.Cases[0].Failure = &rightEvidence
@@ -143,5 +153,10 @@ func TestCompareReportsKeepsStableFailureEvidence(t *testing.T) {
 	right.Cases[0].Failure.Runs[0].Operation = "output-open"
 	if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "production-failure/output-failure:failure") {
 		t.Fatalf("stable failure difference = %v", differences)
+	}
+	right.Cases[0].Failure.Runs[0].Operation = "output-write"
+	right.Cases[0].Failure.Runs[0].Output.RewoundChunks = 0
+	if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "production-failure/output-failure:failure") {
+		t.Fatalf("output recovery difference = %v", differences)
 	}
 }

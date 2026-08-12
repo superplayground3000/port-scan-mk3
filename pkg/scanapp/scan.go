@@ -22,6 +22,9 @@ const (
 // deliberately no fresh-build fallback.
 var errScanRequiresResume = errors.New("scan requires -resume <bucket file>; run generate-buckets first")
 
+// ErrInjectedOutputFailure identifies a requested result-writer failure.
+var ErrInjectedOutputFailure = errors.New("injected output write failure")
+
 // DialFunc abstracts TCP dialing for tests and runtime customization.
 type DialFunc func(context.Context, string, string) (net.Conn, error)
 
@@ -44,6 +47,17 @@ type ProbeTelemetry struct {
 	StartsAfterStop uint64
 }
 
+// SnapshotTelemetry records the corrected chunks saved after a stopped run.
+type SnapshotTelemetry struct {
+	RewoundChunks uint64
+}
+
+// OutputFailureInjection makes the real scan-results writer fail on one result.
+// FailOnResult starts at one. Run rejects zero before it opens output files.
+type OutputFailureInjection struct {
+	FailOnResult uint64
+}
+
 // RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
 	Dial DialFunc
@@ -56,12 +70,14 @@ type RunOptions struct {
 	ResultObserver func(completed uint64)
 	// ProbeTelemetryObserver receives the final accepted-probe counts. The
 	// executor records the stop and the accepted count under one lock.
-	ProbeTelemetryObserver func(ProbeTelemetry)
-	PressureLimit          int
-	DisableKeyboard        bool
-	PressureSource         PressureSource
-	ProgressInterval       int
-	ReachabilityChecker    ReachabilityChecker
+	ProbeTelemetryObserver    func(ProbeTelemetry)
+	SnapshotTelemetryObserver func(SnapshotTelemetry)
+	PressureLimit             int
+	DisableKeyboard           bool
+	PressureSource            PressureSource
+	ProgressInterval          int
+	ReachabilityChecker       ReachabilityChecker
+	OutputFailure             *OutputFailureInjection
 
 	dashboardTerminalDetector func(io.Writer) bool
 	dashboardRefreshInterval  time.Duration
@@ -116,7 +132,15 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	}
 
 	openOutputs := opts.batchOutputsOpener
-	if openOutputs == nil {
+	if opts.OutputFailure != nil {
+		if opts.OutputFailure.FailOnResult == 0 {
+			return fmt.Errorf("output failure result must be positive")
+		}
+		if openOutputs != nil {
+			return fmt.Errorf("output failure cannot be combined with a custom output opener")
+		}
+		openOutputs = outputFailureBatchOpener(opts.OutputFailure.FailOnResult)
+	} else if openOutputs == nil {
 		openOutputs = openBufferedBatchOutputs
 	}
 
@@ -147,6 +171,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		resumeObserver:            opts.ResumeObserver,
 		resultObserver:            opts.ResultObserver,
 		probeTelemetryObserver:    opts.ProbeTelemetryObserver,
+		snapshotTelemetryObserver: opts.SnapshotTelemetryObserver,
 	})
 	if err := runtime.execute(ctx); err != nil {
 		return fmt.Errorf("execute scan runtime: %w", err)

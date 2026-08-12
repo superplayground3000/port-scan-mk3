@@ -80,3 +80,34 @@ func TestRun_AfterWriteFailure_ResumeCoversEveryTarget(t *testing.T) {
 			len(outputs), len(openOnly))
 	}
 }
+
+func TestRun_OutputFailureInjectionUsesRealWritersAndSavesRecoveryState(t *testing.T) {
+	cfg, _, bucketsFile := newInterruptibleScanConfig(t)
+	var snapshotTelemetry SnapshotTelemetry
+
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            refusingDial,
+		OutputFailure:   &OutputFailureInjection{FailOnResult: 3},
+		SnapshotTelemetryObserver: func(telemetry SnapshotTelemetry) {
+			snapshotTelemetry = telemetry
+		},
+	})
+	if !errors.Is(runErr, ErrInjectedOutputFailure) {
+		t.Fatalf("Run() error = %v, want injected output failure", runErr)
+	}
+	snapshot, err := state.LoadSnapshot(bucketsFile)
+	if err != nil {
+		t.Fatalf("load recovery snapshot: %v", err)
+	}
+	var remaining int
+	for _, chunk := range snapshot.Chunks {
+		remaining += chunk.Remaining()
+	}
+	if remaining == 0 {
+		t.Fatal("output failure saved no remaining work")
+	}
+	if snapshotTelemetry.RewoundChunks == 0 {
+		t.Fatalf("snapshot telemetry = %+v, want rewound chunks", snapshotTelemetry)
+	}
+}

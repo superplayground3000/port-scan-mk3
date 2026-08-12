@@ -207,6 +207,42 @@ type recordFlusher interface {
 	Flush() error
 }
 
+type outputFailureRecordWriter struct {
+	inner        recordWriter
+	failOnResult uint64
+	written      uint64
+}
+
+func (w *outputFailureRecordWriter) Write(record writer.Record) error {
+	w.written++
+	if w.written == w.failOnResult {
+		return ErrInjectedOutputFailure
+	}
+	return w.inner.Write(record)
+}
+
+func (w *outputFailureRecordWriter) WriteHeader() error {
+	return w.inner.WriteHeader()
+}
+
+func (w *outputFailureRecordWriter) Flush() error {
+	if flusher, ok := w.inner.(recordFlusher); ok {
+		return flusher.Flush()
+	}
+	return nil
+}
+
+func outputFailureBatchOpener(failOnResult uint64) batchOutputsOpenFunc {
+	return func(scanPath, openPath string, appendMode bool) (*batchOutputs, error) {
+		outputs, err := openBufferedBatchOutputs(scanPath, openPath, appendMode)
+		if err != nil {
+			return nil, err
+		}
+		outputs.scanWriter = &outputFailureRecordWriter{inner: outputs.scanWriter, failOnResult: failOnResult}
+		return outputs, nil
+	}
+}
+
 func (b *batchOutputs) write(record writer.Record) error {
 	if err := b.scanWriter.Write(record); err != nil {
 		return fmt.Errorf("%w: file %s stage write: %w", errScanOutputWrite, b.scanPath, err)

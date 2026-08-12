@@ -447,3 +447,35 @@ The focused race command passed:
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.032s
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness  1.029s
 ```
+
+## Output-write failure recovery
+
+The first production-seam test did not compile.
+`RunOptions` had no public output-failure injection.
+
+The new `OutputFailureInjection` wraps the real buffered scan writer.
+The wrapper fails on the selected result and preserves the normal flush path.
+The runtime reports probe and snapshot telemetry after the stop.
+
+The first harness test failed because the old case still used an invalid output path.
+That path failed during open and did not start the scan.
+
+The green 20-item case failed on result 10.
+It saved cursor 4 and 16 remaining tasks.
+The initial output files contained eight rows because a write failure can leave duplicate durable rows.
+The recovery appended 16 rows and omitted no task.
+The recovery and reference task digests were equal.
+The case also reported one or more rewound chunks, zero probe starts after failure, and released output handles.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  2.868s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  2.676s
+```
+
+Six writer benchmarks used Go 1.24.4.
+The base median was approximately `584.85ns/op`.
+The branch median was approximately `577.8ns/op`.
+This change was approximately `-1.2%`.
+Both sides used `454B/op` and `4 allocs/op`.

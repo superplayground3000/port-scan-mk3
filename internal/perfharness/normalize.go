@@ -78,11 +78,24 @@ func failureDifferences(left, right *FailureCaseEvidence) bool {
 	for index := range left.Runs {
 		a, b := left.Runs[index], right.Runs[index]
 		if a.Scenario != b.Scenario || a.Observed != b.Observed || a.ErrorClass != b.ErrorClass ||
-			a.Operation != b.Operation || a.TotalItems != b.TotalItems {
+			a.Operation != b.Operation || a.TotalItems != b.TotalItems || failureOutputDifferences(a.Output, b.Output) {
 			return true
 		}
 	}
 	return false
+}
+
+func failureOutputDifferences(left, right *FailureOutputEvidence) bool {
+	if left == nil || right == nil {
+		return left != right
+	}
+	return left.FailureAtResult != right.FailureAtResult || left.RewoundChunks != right.RewoundChunks ||
+		left.ProbeStartsAfterFailure != right.ProbeStartsAfterFailure || left.SavedCursor != right.SavedCursor ||
+		left.Remaining != right.Remaining || left.RowsBeforeRecovery != right.RowsBeforeRecovery ||
+		left.OpenRowsBeforeRecovery != right.OpenRowsBeforeRecovery || left.HandlesReleased != right.HandlesReleased ||
+		left.RecoveryCompleted != right.RecoveryCompleted || left.RecoveryTaskCount != right.RecoveryTaskCount ||
+		left.RecoveryTaskDigest != right.RecoveryTaskDigest || left.ReferenceTaskDigest != right.ReferenceTaskDigest ||
+		left.FinalScanRows != right.FinalScanRows || left.FinalOpenRows != right.FinalOpenRows || left.FinalCursor != right.FinalCursor
 }
 
 func cancellationDifferences(left, right *CancellationCaseEvidence) bool {

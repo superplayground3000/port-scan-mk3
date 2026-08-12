@@ -1118,7 +1118,7 @@ func runFailureCase(ctx context.Context, harness perfharness.Harness, outputDir 
 		if err != nil {
 			return perfharness.CaseResult{}, err
 		}
-		if !failure.Observed || failure.ErrorText == "" || failure.ErrorClass == "" || failure.Operation == "" || failure.TotalItems != items {
+		if !failure.Correct() || failure.TotalItems != items {
 			correct = false
 		}
 		observations = append(observations, failure.StageObservation)
