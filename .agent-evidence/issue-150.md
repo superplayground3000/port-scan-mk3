@@ -1209,3 +1209,32 @@ ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 2.746s
 ok github.com/xuxiping/port-scan-mk3/internal/perfharness 17.917s
 ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 119.719s
 ```
+
+### Repository coverage after the executed matrix grew
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 make cover
+```
+
+Observed red result:
+
+```text
+internal/perfharness coverage: 78.7% of statements
+internal/perfharness/cmd/perf-harness coverage: 70.1% of statements
+total: 84.4%
+make: *** [Makefile:130: cover] Error 1
+```
+
+The new tests cover invalid workflow specifications, the fake connection
+contract, expected failure validation, and invalid command invocations.
+
+Green command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 make cover
+internal/perfharness coverage: 80.4% of statements
+internal/perfharness/cmd/perf-harness coverage: 73.1% of statements
+coverage gate passed: 85.0%
+```

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,35 @@ type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) {
 	return 0, os.ErrClosed
+}
+
+func TestRunCommandRejectsInvalidInvocation(t *testing.T) {
+	t.Parallel()
+
+	existingOutput := t.TempDir()
+	checks := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "unknown flag", args: []string{"-unknown"}, want: 2},
+		{name: "missing output", want: 2},
+		{name: "profile", args: []string{"-output", filepath.Join(t.TempDir(), "profile"), "-profile", "large"}, want: 2},
+		{name: "evidence label", args: []string{"-output", filepath.Join(t.TempDir(), "label"), "-evidence-label", "unknown"}, want: 2},
+		{name: "one comparison report", args: []string{"-compare-left", "left.json"}, want: 2},
+		{name: "existing output", args: []string{"-output", existingOutput}, want: 1},
+	}
+	for _, check := range checks {
+		check := check
+		t.Run(check.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			if code := runCommand(check.args, &stdout, &stderr); code != check.want {
+				t.Fatalf("exit code = %d, want %d; stderr=%s", code, check.want, stderr.String())
+			}
+		})
+	}
 }
 
 func TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations(t *testing.T) {
@@ -209,15 +239,21 @@ func TestRunCommandComparesPortableReports(t *testing.T) {
 func TestRunCommandFailsWhenItCannotWriteStatus(t *testing.T) {
 	t.Parallel()
 
+	validArgs := []string{"-profile", "smoke", "-output", filepath.Join(t.TempDir(), "report"), "-smoke-items", "1", "-smoke-snapshot-bytes", "1024"}
 	var stderr bytes.Buffer
-	exitCode := runCommand([]string{
-		"-profile", "smoke",
-		"-output", filepath.Join(t.TempDir(), "report"),
-		"-smoke-items", "1",
-		"-smoke-snapshot-bytes", "1024",
-	}, failingWriter{}, &stderr)
-	if exitCode != 1 {
+	if exitCode := runCommand(validArgs, failingWriter{}, &stderr); exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1 for status output failure", exitCode)
+	}
+
+	invalidChecks := [][]string{
+		{"-output", filepath.Join(t.TempDir(), "profile"), "-profile", "invalid"},
+		{"-output", filepath.Join(t.TempDir(), "label"), "-evidence-label", "invalid"},
+		{"-compare-left", "left.json"},
+	}
+	for _, args := range invalidChecks {
+		if exitCode := runCommand(args, io.Discard, failingWriter{}); exitCode != 1 {
+			t.Fatalf("args=%v exit code = %d, want 1 for status output failure", args, exitCode)
+		}
 	}
 }
 
