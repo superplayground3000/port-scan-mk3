@@ -185,3 +185,51 @@ A synthetic Windows copy of the Linux report passed the report comparison.
 This comparison validates the comparison path only. It is not Native Windows evidence.
 
 The complete Native Windows matrix is still pending in issue 99.
+
+## Scale-conformance routing correction
+
+The report at commit `d800a3f` did not execute all required production routes.
+It is valid only for the production operations that it measured directly.
+It is not the final full-matrix result for issue 151.
+
+The corrected harness separates preparation from scan orchestration.
+Preparation writes one compact snapshot with exactly 10,000,000 scan tasks.
+The measured stage calls `scanapp.Run` with a fake dialer and both CSV writers.
+The stage uses a 4,000,000,000-byte committed-memory limit.
+
+The compact fixture has 10,000,008 raw candidate addresses.
+Eight boundary broadcast addresses are removed before scan dispatch.
+The harness sets the minimum explicit limits of 10,000,008 candidates and 17 GB.
+The default limits reject this raw candidate count.
+A candidate limit of 10,000,007 and a memory limit of 16 GB also reject it.
+
+## Scan-orchestration diagnostic results
+
+These one-run diagnostics used production commit `5bd943b`.
+A temporary build-tag driver was present, so each result is marked as diagnostic.
+The driver called the existing production measurement seam one time.
+It did not duplicate the measurement formula.
+
+| Workers | Stage time | Peak committed | Peak heap | Allocated bytes | 4 GB result |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | `91.756s` | `1,197,219,840` | `1,161,199,616` | `6,467,695,400` | Pass |
+| 16 | `125.510s` | `1,024,598,016` | `955,932,672` | `6,468,708,136` | Pass |
+| 256 | `119.831s` | `1,005,658,112` | `953,401,344` | `6,469,603,968` | Pass |
+
+The 256-worker committed-memory result was `0.9815x` the 16-worker result.
+The contract limit is `1.25x`.
+All runs used zero swap.
+
+Each run produced exactly 10,000,000 probes and 10,000,000 rows in both files.
+Each run recorded the same ordered task digest, `2a4ed5b629a305a020f41327cf506689fd81026e109be374f1994818258ce8fb`.
+Each run recorded the same normalized output digest, `bb33ef38e0639d13db0a0b1973a36be1fee289470027e1c63fb257529ca488f7`.
+Raw CSV byte digests differ because worker completion order can differ.
+
+The retained diagnostic files are in these directories:
+
+- `/media/hp/secondary/issue151-performance-5bd943b-diagnostics/worker-1`
+- `/media/hp/secondary/issue151-performance-5bd943b-diagnostics/worker-16`
+- `/media/hp/secondary/issue151-performance-5bd943b-diagnostics/worker-256`
+
+The current implementation reduced the worker-1 stage peak from `6,529,245,184` bytes to `1,197,219,840` bytes.
+It reduced the peak by 81.7 percent without changing task or normalized-result digests.
