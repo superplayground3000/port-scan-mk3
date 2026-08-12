@@ -196,7 +196,7 @@ ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.005s
 
 ## Quality gates
 
-### Final Go 1.24.4 repository gate
+### Historical Go 1.24.4 repository gate before issue 144 integration
 
 Command:
 
@@ -212,7 +212,7 @@ coverage gate passed: 85.9%
 All selected quality gates passed.
 ```
 
-### Final Go 1.24.4 Docker e2e gate
+### Historical Go 1.24.4 Docker e2e gate before issue 144 integration
 
 Command:
 
@@ -229,7 +229,7 @@ ok github.com/xuxiping/port-scan-mk3/tests/integration 2.636s
 All selected quality gates passed.
 ```
 
-### Complete Go 1.24.4 Linux performance matrix
+### Initial Linux matrix before production contract execution
 
 Command:
 
@@ -268,7 +268,7 @@ performance matrix passed: JSON=performance-out/run-20260812T080915Z-1968180/rep
 Performance matrix artifacts: performance-out/run-20260812T080915Z-1968180
 ```
 
-The final complete matrix used 9.9 GB and 4:02.77 of wall time.
+This superseded matrix used 9.9 GB and 4:02.77 of wall time.
 The maximum RSS was 230,484 KB. It used zero swaps and seven major page faults.
 All 24 case observations contain nonzero Linux peak RSS and committed memory.
 The runner applied the cold and steady worker-memory threshold.
@@ -412,8 +412,8 @@ ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.003s
 Windows output: PE32+ executable for MS Windows, x86-64
 ```
 
-The Linux adapter reads `VmHWM` and `VmSwap` from `/proc/self/status` for each action.
-The Windows adapter uses the peak fields from `GetProcessMemoryInfo` for each action.
+The first adapter version read `VmHWM` and Windows lifetime peak fields.
+The final full matrix exposed this error. The later per-case metrics slice corrected it.
 The scripts keep the raw whole-process evidence in addition to these case metrics.
 
 Neither adapter maps generic file I/O to paging I/O.
@@ -427,7 +427,7 @@ insufficient free space: have 49586282496 bytes, require 50000000000 bytes
 
 The previous generated matrix directory was the exact cause of the space shortage.
 After its evidence was recorded, safe cleanup removed only that exact ignored directory.
-The second attempt passed and produced the final artifact path above.
+The second historical attempt passed. Its generated artifact was later removed.
 
 ### Docker context excludes matrix artifacts
 
@@ -1309,3 +1309,66 @@ ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.059s
 GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandWritesSmokeReports -count=1 -timeout=60s
 ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 17.026s
 ```
+
+## Final combined gates after issue 144 integration
+
+Repository gate command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 make verify
+coverage gate passed: 85.0%
+=== RESULT ===
+All selected quality gates passed.
+```
+
+Docker gate command and result:
+
+```text
+COMPOSE_PROJECT_NAME=issue150limits GOTOOLCHAIN=go1.24.4 make verify-e2e
+=== RESULT ===
+All selected quality gates passed.
+```
+
+Final bounded performance command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 bash scripts/performance_gate.sh smoke /tmp/issue150-smoke-734db59
+performance matrix passed: JSON=/tmp/issue150-smoke-734db59/report/performance-report.json Markdown=/tmp/issue150-smoke-734db59/report/performance-report.md
+Performance matrix artifacts: /tmp/issue150-smoke-734db59
+```
+
+The bounded report records commit `734db5952d6bdce547eeed83cb8ef33545278890`.
+It contains 48 cases, zero failed verdicts, and zero missing Linux RSS values.
+The native process used at most 1,002,676 KiB RSS and did not use swap.
+
+### Full-scale threshold evidence
+
+Command:
+
+```text
+GOTOOLCHAIN=go1.24.4 make verify-performance
+```
+
+The full matrix ran 65 cases. Two required thresholds failed:
+
+```text
+snapshot-heavy/mixed cold committed memory: 8001417216 > 6000000000
+snapshot-heavy/mixed median committed memory: 9138315264 > 6000000000
+production-workflow/workers-256 cold committed memory: 267751424
+production-workflow/workers-16 cold committed memory: 208920576
+worker memory increase: 28.16% > 25%
+make: *** [Makefile:142: verify-performance] Error 1
+```
+
+Raw report:
+
+```text
+performance-out/run-20260812T093545Z-2702771/report/performance-report.json
+```
+
+Issue 151 owns production optimization for these scale thresholds.
+The issue 150 evaluator must keep these failures visible.
+
+The old generated 9.9 GiB run was removed before the final full run.
+The generated `cases/` directories from two diagnostic full runs were also removed.
+Their JSON and Markdown reports remain in `performance-out/`.
