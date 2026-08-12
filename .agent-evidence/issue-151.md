@@ -262,3 +262,92 @@ The probe, task, scan-row, and open-row counts matched the remaining task count.
 
 The retained diagnostics are in `/media/hp/secondary/issue151-performance-fab8b9c-diagnostics/`.
 The `resume-99`, `resume-50`, and `resume-0` directories contain the reports and output files.
+
+## Cancellation evidence correction
+
+The earlier cancellation report stored only a Boolean resumable value.
+It did not record the injection threshold, progress unit, probe starts, or recovery parity.
+
+The first focused test failed to compile with these representative errors:
+
+```text
+CancellationResult.TotalItems undefined
+CancellationResult.InjectionThreshold undefined
+CancellationResult.CompletedAtInjection undefined
+CancellationResult.ProbeStartsAfterCancel undefined
+CancellationResult.Recovery undefined
+CaseResult.Cancellation undefined
+```
+
+The harness now records six runs for each cancellation case.
+Each run has separate preparation and stage observations.
+It also records the total items, threshold, progress unit, error class, probe starts, and recovery evidence.
+
+The scan runtime reports probe starts under the executor lock.
+This interface proves that no probe starts after the executor enters the stop state.
+The result-output and resume-rebuild cases run a production recovery scan.
+The recovery task digest must match the remaining snapshot task digest.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  2.878s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  2.556s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness  8.124s
+```
+
+## Cancellation runtime scaling
+
+One runtime exists for each incomplete chunk.
+The old builder created a rate limiter for each runtime, even when its initial capacity covered all remaining work.
+
+The regression test first failed with this output:
+
+```text
+one remaining task allocated a rate limiter even though the initial capacity already covers it
+```
+
+The builder now omits the rate limiter when the initial capacity covers the remaining tasks.
+The dispatcher preserves the same wait and acquire events for this immediate path.
+Chunks that need refill still use the existing rate limiter.
+
+The first 10-million-item diagnostic stopped before the cancellation stage.
+The 2 GB default snapshot limit rejected a 2,233,986,251-byte snapshot.
+The harness now uses the approved zero byte-limit bypass for this matrix only.
+The default production limit did not change.
+
+The next diagnostic reached cancellation and recovery.
+It failed because the old stop measurement included the durable snapshot save.
+The issue contract applies one second to new CPU, queue, and wait work.
+It does not apply this limit to durable finalization.
+
+The report now records two times:
+
+- `stop_duration_ns` ends when the executor drain is complete.
+- `finalization_duration_ns` ends after snapshot persistence and the production call returns.
+
+The exact 10-million-item `result-output` diagnostic used commit `a3d4736`.
+The temporary build-tag driver called `RunCancellationSmoke` one time.
+
+| Metric | Result | Contract |
+| --- | ---: | ---: |
+| Work-stop time | `14,307ns` | `< 1s` |
+| Finalization time | `5,666,565,034ns` | Report only |
+| Stage wall time | `110.377s` | `< 15m` |
+| Stage committed memory | `20,384,903,168` | `< 24GB` |
+| Stage peak heap | `20,047,527,936` | Report only |
+| Process swaps | `0` | Report only |
+
+The stage started exactly 9,900,000 probes before cancellation.
+It started zero probes after cancellation.
+The saved cursor was 9,900,000, with 100,000 remaining tasks.
+The recovery run completed all remaining tasks.
+Both result files contained exactly 10,000,000 rows.
+
+The recovery and reference digest was:
+
+```text
+5b8f3f23c1f452f6e99bf45058826d8fd574d511f2f9fd0b50b3fdbf97a8f821
+```
+
+The retained diagnostic is in `/media/hp/secondary/issue151-performance-a3d4736-diagnostics/cancel-result-99-10m/`.
