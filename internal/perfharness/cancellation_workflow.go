@@ -448,18 +448,31 @@ func (trigger *cancellationTrigger) fire() {
 func (trigger *cancellationTrigger) fired() bool { return trigger.firedValue.Load() }
 
 type progressReader struct {
-	reader     io.Reader
+	reader     io.ReadSeeker
 	totalBytes uint64
 	totalItems uint64
 	read       uint64
+	parsing    bool
 	injector   *CancellationInjector
 }
 
 func (reader *progressReader) Read(data []byte) (int, error) {
 	count, err := reader.reader.Read(data)
+	if !reader.parsing {
+		return count, err
+	}
 	reader.read += uint64(count)
 	reader.injector.Tick(reader.read * reader.totalItems / reader.totalBytes)
 	return count, err
+}
+
+func (reader *progressReader) Seek(offset int64, whence int) (int64, error) {
+	position, err := reader.reader.Seek(offset, whence)
+	if err == nil && whence == io.SeekStart && offset == 0 {
+		reader.read = 0
+		reader.parsing = true
+	}
+	return position, err
 }
 
 type checkCountContext struct {

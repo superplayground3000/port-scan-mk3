@@ -113,6 +113,9 @@ func LoadCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidr
 // The column names select basic input fields. The limits apply to bytes and data records.
 // A zero limit disables only that limit. It returns a context, parse, validation, or limit error.
 func LoadCIDRsWithColumnsContextAndLimits(ctx context.Context, r io.Reader, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
+	if seeker, ok := r.(io.ReadSeeker); ok {
+		return loadCIDRsSeekable(ctx, limits.Path, seeker, ipCol, ipCidrCol, limits)
+	}
 	limited := limitInputReader(r, limits.Path, "CIDR", "-cidr-input-size-limit-gb", limits.MaxBytes)
 	return parseCIDRsWithColumnsContext(ctx, limited, ipCol, ipCidrCol, limits)
 }

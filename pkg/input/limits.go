@@ -58,7 +58,8 @@ func loadCIDRsSeekable(ctx context.Context, path string, file io.ReadSeeker, ipC
 		return nil, fmt.Errorf("rewind CIDR input %s: %w", path, err)
 	}
 	limits.capacity = recordCount
-	records, err := LoadCIDRsWithColumnsContextAndLimits(ctx, file, ipCol, ipCidrCol, limits)
+	limited := limitInputReader(file, limits.Path, "CIDR", "-cidr-input-size-limit-gb", limits.MaxBytes)
+	records, err := parseCIDRsWithColumnsContext(ctx, limited, ipCol, ipCidrCol, limits)
 	if err != nil {
 		return nil, err
 	}

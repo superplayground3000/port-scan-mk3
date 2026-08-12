@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
@@ -77,5 +78,35 @@ func TestCancellationCIDRLimitBypassChangesOnlyInputBytes(t *testing.T) {
 	}
 	if limits.MaxRecords != defaults.MaxRecords {
 		t.Fatalf("CIDR record limit = %d, want %d", limits.MaxRecords, defaults.MaxRecords)
+	}
+}
+
+func TestCancellationProgressReaderStartsAfterTheCountPass(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	injector, err := NewCancellationInjector(CancellationInputParsing, 50, 4, cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &progressReader{
+		reader:     strings.NewReader("data"),
+		totalBytes: 4,
+		totalItems: 4,
+		injector:   injector,
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the count pass triggered cancellation")
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 2)
+	if _, err := reader.Read(buffer); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("parse pass context = %v, want context.Canceled", ctx.Err())
 	}
 }

@@ -38,6 +38,32 @@ func TestLoadCIDRsHundredThousandRowsKeepsPeakHeapWithinScaleBudget(t *testing.T
 	}
 }
 
+func TestLoadCIDRsSeekableReaderKeepsPeakHeapWithinScaleBudget(t *testing.T) {
+	const records = 100_000
+	path := writeCIDRMemoryFixture(t, records)
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+
+	peak := peakHeapDuring(t, func() {
+		loaded, err := input.LoadCIDRsWithColumnsContextAndLimits(context.Background(), file, "ip", "ip_cidr", input.CIDRLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(loaded) != records {
+			t.Fatalf("record count = %d, want %d", len(loaded), records)
+		}
+		runtime.KeepAlive(loaded)
+	})
+	const maximumPeakHeap = uint64(70_000_000)
+	t.Logf("peak heap increase = %d bytes", peak)
+	if peak > maximumPeakHeap {
+		t.Fatalf("peak heap increase = %d bytes, want at most %d", peak, maximumPeakHeap)
+	}
+}
+
 func BenchmarkLoadCIDRsHundredThousandRows(b *testing.B) {
 	benchmarkLoadCIDRs(b, 100_000)
 }
