@@ -39,7 +39,7 @@ func (basicGroupStrategy) Key(record input.CIDRRecord) (string, error) {
 func (strategy basicGroupStrategy) NewGroup(record input.CIDRRecord) (cidrGroup, error) {
 	targets, err := strategy.targets(record)
 	if err != nil {
-		return cidrGroup{}, err
+		return cidrGroup{}, fmt.Errorf("resolve basic group targets: %w", err)
 	}
 	return cidrGroup{targets: targets}, nil
 }
@@ -47,7 +47,7 @@ func (strategy basicGroupStrategy) NewGroup(record input.CIDRRecord) (cidrGroup,
 func (strategy basicGroupStrategy) MergeGroup(existing cidrGroup, record input.CIDRRecord) (cidrGroup, error) {
 	targets, err := strategy.targets(record)
 	if err != nil {
-		return cidrGroup{}, err
+		return cidrGroup{}, fmt.Errorf("merge basic group targets: %w", err)
 	}
 	existing.targets = append(existing.targets, targets...)
 	return existing, nil
@@ -56,7 +56,11 @@ func (strategy basicGroupStrategy) MergeGroup(existing cidrGroup, record input.C
 func (basicGroupStrategy) RequireNonEmpty() bool { return false }
 
 func (basicGroupStrategy) targets(record input.CIDRRecord) ([]scanTarget, error) {
-	return (basicGroupStrategy{}).targetsContext(context.Background(), record)
+	targets, err := (basicGroupStrategy{}).targetsContext(context.Background(), record)
+	if err != nil {
+		return nil, fmt.Errorf("resolve basic record targets: %w", err)
+	}
+	return targets, nil
 }
 
 func (basicGroupStrategy) targetsContext(ctx context.Context, record input.CIDRRecord) ([]scanTarget, error) {
@@ -87,7 +91,7 @@ func (basicGroupStrategy) targetsContext(ctx context.Context, record input.CIDRR
 	for i, ip := range ips {
 		if i%4096 == 0 {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("build basic scan targets: %w", err)
 			}
 		}
 		targets = append(targets, scanTarget{
@@ -114,7 +118,11 @@ func resolveBasicTargetsContext(ctx context.Context, records []input.CIDRRecord,
 		fallbackPorts = append(fallbackPorts, port.Number)
 	}
 	if !hasBasicRowPorts(records) && len(fallbackPorts) > 0 {
-		return resolveBasicFallbackTargetsContext(ctx, records, fallbackPorts, reachable)
+		resolution, err := resolveBasicFallbackTargetsContext(ctx, records, fallbackPorts, reachable)
+		if err != nil {
+			return basicTargetResolution{}, fmt.Errorf("resolve basic fallback targets: %w", err)
+		}
+		return resolution, nil
 	}
 
 	resolvedByCIDR := make(map[string]map[string]*basicResolvedIP)
@@ -124,20 +132,20 @@ func resolveBasicTargetsContext(ctx context.Context, records []input.CIDRRecord,
 	for i, record := range records {
 		if i%4096 == 0 {
 			if err := ctx.Err(); err != nil {
-				return basicTargetResolution{}, err
+				return basicTargetResolution{}, fmt.Errorf("resolve basic targets: %w", err)
 			}
 		}
 		cidr, err := strategy.Key(record)
 		if err != nil {
-			return basicTargetResolution{}, err
+			return basicTargetResolution{}, fmt.Errorf("resolve basic target CIDR: %w", err)
 		}
 		targets, err := strategy.targetsContext(ctx, record)
 		if err != nil {
-			return basicTargetResolution{}, err
+			return basicTargetResolution{}, fmt.Errorf("expand basic target selector: %w", err)
 		}
 		targets, err = filterScanTargetsContext(ctx, targets, predicate)
 		if err != nil {
-			return basicTargetResolution{}, err
+			return basicTargetResolution{}, fmt.Errorf("filter basic targets: %w", err)
 		}
 		if len(targets) == 0 {
 			continue
@@ -205,7 +213,7 @@ func resolveBasicTargetsContext(ctx context.Context, records []input.CIDRRecord,
 func resolveBasicFallbackTargetsContext(ctx context.Context, records []input.CIDRRecord, fallbackPorts []int, reachable func(string) bool) (basicTargetResolution, error) {
 	cidrGroups, err := buildCIDRGroupsWithPredicateContext(ctx, records, reachable)
 	if err != nil {
-		return basicTargetResolution{}, err
+		return basicTargetResolution{}, fmt.Errorf("build fallback CIDR groups: %w", err)
 	}
 	cidrs := make([]string, 0, len(cidrGroups))
 	for cidr := range cidrGroups {
@@ -240,7 +248,7 @@ func resolveBasicFallbackTargetsContext(ctx context.Context, records []input.CID
 func (resolution basicTargetResolution) groupForChunk(chunk task.Chunk) (cidrGroup, error) {
 	ports, err := parsePortRows(chunk.Ports)
 	if err != nil {
-		return cidrGroup{}, err
+		return cidrGroup{}, fmt.Errorf("parse resume chunk ports: %w", err)
 	}
 	if len(ports) == 0 {
 		return cidrGroup{}, fmt.Errorf("resume state for %s has no ports", chunk.CIDR)

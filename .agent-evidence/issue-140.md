@@ -31,6 +31,65 @@ GREEN result:
 ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 1.011s
 ```
 
+## Independent-review correction: contextual error wrapping
+
+The first independent review expanded its initial audit from 9 to 14 new error boundaries. It blocked Standards because these boundaries did not add context with `%w`:
+
+1. `basic_target_resolution.go:42`: resolve group targets.
+2. `basic_target_resolution.go:50`: merge group targets.
+3. `basic_target_resolution.go:59`: resolve record targets.
+4. `basic_target_resolution.go:90`: build targets after cancellation.
+5. `basic_target_resolution.go:117`: resolve the fallback fast path.
+6. `basic_target_resolution.go:127`: resolve records after cancellation.
+7. `basic_target_resolution.go:132`: resolve a row CIDR.
+8. `basic_target_resolution.go:136`: expand a row selector.
+9. `basic_target_resolution.go:140`: filter expanded targets.
+10. `basic_target_resolution.go:208`: build fallback CIDR groups.
+11. `basic_target_resolution.go:243`: parse resume chunk ports.
+12. `chunk_lifecycle.go:116`: derive fallback ports from chunks.
+13. `chunk_lifecycle.go:201`: rebuild a basic chunk.
+14. `scan_runtime.go:100`: load the saved basic fallback.
+
+The focused runtime test also exposed the resolver caller in `chunk_lifecycle.go`. The correction wraps this fifteenth boundary as `rebuild basic target resolution: %w`. This wrapper keeps the rich path unchanged.
+
+RED command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./pkg/scanapp -run 'Test(ResolveBasicTargetsContext_WrapsCancellationWithStage|BuildRuntimeWithPredicateContext_WrapsResolverCancellationWithStage)$' -count=1
+```
+
+RED result:
+
+```text
+--- FAIL: TestResolveBasicTargetsContext_WrapsCancellationWithStage (0.00s)
+    basic_target_resolution_errors_test.go:28: resolve error = context canceled, want resolve stage context
+--- FAIL: TestBuildRuntimeWithPredicateContext_WrapsResolverCancellationWithStage (0.00s)
+    basic_target_resolution_errors_test.go:63: runtime rebuild error = context canceled, want rebuild stage context
+FAIL
+FAIL github.com/xuxiping/port-scan-mk3/pkg/scanapp 0.006s
+```
+
+GREEN command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./pkg/scanapp -run 'Test(ResolveBasicTargetsContext_WrapsCancellationWithStage|BuildRuntimeWithPredicateContext_WrapsResolverCancellationWithStage)$' -count=1
+```
+
+GREEN result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 0.006s
+```
+
+Both tests use `errors.Is(err, context.Canceled)`. They prove that the new text keeps the original error chain.
+
+Focused race result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./pkg/scanapp -run 'Test(ResolveBasicTargetsContext_WrapsCancellationWithStage|BuildRuntimeWithPredicateContext_WrapsResolverCancellationWithStage)$' -count=1
+ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 1.023s
+```
+
 ## AC4: Basic row ports make the port file optional
 
 RED command:
@@ -271,10 +330,10 @@ The pragmatic Simple English check found no prohibited pattern in added English 
 
 ## Final quality gates
 
-`GOTOOLCHAIN=go1.24.4 make verify` exited with code 0:
+After the independent-review correction, `GOTOOLCHAIN=go1.24.4 make verify` exited with code 0:
 
 ```text
-coverage gate passed: 85.1%
+coverage gate passed: 85.2%
 
 === RESULT ===
 All selected quality gates passed.

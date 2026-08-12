@@ -2,6 +2,7 @@ package scanapp
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -97,7 +98,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	if snapshot.TargetSemanticsVersion == state.CurrentTargetSemanticsVersion && !hasRichRecords(inputs.cidrRecords) {
 		inputs.portSpecs, err = inputPortSpecsFromRows(snapshot.BasicPortFallback)
 		if err != nil {
-			return err
+			return fmt.Errorf("load snapshot basic port fallback: %w", err)
 		}
 	}
 	// A successful legacy check proves that the snapshot contains no denied

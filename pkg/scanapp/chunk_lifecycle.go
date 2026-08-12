@@ -113,7 +113,7 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 		var err error
 		defaultPorts, err = basicFallbackFromChunks(chunks)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("derive basic port fallback from chunks: %w", err)
 		}
 	}
 	incompleteKeys := make(map[string]struct{}, len(chunks))
@@ -161,6 +161,9 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 			groups, err = buildRichGroupsWithPredicateContext(ctx, records, reachable)
 		} else {
 			basicResolution, err = resolveBasicTargetsContext(ctx, records, defaultPorts, reachable)
+			if err != nil {
+				return nil, fmt.Errorf("rebuild basic target resolution: %w", err)
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -198,7 +201,7 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 			}
 			group, err = basicResolution.groupForChunk(*ch)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("rebuild basic chunk targets: %w", err)
 			}
 		}
 
