@@ -152,6 +152,13 @@ func defaultSnapshotFileOps() snapshotFileOps {
 
 var fileOps = defaultSnapshotFileOps()
 
+type snapshotLoadFileOps struct {
+	stat func(string) (os.FileInfo, error)
+	open func(string) (*os.File, error)
+}
+
+var loadFileOps = snapshotLoadFileOps{stat: os.Stat, open: os.Open}
+
 // SaveSnapshot writes resume state as the current JSON envelope.
 func SaveSnapshot(path string, snap Snapshot) error {
 	return SaveSnapshotWithLimits(path, snap, DefaultSnapshotLimits())
@@ -280,7 +287,7 @@ func writeFileViaTempRename(path string, data []byte, perm os.FileMode) (err err
 // those of the file it replaces when one exists, so a save never loosens
 // permissions an operator tightened, and fallback for a first save.
 func destinationMode(path string, fallback os.FileMode) os.FileMode {
-	info, err := os.Stat(path)
+	info, err := loadFileOps.stat(path)
 	if err != nil {
 		return fallback
 	}
@@ -296,32 +303,32 @@ func LoadSnapshot(path string) (Snapshot, error) {
 // LoadSnapshotWithLimits reads path and returns a snapshot that fits limits.
 // It accepts current and legacy JSON. It returns a path, read, decode, or limit error.
 func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error) {
-	if limits.MaxBytes > 0 {
-		info, err := os.Stat(path)
-		if err != nil {
-			return Snapshot{}, fmt.Errorf("stat snapshot %s: %w", path, err)
-		}
-		if info.Size() >= 0 && uint64(info.Size()) > limits.MaxBytes {
-			return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(info.Size()), limits.MaxBytes, "-snapshot-size-limit-gb")
-		}
+	info, err := os.Stat(path)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("stat snapshot %s: %w", path, err)
 	}
-	f, err := os.Open(path)
+	if info.Size() < 0 || uint64(info.Size()) > uint64(math.MaxInt) {
+		return Snapshot{}, fmt.Errorf("snapshot %s size %d cannot fit in memory", path, info.Size())
+	}
+	if limits.MaxBytes > 0 && uint64(info.Size()) > limits.MaxBytes {
+		return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(info.Size()), limits.MaxBytes, "-snapshot-size-limit-gb")
+	}
+	f, err := loadFileOps.open(path)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("open snapshot %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	var reader io.Reader = f
-	if limits.MaxBytes > 0 && limits.MaxBytes < math.MaxInt64 {
-		reader = io.LimitReader(f, int64(limits.MaxBytes)+1)
+	data := make([]byte, int(info.Size()))
+	if _, err := io.ReadFull(f, data); err != nil {
+		return Snapshot{}, fmt.Errorf("read snapshot %s: file size changed after stat: %w", path, err)
 	}
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("read snapshot %s: %w", path, err)
+	var extra [1]byte
+	if count, readErr := f.Read(extra[:]); count != 0 || readErr != io.EOF {
+		if readErr == nil {
+			readErr = errors.New("file grew after stat")
+		}
+		return Snapshot{}, fmt.Errorf("read snapshot %s: file size changed after stat: %w", path, readErr)
 	}
-	if limits.MaxBytes > 0 && uint64(len(data)) > limits.MaxBytes {
-		return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(len(data)), limits.MaxBytes, "-snapshot-size-limit-gb")
-	}
-
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		return Snapshot{}, errors.New("unexpected end of JSON input")
@@ -330,7 +337,7 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 	switch trimmed[0] {
 	case '[':
 		var chunks []task.Chunk
-		if err := decodeStrictJSON(trimmed, &chunks); err != nil {
+		if err := json.Unmarshal(trimmed, &chunks); err != nil {
 			return Snapshot{}, err
 		}
 		snap := Snapshot{Chunks: chunks}
@@ -339,9 +346,18 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 		}
 		return snap, nil
 	case '{':
-		var env snapshotEnvelope
-		if err := decodeStrictJSON(trimmed, &env); err != nil {
+		preScanPresent, err := validateSnapshotSchema(trimmed)
+		if err != nil {
 			return Snapshot{}, err
+		}
+		env := snapshotEnvelope{PreScanPing: &preScanPingEnvelope{
+			UnreachableIPv4U32: make([]uint32, 0, unreachableCapacityHint(uint64(len(trimmed)), limits.MaxUnreachableIPs)),
+		}}
+		if err := json.Unmarshal(trimmed, &env); err != nil {
+			return Snapshot{}, err
+		}
+		if !preScanPresent {
+			env.PreScanPing = nil
 		}
 		if env.Chunks == nil {
 			return Snapshot{}, errors.New("resume snapshot missing required chunks field")
@@ -411,21 +427,6 @@ func snapshotLimitError(path, objectType string, count, limit uint64, flagName s
 
 func hasPreScanPingState(state PreScanPingState) bool {
 	return state.Enabled || state.TimeoutMS != 0 || len(state.UnreachableIPv4U32) > 0
-}
-
-func decodeStrictJSON(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return errors.New("unexpected trailing JSON content")
-		}
-		return err
-	}
-	return nil
 }
 
 // Save serializes the chunk resume state to a JSON file at path. Save uses the

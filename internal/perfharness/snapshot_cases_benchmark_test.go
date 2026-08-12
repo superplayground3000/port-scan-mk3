@@ -10,10 +10,18 @@ import (
 )
 
 func BenchmarkSnapshotMixedTenMB(b *testing.B) {
+	benchmarkSnapshotMixed(b, 10_000_000)
+}
+
+func BenchmarkSnapshotMixedHundredMB(b *testing.B) {
+	benchmarkSnapshotMixed(b, 100_000_000)
+}
+
+func benchmarkSnapshotMixed(b *testing.B, targetBytes uint64) {
 	spec := FixtureSpec{
 		Family: FamilySnapshotHeavy,
 		Shape:  "mixed",
-		Scale:  Scale{TargetBytes: 10_000_000},
+		Scale:  Scale{TargetBytes: targetBytes},
 		Seed:   DefaultGeneratorSeed,
 	}
 	suite := New()

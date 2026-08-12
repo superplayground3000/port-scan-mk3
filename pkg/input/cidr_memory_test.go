@@ -31,7 +31,7 @@ func TestLoadCIDRsHundredThousandRowsKeepsPeakHeapWithinScaleBudget(t *testing.T
 		}
 		runtime.KeepAlive(loaded)
 	})
-	const maximumPeakHeap = uint64(85_000_000)
+	const maximumPeakHeap = uint64(70_000_000)
 	t.Logf("peak heap increase = %d bytes", peak)
 	if peak > maximumPeakHeap {
 		t.Fatalf("peak heap increase = %d bytes, want at most %d", peak, maximumPeakHeap)
@@ -39,7 +39,14 @@ func TestLoadCIDRsHundredThousandRowsKeepsPeakHeapWithinScaleBudget(t *testing.T
 }
 
 func BenchmarkLoadCIDRsHundredThousandRows(b *testing.B) {
-	const records = 100_000
+	benchmarkLoadCIDRs(b, 100_000)
+}
+
+func BenchmarkLoadCIDRsMillionRows(b *testing.B) {
+	benchmarkLoadCIDRs(b, 1_000_000)
+}
+
+func benchmarkLoadCIDRs(b *testing.B, records int) {
 	path := writeCIDRMemoryFixture(b, records)
 	b.ReportAllocs()
 	b.ResetTimer()

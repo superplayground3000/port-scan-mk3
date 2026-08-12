@@ -45,6 +45,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -343,14 +344,15 @@ func (r *CIDRRecord) Parse() error {
 }
 
 func parseSelector(raw string) (*net.IPNet, error) {
-	if ip := net.ParseIP(raw); ip != nil {
-		v4 := ip.To4()
-		if v4 == nil {
+	if address, err := netip.ParseAddr(raw); err == nil {
+		address = address.Unmap()
+		if !address.Is4() {
 			return nil, fmt.Errorf("only ipv4 is supported")
 		}
+		v4 := address.As4()
 		return &net.IPNet{
-			IP:   v4,
-			Mask: net.CIDRMask(32, 32),
+			IP:   net.IP{v4[0], v4[1], v4[2], v4[3]},
+			Mask: net.IPMask{0xff, 0xff, 0xff, 0xff},
 		}, nil
 	}
 	_, sel, err := net.ParseCIDR(raw)
