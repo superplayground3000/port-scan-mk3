@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,9 +20,71 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 type measureAction func(context.Context, uint64, uint64, MeasuredAction) (Observation, error)
+
+type orchestrationBucketConfig struct {
+	config.GenerateBucketsConfig
+	expansion config.TargetExpansionValues
+}
+
+func (cfg orchestrationBucketConfig) ResolveTargetExpansion() (config.TargetExpansionValues, error) {
+	return cfg.expansion, nil
+}
+
+type orchestrationScanConfig struct {
+	config.ScanConfig
+	expansion config.TargetExpansionValues
+}
+
+func (cfg orchestrationScanConfig) ResolveTargetExpansion() (config.TargetExpansionValues, error) {
+	return cfg.expansion, nil
+}
+
+func withBucketExpansion(base config.GenerateBucketsConfig, candidates, memoryGB uint64) (orchestrationBucketConfig, error) {
+	expansion, err := explicitOrchestrationExpansion(candidates, memoryGB)
+	return orchestrationBucketConfig{GenerateBucketsConfig: base, expansion: expansion}, err
+}
+
+func withScanExpansion(base config.ScanConfig, candidates, memoryGB uint64) (orchestrationScanConfig, error) {
+	expansion, err := explicitOrchestrationExpansion(candidates, memoryGB)
+	return orchestrationScanConfig{ScanConfig: base, expansion: expansion}, err
+}
+
+func explicitOrchestrationExpansion(candidates, memoryGB uint64) (config.TargetExpansionValues, error) {
+	if candidates > math.MaxInt64 || memoryGB > math.MaxInt64 {
+		return config.TargetExpansionValues{}, fmt.Errorf("orchestration expansion limit exceeds int64")
+	}
+	limits, err := task.NewExpansionLimits(int64(candidates), int64(memoryGB))
+	if err != nil {
+		return config.TargetExpansionValues{}, err
+	}
+	return config.TargetExpansionValues{Limits: limits, CountSet: true, MemorySet: true}, nil
+}
+
+func estimateOrchestrationExpansion(records []input.CIDRRecord, scannableTasks uint64) (ExpansionOverride, error) {
+	estimate, err := task.EstimateAuthorizedCIDRRecords(records, task.ExpansionLimits{}, nil)
+	if err != nil {
+		return ExpansionOverride{}, fmt.Errorf("estimate compact task expansion: %w", err)
+	}
+	const decimalGB = uint64(1_000_000_000)
+	memoryGB := estimate.EstimatedBytes / decimalGB
+	if estimate.EstimatedBytes%decimalGB != 0 {
+		memoryGB++
+	}
+	if memoryGB == 0 {
+		memoryGB = 1
+	}
+	return ExpansionOverride{
+		CandidateLimit: estimate.CandidateCount,
+		MemoryLimitGB:  memoryGB,
+		EstimatedBytes: estimate.EstimatedBytes,
+		ScannableTasks: scannableTasks,
+		Reason:         "CIDR broadcast filtering needs raw candidates above the scannable task count.",
+	}, nil
+}
 
 // RunOrchestrationSmoke measures scan orchestration from a prepared compact snapshot.
 func (suite Suite) RunOrchestrationSmoke(ctx context.Context, spec WorkflowSpec) (WorkflowResult, error) {
@@ -39,12 +102,21 @@ func runOrchestrationWorkflow(ctx context.Context, spec WorkflowSpec, measure me
 	portPath := filepath.Join(spec.OutputDir, "ports.csv")
 	snapshotPath := filepath.Join(spec.OutputDir, "buckets.json")
 	var fixtureBytes uint64
+	var expansionOverride ExpansionOverride
 	fixtureGeneration, err := measure(ctx, 0, spec.Items, func(runCtx context.Context) (uint64, error) {
 		if writeErr := writeCompactTaskInput(runCtx, inputPath, spec.Items, spec.LineEnding); writeErr != nil {
 			return 0, writeErr
 		}
 		if writeErr := os.WriteFile(portPath, []byte("443/tcp\n"), 0o644); writeErr != nil {
 			return 0, fmt.Errorf("write orchestration ports: %w", writeErr)
+		}
+		records, loadErr := input.LoadCIDRsFileWithColumnsContext(runCtx, inputPath, "ip", "ip_cidr", input.CIDRLimits{})
+		if loadErr != nil {
+			return 0, fmt.Errorf("load compact task input for expansion estimate: %w", loadErr)
+		}
+		expansionOverride, loadErr = estimateOrchestrationExpansion(records, spec.Items)
+		if loadErr != nil {
+			return 0, loadErr
 		}
 		cfg, configErr := config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
 			CIDRFile: inputPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr", PortFile: portPath,
@@ -53,7 +125,11 @@ func runOrchestrationWorkflow(ctx context.Context, spec WorkflowSpec, measure me
 		if configErr != nil {
 			return 0, configErr
 		}
-		if runErr := scanapp.GenerateBuckets(runCtx, cfg, io.Discard, scanapp.GenerateBucketsOptions{}); runErr != nil {
+		boundedConfig, configErr := withBucketExpansion(cfg, expansionOverride.CandidateLimit, expansionOverride.MemoryLimitGB)
+		if configErr != nil {
+			return 0, configErr
+		}
+		if runErr := scanapp.GenerateBuckets(runCtx, boundedConfig, io.Discard, scanapp.GenerateBucketsOptions{}); runErr != nil {
 			return 0, fmt.Errorf("prepare orchestration snapshot: %w", runErr)
 		}
 		inputBytes, sizeErr := fileSize(inputPath)
@@ -91,11 +167,15 @@ func runOrchestrationWorkflow(ctx context.Context, spec WorkflowSpec, measure me
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create orchestration scan configuration: %w", err)
 	}
+	boundedScanConfig, err := withScanExpansion(scanConfig, expansionOverride.CandidateLimit, expansionOverride.MemoryLimitGB)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
 	var probes atomic.Uint64
 	tasks := newOrderedTaskEvidence()
 	var scanPath, openPath string
 	stage, err := measure(ctx, fixtureBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
-		if runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
+		if runErr := scanapp.Run(runCtx, boundedScanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			DisableKeyboard: true,
 			Dial: func(context.Context, string, string) (net.Conn, error) {
 				probes.Add(1)
@@ -122,7 +202,12 @@ func runOrchestrationWorkflow(ctx context.Context, spec WorkflowSpec, measure me
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	return workflowResultFromFiles(probes.Load(), 0, true, fixtureGeneration, stage, scanPath, openPath, tasks)
+	result, err := workflowResultFromFiles(probes.Load(), 0, true, fixtureGeneration, stage, scanPath, openPath, tasks)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	result.ExpansionOverride = &expansionOverride
+	return result, nil
 }
 
 func writeCompactTaskInput(ctx context.Context, path string, items uint64, lineEnding string) (resultErr error) {

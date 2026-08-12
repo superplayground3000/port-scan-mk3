@@ -33,17 +33,27 @@ type WorkflowSpec struct {
 
 // WorkflowResult records correctness data from the production workflow.
 type WorkflowResult struct {
-	ProbeCount        uint64           `json:"probe_count"`
-	ReachabilityCount uint64           `json:"reachability_count"`
-	PrePingCompleted  bool             `json:"pre_ping_completed"`
-	ScanRows          uint64           `json:"scan_rows"`
-	OpenRows          uint64           `json:"open_rows"`
-	SnapshotCompleted bool             `json:"snapshot_completed"`
-	ScanDigest        string           `json:"scan_digest"`
-	OpenDigest        string           `json:"open_digest"`
-	FixtureGeneration Observation      `json:"fixture_generation"`
-	Stage             Observation      `json:"stage"`
-	Semantic          SemanticArtifact `json:"semantic"`
+	ProbeCount        uint64             `json:"probe_count"`
+	ReachabilityCount uint64             `json:"reachability_count"`
+	PrePingCompleted  bool               `json:"pre_ping_completed"`
+	ScanRows          uint64             `json:"scan_rows"`
+	OpenRows          uint64             `json:"open_rows"`
+	SnapshotCompleted bool               `json:"snapshot_completed"`
+	ScanDigest        string             `json:"scan_digest"`
+	OpenDigest        string             `json:"open_digest"`
+	FixtureGeneration Observation        `json:"fixture_generation"`
+	Stage             Observation        `json:"stage"`
+	Semantic          SemanticArtifact   `json:"semantic"`
+	ExpansionOverride *ExpansionOverride `json:"expansion_override,omitempty"`
+}
+
+// ExpansionOverride records the minimum limits for one compact task fixture.
+type ExpansionOverride struct {
+	CandidateLimit uint64 `json:"candidate_limit"`
+	MemoryLimitGB  uint64 `json:"memory_limit_gb"`
+	EstimatedBytes uint64 `json:"estimated_bytes"`
+	ScannableTasks uint64 `json:"scannable_tasks"`
+	Reason         string `json:"reason"`
 }
 
 // RichDenySpec defines one bounded denied-work production run.

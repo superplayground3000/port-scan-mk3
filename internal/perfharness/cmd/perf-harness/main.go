@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -866,6 +867,7 @@ func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Harness, o
 	fixtureObservations := make([]perfharness.Observation, 0, 6)
 	correct := true
 	var semantic perfharness.SemanticArtifact
+	var expansionOverride *perfharness.ExpansionOverride
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
 		workflow, err := runWorkflow(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: items, Workers: workers, LineEnding: lineEnding})
@@ -880,8 +882,11 @@ func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Harness, o
 		observations = append(observations, workflow.Stage)
 		if run == 0 {
 			semantic = workflow.Semantic
+			expansionOverride = workflow.ExpansionOverride
 		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
 			return perfharness.CaseResult{}, fmt.Errorf("workflow run parity differs in %s", strings.Join(differences, ", "))
+		} else if !reflect.DeepEqual(expansionOverride, workflow.ExpansionOverride) {
+			return perfharness.CaseResult{}, fmt.Errorf("workflow expansion override changed between runs")
 		}
 		if err := removeCompletedCaseRun(outputDir, run); err != nil {
 			return perfharness.CaseResult{}, err
@@ -897,7 +902,11 @@ func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Harness, o
 	}
 	result.FixtureGeneration = &fixtureGeneration
 	result.LogicalItems = items
-	result.Correctness = perfharness.Correctness{Headers: correct, RowCounts: correct, SnapshotProgress: correct, ExpectedValues: correct, Digests: correct}
+	detail := ""
+	if expansionOverride != nil {
+		detail = fmt.Sprintf("Explicit compact-fixture limits: %d raw candidates and %d GB. %s", expansionOverride.CandidateLimit, expansionOverride.MemoryLimitGB, expansionOverride.Reason)
+	}
+	result.Correctness = perfharness.Correctness{Headers: correct, RowCounts: correct, SnapshotProgress: correct, ExpectedValues: correct, Digests: correct, Detail: detail}
 	result.Verdict = perfharness.Verdict{Passed: correct}
 	result.Semantic = &semantic
 	return result, nil
