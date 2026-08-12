@@ -239,3 +239,44 @@ The object-heavy snapshot shapes remain independent correctness cases.
 
 After this correction, the focused harness packages passed in `2.816s` and `17.744s`.
 The complete `make verify` gate also passed at `85.0%` coverage.
+
+### Complete performance matrix after the growth correction
+
+Command: `bash scripts/performance_gate.sh full /media/hp/secondary/issue146-performance-e8b9ce7`
+
+The command completed all cases in `22:20.01`.
+All 60 resource-limit rows passed.
+The rich oversized input passed both the default-reject and override-complete cases.
+
+The same-shape snapshot growth ratios were:
+
+| Adjacent sizes | Wall-time ratio | Allocated-byte ratio |
+| --- | ---: | ---: |
+| 1 MB to 10 MB | `7.6579x` | `9.5571x` |
+| 10 MB to 100 MB | `8.4885x` | `8.3600x` |
+| 100 MB to 1 GB | `9.0804x` | `8.9645x` |
+
+Each wall-time ratio was less than `12.5x`.
+Each allocated-byte ratio was less than `11x`.
+
+The command exited 1 only for these known issue 151 absolute-memory verdicts:
+
+```text
+record-heavy/one-gigabyte: committed memory 10280669184 and 10345607168 exceeds 8000000000
+snapshot-heavy/mixed/one-gigabyte: committed memory 7863914496 exceeds 6000000000
+```
+
+The run reached `20045752` KB maximum RSS.
+The raw process metric reported `Swaps: 0`.
+This metric describes only the measured process.
+The complete JSON and Markdown reports are in `/media/hp/secondary/issue146-performance-e8b9ce7/report/`.
+
+### Cross-platform and writing checks
+
+Command: `env GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/port-scan-issue146-windows-amd64.exe ./cmd/port-scan`
+
+Result: passed with no output.
+
+The pragmatic Simple English self-check covered all changed documentation, comments, help text, and errors.
+The text uses active voice, short sentences, consistent limit terms, and conditions before commands.
+Commands, flags, identifiers, paths, and quoted errors keep their exact spelling.
