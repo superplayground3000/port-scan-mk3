@@ -55,3 +55,15 @@ func TestCancellationSnapshotReferenceMatchesUninterruptedProductionOrder(t *tes
 		t.Fatalf("production order = count:%d digest:%s, reference = count:%d digest:%s", observed.Count, observed.Digest, reference.Count, reference.Digest)
 	}
 }
+
+func TestCancellationSnapshotLimitBypassChangesOnlySerializedBytes(t *testing.T) {
+	limits := cancellationSnapshotLimits()
+	defaults := state.DefaultSnapshotLimits()
+	if limits.MaxBytes != 0 {
+		t.Fatalf("snapshot byte limit = %d, want disabled", limits.MaxBytes)
+	}
+	if limits.MaxChunks != defaults.MaxChunks || limits.MaxPortEntries != defaults.MaxPortEntries ||
+		limits.MaxUnreachableIPs != defaults.MaxUnreachableIPs {
+		t.Fatalf("snapshot object limits changed: got %+v, defaults %+v", limits, defaults)
+	}
+}

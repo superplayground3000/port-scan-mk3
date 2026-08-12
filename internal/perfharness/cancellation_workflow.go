@@ -16,6 +16,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
@@ -228,7 +229,7 @@ func runRichExpansionCancellation(ctx context.Context, selectors []string, trigg
 }
 
 func runBucketCancellation(ctx context.Context, spec CancellationSpec, injector *CancellationInjector, inputs cancellationInputPaths) error {
-	cfg, err := config.NewGenerateBuckets(config.GenerateBucketsValues{
+	cfg, err := config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
 		CIDRFile:         inputs.manifest.ArtifactPath,
 		CIDRIPCol:        "ip",
 		CIDRIPCidrCol:    "ip_cidr",
@@ -236,7 +237,7 @@ func runBucketCancellation(ctx context.Context, spec CancellationSpec, injector 
 		SnapshotOutput:   inputs.snapshotPath,
 		Workers:          1,
 		ProgressInterval: int(spec.Items) + 1,
-	})
+	}, cancellationGenerateResourceLimits())
 	if err != nil {
 		return err
 	}
@@ -253,24 +254,24 @@ func prepareScanCancellation(ctx context.Context, spec CancellationSpec) (cancel
 	if err != nil {
 		return cancellationScanRun{}, err
 	}
-	bucketConfig, err := config.NewGenerateBuckets(config.GenerateBucketsValues{
+	bucketConfig, err := config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
 		CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: inputs.portPath, SnapshotOutput: inputs.snapshotPath, Workers: spec.Workers,
 		ProgressInterval: int(spec.Items) + 1,
-	})
+	}, cancellationGenerateResourceLimits())
 	if err != nil {
 		return cancellationScanRun{}, err
 	}
 	if err := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); err != nil {
 		return cancellationScanRun{}, err
 	}
-	scanConfig, err := config.NewScan(config.ScanValues{
+	scanConfig, err := config.NewScanWithResourceLimits(config.ScanValues{
 		CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
 		Workers: 1, DialTimeout: time.Second, BucketRate: 1,
 		BucketCapacity: 1, OutputFlushResults: 1, LogLevel: "error", Format: "json", Quiet: true,
 		Pressure: config.PressureDisabled(),
-	})
+	}, cancellationScanResourceLimits())
 	if err != nil {
 		return cancellationScanRun{}, err
 	}
@@ -311,13 +312,13 @@ func recoverCanceledScan(ctx context.Context, spec CancellationSpec, inputs canc
 	}
 	tasks := newOrderedTaskEvidence()
 	if remaining > 0 {
-		recoveryConfig, err := config.NewScan(config.ScanValues{
+		recoveryConfig, err := config.NewScanWithResourceLimits(config.ScanValues{
 			CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 			PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
 			Workers: spec.Workers, DialTimeout: time.Second, BucketRate: 1,
 			BucketCapacity: 1, OutputFlushResults: 1000, LogLevel: "error", Format: "json", Quiet: true,
 			Pressure: config.PressureDisabled(),
-		})
+		}, cancellationScanResourceLimits())
 		if err != nil {
 			return nil, err
 		}
@@ -487,4 +488,27 @@ func (*injectingReporter) Done() {}
 
 func cancellationThreshold(total uint64, percent int) uint64 {
 	return (total*uint64(percent) + 99) / 100
+}
+
+func cancellationSnapshotLimits() state.SnapshotLimits {
+	limits := state.DefaultSnapshotLimits()
+	limits.MaxBytes = 0
+	return limits
+}
+
+func cancellationGenerateResourceLimits() config.GenerateBucketsResourceLimits {
+	return config.GenerateBucketsResourceLimits{
+		CIDR:     input.DefaultCIDRLimits(""),
+		Port:     input.DefaultPortLimits(""),
+		Snapshot: cancellationSnapshotLimits(),
+	}
+}
+
+func cancellationScanResourceLimits() config.ScanResourceLimits {
+	return config.ScanResourceLimits{
+		CIDR:     input.DefaultCIDRLimits(""),
+		Port:     input.DefaultPortLimits(""),
+		Snapshot: cancellationSnapshotLimits(),
+		Pressure: pressure.DefaultResponseLimits(),
+	}
 }
