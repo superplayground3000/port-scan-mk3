@@ -175,7 +175,7 @@ func (Suite) RunCancellationSmoke(ctx context.Context, spec CancellationSpec) (C
 		result.StopDuration = time.Since(trigger.at)
 	}
 	if spec.Stage == CancellationResumeRebuild || spec.Stage == CancellationResultOutput {
-		snapshot, loadErr := state.LoadSnapshot(filepath.Join(spec.OutputDir, "buckets.json"))
+		snapshot, loadErr := state.LoadSnapshotWithLimits(filepath.Join(spec.OutputDir, "buckets.json"), cancellationSnapshotLimits())
 		if loadErr != nil {
 			return result, fmt.Errorf("load canceled production snapshot: %w", loadErr)
 		}
