@@ -398,3 +398,33 @@ The observed estimate was 9,900,037 records.
 The stage started no probes.
 
 The retained diagnostic is in `/media/hp/secondary/issue151-performance-5a9ef5e-diagnostics/cancel-input-99-10m/`.
+
+## Other 99-percent cancellation stages
+
+The exact 10-million-item diagnostics used commit `548802b`.
+Each temporary build-tag driver called the existing cancellation seam one time.
+
+| Stage | Stage wall time | Work-stop time | Peak committed | Recovery | Swaps |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Rich expansion | `2.722s` | `27,292ns` | `649,281,536` | Not applicable | `0` |
+| Bucket generation | `49.494s` | `55,404ns` | `16,248,602,624` | Not applicable | `0` |
+| Resume rebuild | `72.696s` | `92,233ns` | `20,494,516,224` | Complete | `0` |
+
+Rich expansion and bucket generation started no probes.
+Resume rebuild canceled before scan dispatch and also started no probes.
+
+The resume-rebuild saved cursor was zero because cancellation occurred during target reconstruction.
+The recovery run therefore scanned all 10,000,000 tasks.
+Both result files contained exactly 10,000,000 rows.
+
+The recovery and reference digest was:
+
+```text
+baf309bb144d15b5227315ad2913e26fdfb2a9d81343064951a5dbe8a5c05630
+```
+
+The retained diagnostics are in these directories:
+
+- `/media/hp/secondary/issue151-performance-548802b-diagnostics/cancel-rich-99-10m/`
+- `/media/hp/secondary/issue151-performance-548802b-diagnostics/cancel-bucket-99-10m/`
+- `/media/hp/secondary/issue151-performance-548802b-diagnostics/cancel-resume-99-10m/`
