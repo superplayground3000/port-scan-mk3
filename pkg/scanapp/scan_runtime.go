@@ -43,6 +43,7 @@ type scanRuntimeAdapters struct {
 	resultObserver            func(completed uint64)
 	probeTelemetryObserver    func(ProbeTelemetry)
 	snapshotTelemetryObserver func(SnapshotTelemetry)
+	saveSnapshot              snapshotSaveFunc
 }
 
 type scanRuntime struct {
@@ -327,7 +328,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
 	snapshotStartedAt := time.Now()
-	rewoundChunks, snapshotErr := persistResumeSnapshotWithLimits(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, snapshot.TargetSemanticsVersion, snapshot.BasicPortFallback, r.input.resourceLimits.Snapshot, dispatchErr, runErr)
+	rewoundChunks, snapshotErr := persistResumeSnapshotWithSaver(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, snapshot.TargetSemanticsVersion, snapshot.BasicPortFallback, r.input.resourceLimits.Snapshot, dispatchErr, runErr, r.adapters.saveSnapshot)
 	if r.adapters.snapshotTelemetryObserver != nil {
 		r.adapters.snapshotTelemetryObserver(SnapshotTelemetry{RewoundChunks: uint64(rewoundChunks)})
 	}

@@ -160,3 +160,35 @@ func TestCompareReportsKeepsStableFailureEvidence(t *testing.T) {
 		t.Fatalf("output recovery difference = %v", differences)
 	}
 }
+
+func TestCompareReportsKeepsStableSnapshotFailureEvidence(t *testing.T) {
+	t.Parallel()
+
+	run := perfharness.FailureResult{
+		Scenario: "snapshot-save-failure", Observed: true, ErrorClass: "snapshot-save",
+		Operation: "snapshot-replace", TotalItems: 10,
+		Snapshot: &perfharness.FailureSnapshotEvidence{
+			FailureOperation: "replace", PreviousDigest: "same", AfterDigest: "same",
+			PreviousLoadable: true, TempFilesRemoved: true, HandleReleased: true,
+			ErrorPrecedence: true, PressureFailures: 3, RewoundChunks: 1,
+		},
+	}
+	left := perfharness.Report{Cases: []perfharness.CaseResult{{Name: "snapshot", Failure: &perfharness.FailureCaseEvidence{
+		SchemaVersion: perfharness.FailureEvidenceSchemaVersion, Runs: []perfharness.FailureResult{run},
+	}}}}
+	right := left
+	right.Cases = append([]perfharness.CaseResult(nil), left.Cases...)
+	rightEvidence := *left.Cases[0].Failure
+	rightEvidence.Runs = append([]perfharness.FailureResult(nil), left.Cases[0].Failure.Runs...)
+	rightSnapshot := *left.Cases[0].Failure.Runs[0].Snapshot
+	rightEvidence.Runs[0].Snapshot = &rightSnapshot
+	right.Cases[0].Failure = &rightEvidence
+
+	if differences := perfharness.New().CompareReports(left, right); len(differences) != 0 {
+		t.Fatalf("equal snapshot failure evidence differs: %v", differences)
+	}
+	right.Cases[0].Failure.Runs[0].Snapshot.PreviousLoadable = false
+	if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "snapshot:failure") {
+		t.Fatalf("snapshot preservation difference = %v", differences)
+	}
+}

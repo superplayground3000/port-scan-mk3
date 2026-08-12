@@ -178,6 +178,36 @@ func TestSaveSnapshot_WhenReplaceFails_PreservesPreviousSnapshot(t *testing.T) {
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "replace")
 }
 
+func TestSaveSnapshotWithFailureInjectionPreservesThePreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	err := SaveSnapshotWithFailureInjection(path, replacementSnapshot(), DefaultSnapshotLimits(), SaveFailureInjection{
+		Operation: SaveFailureReplace,
+	})
+	if !errors.Is(err, ErrInjectedSnapshotSaveFailure) {
+		t.Fatalf("SaveSnapshotWithFailureInjection() error = %v, want injected failure", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read previous snapshot: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("failure injection changed the previous snapshot")
+	}
+	if _, loadErr := LoadSnapshot(path); loadErr != nil {
+		t.Fatalf("load previous snapshot: %v", loadErr)
+	}
+	assertNoTempFilesBesideSnapshot(t, path)
+	moved := path + ".handle-check"
+	if err := os.Rename(path, moved); err != nil {
+		t.Fatalf("previous snapshot handle was not released: %v", err)
+	}
+	if err := os.Rename(moved, path); err != nil {
+		t.Fatalf("restore previous snapshot: %v", err)
+	}
+}
+
 // TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot covers the
 // stage before any file exists — a read-only or full directory.
 func TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot(t *testing.T) {

@@ -78,11 +78,23 @@ func failureDifferences(left, right *FailureCaseEvidence) bool {
 	for index := range left.Runs {
 		a, b := left.Runs[index], right.Runs[index]
 		if a.Scenario != b.Scenario || a.Observed != b.Observed || a.ErrorClass != b.ErrorClass ||
-			a.Operation != b.Operation || a.TotalItems != b.TotalItems || failureOutputDifferences(a.Output, b.Output) {
+			a.Operation != b.Operation || a.TotalItems != b.TotalItems || failureOutputDifferences(a.Output, b.Output) ||
+			failureSnapshotDifferences(a.Snapshot, b.Snapshot) {
 			return true
 		}
 	}
 	return false
+}
+
+func failureSnapshotDifferences(left, right *FailureSnapshotEvidence) bool {
+	if left == nil || right == nil {
+		return left != right
+	}
+	return left.FailureOperation != right.FailureOperation || left.PreviousDigest != right.PreviousDigest ||
+		left.AfterDigest != right.AfterDigest || left.PreviousLoadable != right.PreviousLoadable ||
+		left.TempFilesRemoved != right.TempFilesRemoved || left.HandleReleased != right.HandleReleased ||
+		left.ErrorPrecedence != right.ErrorPrecedence || left.PressureFailures != right.PressureFailures ||
+		left.RewoundChunks != right.RewoundChunks
 }
 
 func failureOutputDifferences(left, right *FailureOutputEvidence) bool {

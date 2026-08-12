@@ -277,6 +277,60 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	}
 }
 
+func TestRun_WhenFatalSnapshotReplaceFails_PreservesThePreviousSnapshotAndReturnsSaveError(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/24,127.0.0.0/24,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := scanConfigFixture{
+		CIDRFile: cidrFile, PortFile: portFile, Output: filepath.Join(tmp, "out.csv"),
+		Timeout: 20 * time.Millisecond, BucketRate: 1, BucketCapacity: 1, Workers: 1,
+		Pressure: pressureConfigFixture{Interval: time.Millisecond}, LogLevel: "error",
+	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
+	before, err := os.ReadFile(cfg.Resume)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		PressureSource: pressureSourceFunc(func(context.Context) (pressure.Sample, error) {
+			return pressure.Sample{}, errors.New("scripted pressure failure")
+		}),
+		SnapshotFailure: &state.SaveFailureInjection{Operation: state.SaveFailureReplace},
+	})
+	if !errors.Is(runErr, state.ErrInjectedSnapshotSaveFailure) {
+		t.Fatalf("Run() error = %v, want snapshot save failure", runErr)
+	}
+	after, err := os.ReadFile(cfg.Resume)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("fatal snapshot failure changed the previous snapshot")
+	}
+	if _, err := state.LoadSnapshot(cfg.Resume); err != nil {
+		t.Fatalf("load previous snapshot: %v", err)
+	}
+	matches, err := filepath.Glob(cfg.Resume + ".tmp-*")
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("snapshot temp files = %v, error = %v", matches, err)
+	}
+	moved := cfg.Resume + ".handle-check"
+	if err := os.Rename(cfg.Resume, moved); err != nil {
+		t.Fatalf("snapshot handle was not released: %v", err)
+	}
+	if err := os.Rename(moved, cfg.Resume); err != nil {
+		t.Fatalf("restore snapshot: %v", err)
+	}
+}
+
 func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")

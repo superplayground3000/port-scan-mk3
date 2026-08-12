@@ -6,6 +6,8 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
+type snapshotSaveFunc func(string, state.Snapshot, state.SnapshotLimits) error
+
 // persistResumeSnapshot writes the resume snapshot when there is resumable work
 // (incomplete chunks, a hard error, or a graceful cancel). The output paths are
 // recorded so a subsequent -resume appends to the same result files (§3.7). The
@@ -22,6 +24,10 @@ func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chun
 }
 
 func persistResumeSnapshotWithLimits(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, targetExpansion *state.TargetExpansionState, targetSemanticsVersion int, basicPortFallback []string, limits state.SnapshotLimits, dispatchErr, runErr error) (int, error) {
+	return persistResumeSnapshotWithSaver(savePath, logger, runtimes, preScanPing, output, richDenyExcluded, targetExpansion, targetSemanticsVersion, basicPortFallback, limits, dispatchErr, runErr, state.SaveSnapshotWithLimits)
+}
+
+func persistResumeSnapshotWithSaver(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, targetExpansion *state.TargetExpansionState, targetSemanticsVersion int, basicPortFallback []string, limits state.SnapshotLimits, dispatchErr, runErr error, save snapshotSaveFunc) (int, error) {
 	rewoundChunks := 0
 	for _, rt := range runtimes {
 		if rt.tracker.RewindUnwritten() {
@@ -33,7 +39,7 @@ func persistResumeSnapshotWithLimits(savePath string, logger *scanLogger, runtim
 		return rewoundChunks, nil
 	}
 
-	if err := state.SaveSnapshotWithLimits(savePath, state.Snapshot{
+	if err := save(savePath, state.Snapshot{
 		Chunks:                 collectChunkStates(runtimes),
 		PreScanPing:            preScanPing,
 		Output:                 output,

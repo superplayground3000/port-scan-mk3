@@ -10,6 +10,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 const (
@@ -78,6 +79,7 @@ type RunOptions struct {
 	ProgressInterval          int
 	ReachabilityChecker       ReachabilityChecker
 	OutputFailure             *OutputFailureInjection
+	SnapshotFailure           *state.SaveFailureInjection
 
 	dashboardTerminalDetector func(io.Writer) bool
 	dashboardRefreshInterval  time.Duration
@@ -145,6 +147,13 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	}
 
 	logger := newLoggerWithQuiet(values.LogLevel, values.Format == "json", stderr, values.Quiet)
+	saveSnapshot := state.SaveSnapshotWithLimits
+	if opts.SnapshotFailure != nil {
+		injection := *opts.SnapshotFailure
+		saveSnapshot = func(path string, snapshot state.Snapshot, limits state.SnapshotLimits) error {
+			return state.SaveSnapshotWithFailureInjection(path, snapshot, limits, injection)
+		}
+	}
 	runtime := newScanRuntime(scanRuntimeInput{
 		values:                   values,
 		targetExpansion:          targetExpansion,
@@ -172,6 +181,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		resultObserver:            opts.ResultObserver,
 		probeTelemetryObserver:    opts.ProbeTelemetryObserver,
 		snapshotTelemetryObserver: opts.SnapshotTelemetryObserver,
+		saveSnapshot:              saveSnapshot,
 	})
 	if err := runtime.execute(ctx); err != nil {
 		return fmt.Errorf("execute scan runtime: %w", err)

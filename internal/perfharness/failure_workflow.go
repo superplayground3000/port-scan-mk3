@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
@@ -29,15 +30,29 @@ type FailureSpec struct {
 
 // FailureResult records an expected production failure.
 type FailureResult struct {
-	Scenario         string                 `json:"scenario"`
-	Observed         bool                   `json:"observed"`
-	ErrorText        string                 `json:"error_text"`
-	ErrorClass       string                 `json:"error_class"`
-	Operation        string                 `json:"operation"`
-	TotalItems       uint64                 `json:"total_items"`
-	Preparation      Observation            `json:"preparation"`
-	StageObservation Observation            `json:"stage_observation"`
-	Output           *FailureOutputEvidence `json:"output,omitempty"`
+	Scenario         string                   `json:"scenario"`
+	Observed         bool                     `json:"observed"`
+	ErrorText        string                   `json:"error_text"`
+	ErrorClass       string                   `json:"error_class"`
+	Operation        string                   `json:"operation"`
+	TotalItems       uint64                   `json:"total_items"`
+	Preparation      Observation              `json:"preparation"`
+	StageObservation Observation              `json:"stage_observation"`
+	Output           *FailureOutputEvidence   `json:"output,omitempty"`
+	Snapshot         *FailureSnapshotEvidence `json:"snapshot,omitempty"`
+}
+
+// FailureSnapshotEvidence records atomic-save and precedence correctness.
+type FailureSnapshotEvidence struct {
+	FailureOperation string `json:"failure_operation"`
+	PreviousDigest   string `json:"previous_digest"`
+	AfterDigest      string `json:"after_digest"`
+	PreviousLoadable bool   `json:"previous_loadable"`
+	TempFilesRemoved bool   `json:"temp_files_removed"`
+	HandleReleased   bool   `json:"handle_released"`
+	ErrorPrecedence  bool   `json:"error_precedence"`
+	PressureFailures uint64 `json:"pressure_failures"`
+	RewoundChunks    uint64 `json:"rewound_chunks"`
 }
 
 // Correct reports whether one failure run has the required stable evidence.
@@ -45,6 +60,13 @@ func (result FailureResult) Correct() bool {
 	common := result.Observed && result.ErrorText != "" && result.ErrorClass != "" && result.Operation != "" && result.TotalItems > 0
 	if !common {
 		return false
+	}
+	if result.Scenario == "snapshot-save-failure" {
+		snapshot := result.Snapshot
+		return snapshot != nil && snapshot.FailureOperation == string(state.SaveFailureReplace) &&
+			snapshot.PreviousDigest != "" && snapshot.PreviousDigest == snapshot.AfterDigest &&
+			snapshot.PreviousLoadable && snapshot.TempFilesRemoved && snapshot.HandleReleased &&
+			snapshot.ErrorPrecedence && snapshot.PressureFailures == 3
 	}
 	if result.Scenario != "output-failure" {
 		return true
@@ -79,9 +101,10 @@ type FailureOutputEvidence struct {
 }
 
 type failureInputs struct {
-	manifest     Manifest
-	portPath     string
-	snapshotPath string
+	manifest       Manifest
+	portPath       string
+	snapshotPath   string
+	snapshotDigest string
 }
 
 type failureStageState struct {
@@ -89,6 +112,8 @@ type failureStageState struct {
 	outputFailAt      uint64
 	probeTelemetry    scanapp.ProbeTelemetry
 	snapshotTelemetry scanapp.SnapshotTelemetry
+	pressureFailures  uint64
+	errorPrecedence   bool
 }
 
 // RunFailureSmoke executes one expected production failure.
@@ -126,6 +151,11 @@ func (Suite) RunFailureSmoke(ctx context.Context, spec FailureSpec) (FailureResu
 		if err != nil {
 			return FailureResult{}, err
 		}
+	} else if result.Scenario == "snapshot-save-failure" {
+		result.Snapshot, err = completeSnapshotFailureEvidence(inputs, stageState)
+		if err != nil {
+			return FailureResult{}, err
+		}
 	}
 	return result, nil
 }
@@ -147,9 +177,6 @@ func prepareFailureInputs(ctx context.Context, spec FailureSpec) (failureInputs,
 		return failureInputs{}, fmt.Errorf("write failure smoke ports: %w", err)
 	}
 	inputs.snapshotPath = filepath.Join(spec.OutputDir, "buckets.json")
-	if spec.Scenario == "snapshot-save-failure" {
-		return inputs, nil
-	}
 	bucketConfig, err := failureBucketConfig(spec, inputs, inputs.snapshotPath)
 	if err != nil {
 		return failureInputs{}, err
@@ -157,27 +184,51 @@ func prepareFailureInputs(ctx context.Context, spec FailureSpec) (failureInputs,
 	if err := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); err != nil {
 		return failureInputs{}, err
 	}
+	inputs.snapshotDigest, err = fileDigest(inputs.snapshotPath)
+	if err != nil {
+		return failureInputs{}, err
+	}
 	return inputs, nil
 }
 
 func failureBucketConfig(spec FailureSpec, inputs failureInputs, snapshotPath string) (config.GenerateBucketsConfig, error) {
-	return config.NewGenerateBuckets(config.GenerateBucketsValues{
+	return config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
 		CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: inputs.portPath, SnapshotOutput: snapshotPath, Workers: spec.Workers,
 		ProgressInterval: int(spec.Items) + 1,
-	})
+	}, cancellationGenerateResourceLimits())
 }
 
-func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs, state *failureStageState) (FailureResult, error) {
+func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs, stageState *failureStageState) (FailureResult, error) {
 	switch spec.Scenario {
 	case "snapshot-save-failure":
-		snapshotPath := filepath.Join(spec.OutputDir, "missing", "buckets.json")
-		bucketConfig, err := failureBucketConfig(spec, inputs, snapshotPath)
+		pressurePolicy, err := config.SimplePressure("http://performance.invalid", time.Millisecond)
 		if err != nil {
 			return FailureResult{}, err
 		}
-		runErr := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{})
-		return expectedFailure(spec.Scenario, "snapshot-create-temp", "snapshot-save", runErr, "write snapshot")
+		scanConfig, err := config.NewScanWithResourceLimits(config.ScanValues{
+			CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+			PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
+			Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: time.Millisecond,
+			BucketRate: ratelimit.MaxRate, BucketCapacity: ratelimit.MaxCapacity, OutputFlushResults: 1000,
+			LogLevel: "error", Format: "json", Quiet: true, Pressure: pressurePolicy,
+		}, cancellationScanResourceLimits())
+		if err != nil {
+			return FailureResult{}, err
+		}
+		var failures atomic.Uint64
+		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			DisableKeyboard: true,
+			PressureSource:  failingPressureSource{failures: &failures},
+			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			SnapshotFailure: &state.SaveFailureInjection{Operation: state.SaveFailureReplace},
+			SnapshotTelemetryObserver: func(telemetry scanapp.SnapshotTelemetry) {
+				stageState.snapshotTelemetry = telemetry
+			},
+		})
+		stageState.pressureFailures = failures.Load()
+		stageState.errorPrecedence = errors.Is(runErr, state.ErrInjectedSnapshotSaveFailure)
+		return expectedFailure(spec.Scenario, "snapshot-replace", "snapshot-save", runErr, "injected snapshot save failure")
 	case "output-failure":
 		scanConfig, err := config.NewScan(config.ScanValues{
 			CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
@@ -189,17 +240,17 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 		if err != nil {
 			return FailureResult{}, err
 		}
-		state.scanConfig = scanConfig
-		state.outputFailAt = max(uint64(1), spec.Items/2)
+		stageState.scanConfig = scanConfig
+		stageState.outputFailAt = max(uint64(1), spec.Items/2)
 		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			DisableKeyboard: true,
 			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
-			OutputFailure:   &scanapp.OutputFailureInjection{FailOnResult: state.outputFailAt},
+			OutputFailure:   &scanapp.OutputFailureInjection{FailOnResult: stageState.outputFailAt},
 			ProbeTelemetryObserver: func(telemetry scanapp.ProbeTelemetry) {
-				state.probeTelemetry = telemetry
+				stageState.probeTelemetry = telemetry
 			},
 			SnapshotTelemetryObserver: func(telemetry scanapp.SnapshotTelemetry) {
-				state.snapshotTelemetry = telemetry
+				stageState.snapshotTelemetry = telemetry
 			},
 		})
 		if !errors.Is(runErr, scanapp.ErrInjectedOutputFailure) {
@@ -310,6 +361,29 @@ func completeOutputFailureEvidence(ctx context.Context, spec FailureSpec, inputs
 	}, nil
 }
 
+func completeSnapshotFailureEvidence(inputs failureInputs, stage failureStageState) (*FailureSnapshotEvidence, error) {
+	afterDigest, err := fileDigest(inputs.snapshotPath)
+	if err != nil {
+		return nil, err
+	}
+	_, loadErr := state.LoadSnapshot(inputs.snapshotPath)
+	tempFiles, globErr := filepath.Glob(inputs.snapshotPath + ".tmp-*")
+	if globErr != nil {
+		return nil, fmt.Errorf("find snapshot temp files: %w", globErr)
+	}
+	return &FailureSnapshotEvidence{
+		FailureOperation: string(state.SaveFailureReplace),
+		PreviousDigest:   inputs.snapshotDigest,
+		AfterDigest:      afterDigest,
+		PreviousLoadable: loadErr == nil,
+		TempFilesRemoved: len(tempFiles) == 0,
+		HandleReleased:   outputHandlesReleased(inputs.snapshotPath),
+		ErrorPrecedence:  stage.errorPrecedence,
+		PressureFailures: stage.pressureFailures,
+		RewoundChunks:    stage.snapshotTelemetry.RewoundChunks,
+	}, nil
+}
+
 func failureCandidateTaskEvidence(snapshot state.Snapshot, items uint64) (taskEvidenceSnapshot, error) {
 	if len(snapshot.Chunks) != 1 {
 		return taskEvidenceSnapshot{}, fmt.Errorf("failure reference has %d chunks, want one", len(snapshot.Chunks))
@@ -346,8 +420,13 @@ func expectedFailure(scenario, operation, errorClass string, err error, expected
 	return FailureResult{Scenario: scenario, Observed: true, ErrorText: err.Error(), Operation: operation, ErrorClass: errorClass}, nil
 }
 
-type failingPressureSource struct{}
+type failingPressureSource struct {
+	failures *atomic.Uint64
+}
 
-func (failingPressureSource) Sample(context.Context) (pressure.Sample, error) {
+func (source failingPressureSource) Sample(context.Context) (pressure.Sample, error) {
+	if source.failures != nil {
+		source.failures.Add(1)
+	}
 	return pressure.Sample{}, errors.New("injected pressure failure")
 }

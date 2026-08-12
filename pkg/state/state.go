@@ -153,6 +153,22 @@ func defaultSnapshotFileOps() snapshotFileOps {
 
 var fileOps = defaultSnapshotFileOps()
 
+// ErrInjectedSnapshotSaveFailure identifies a requested snapshot-save failure.
+var ErrInjectedSnapshotSaveFailure = errors.New("injected snapshot save failure")
+
+// SaveFailureOperation identifies one snapshot filesystem operation.
+type SaveFailureOperation string
+
+const (
+	// SaveFailureReplace fails after the temp file closes and before replacement.
+	SaveFailureReplace SaveFailureOperation = "replace"
+)
+
+// SaveFailureInjection selects one snapshot filesystem operation to fail.
+type SaveFailureInjection struct {
+	Operation SaveFailureOperation
+}
+
 type snapshotLoadFileOps struct {
 	stat func(string) (os.FileInfo, error)
 	open func(string) (*os.File, error)
@@ -168,13 +184,30 @@ func SaveSnapshot(path string, snap Snapshot) error {
 // SaveSnapshotWithLimits writes snap to path when its bytes and object counts fit limits.
 // It returns a serialization, limit, or filesystem error.
 func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) error {
+	return saveSnapshotWithFileOps(path, snap, limits, fileOps)
+}
+
+// SaveSnapshotWithFailureInjection saves through the production filesystem
+// path and fails at the selected operation. It preserves the prior snapshot.
+func SaveSnapshotWithFailureInjection(path string, snap Snapshot, limits SnapshotLimits, injection SaveFailureInjection) error {
+	ops := defaultSnapshotFileOps()
+	switch injection.Operation {
+	case SaveFailureReplace:
+		ops.replace = func(string, string) error { return ErrInjectedSnapshotSaveFailure }
+	default:
+		return fmt.Errorf("unsupported snapshot save failure operation %q", injection.Operation)
+	}
+	return saveSnapshotWithFileOps(path, snap, limits, ops)
+}
+
+func saveSnapshotWithFileOps(path string, snap Snapshot, limits SnapshotLimits, ops snapshotFileOps) error {
 	_, previousStatErr := os.Stat(path)
 	if err := validateSnapshotLimits(path, snap, limits); err != nil {
 		return err
 	}
 	env := snapshotEnvelopeFromSnapshot(snap)
 
-	if err := writeSnapshotViaTempRename(path, env, limits, snapshotFileMode); err != nil {
+	if err := writeSnapshotViaTempRename(path, env, limits, snapshotFileMode, ops); err != nil {
 		switch {
 		case previousStatErr == nil:
 			return fmt.Errorf("save snapshot failed: previous snapshot remains usable: %w", err)
@@ -237,9 +270,9 @@ const snapshotFileMode os.FileMode = 0o644
 // platform is the three points above. The temp file must be a sibling of the
 // destination: a rename across filesystems is atomic nowhere and may fail
 // outright.
-func writeSnapshotViaTempRename(path string, env snapshotEnvelope, limits SnapshotLimits, perm os.FileMode) (err error) {
+func writeSnapshotViaTempRename(path string, env snapshotEnvelope, limits SnapshotLimits, perm os.FileMode, ops snapshotFileOps) (err error) {
 	dir := filepath.Dir(path)
-	f, err := fileOps.createTemp(dir, filepath.Base(path)+".tmp-*")
+	f, err := ops.createTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp snapshot file in %s: %w", dir, err)
 	}
@@ -253,19 +286,19 @@ func writeSnapshotViaTempRename(path string, env snapshotEnvelope, limits Snapsh
 		if err == nil {
 			return
 		}
-		_ = fileOps.closeFile(f)
-		if removeErr := fileOps.remove(tmpPath); removeErr != nil {
+		_ = ops.closeFile(f)
+		if removeErr := ops.remove(tmpPath); removeErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove temp snapshot file %s: %w", tmpPath, removeErr))
 		}
 	}()
 
 	// os.CreateTemp opens at 0600; give the snapshot the permissions it would
 	// have had without the temp file in the way.
-	if chmodErr := fileOps.chmod(tmpPath, destinationMode(path, perm)); chmodErr != nil {
+	if chmodErr := ops.chmod(tmpPath, destinationMode(path, perm)); chmodErr != nil {
 		return fmt.Errorf("set mode on temp snapshot file %s: %w", tmpPath, chmodErr)
 	}
 
-	writer := io.Writer(snapshotFileWriter{file: f})
+	writer := io.Writer(snapshotFileWriter{file: f, write: ops.write})
 	if limits.MaxBytes > 0 {
 		writer = &snapshotLimitWriter{writer: writer, path: path, limit: limits.MaxBytes}
 	}
@@ -276,27 +309,28 @@ func writeSnapshotViaTempRename(path string, env snapshotEnvelope, limits Snapsh
 	if flushErr := buffered.Flush(); flushErr != nil {
 		return fmt.Errorf("write buffered temp snapshot file %s: %w", tmpPath, flushErr)
 	}
-	if syncErr := fileOps.sync(f); syncErr != nil {
+	if syncErr := ops.sync(f); syncErr != nil {
 		return fmt.Errorf("sync temp snapshot file %s: %w", tmpPath, syncErr)
 	}
 	// Close before the rename: Windows refuses to rename a file that is still
 	// open without FILE_SHARE_DELETE. A close error can also be the first
 	// report of a failed flush, so it must not be discarded.
-	if closeErr := fileOps.closeFile(f); closeErr != nil {
+	if closeErr := ops.closeFile(f); closeErr != nil {
 		return fmt.Errorf("close temp snapshot file %s: %w", tmpPath, closeErr)
 	}
-	if replaceErr := fileOps.replace(tmpPath, path); replaceErr != nil {
+	if replaceErr := ops.replace(tmpPath, path); replaceErr != nil {
 		return fmt.Errorf("replace snapshot %s with temp file %s: %w", path, tmpPath, replaceErr)
 	}
 	return nil
 }
 
 type snapshotFileWriter struct {
-	file *os.File
+	file  *os.File
+	write func(*os.File, []byte) (int, error)
 }
 
 func (writer snapshotFileWriter) Write(data []byte) (int, error) {
-	return fileOps.write(writer.file, data)
+	return writer.write(writer.file, data)
 }
 
 type snapshotLimitWriter struct {

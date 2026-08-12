@@ -241,6 +241,33 @@ func TestFailureResultCorrectRequiresOutputRecoveryProof(t *testing.T) {
 	}
 }
 
+func TestRunFailureSmokePreservesTheOldSnapshotAfterFatalSaveFailure(t *testing.T) {
+	t.Parallel()
+
+	result, err := perfharness.New().RunFailureSmoke(context.Background(), perfharness.FailureSpec{
+		OutputDir: filepath.Join(t.TempDir(), "snapshot replace failure"),
+		Items:     20,
+		Workers:   4,
+		Scenario:  "snapshot-save-failure",
+	})
+	if err != nil {
+		t.Fatalf("RunFailureSmoke: %v", err)
+	}
+	if result.Operation != "snapshot-replace" || result.ErrorClass != "snapshot-save" || result.Snapshot == nil {
+		t.Fatalf("snapshot failure identity = %+v", result)
+	}
+	evidence := result.Snapshot
+	if evidence.FailureOperation != "replace" || evidence.PreviousDigest == "" ||
+		evidence.PreviousDigest != evidence.AfterDigest || !evidence.PreviousLoadable ||
+		!evidence.TempFilesRemoved || !evidence.HandleReleased || !evidence.ErrorPrecedence ||
+		evidence.PressureFailures != 3 {
+		t.Fatalf("snapshot failure evidence = %+v", evidence)
+	}
+	if !result.Correct() {
+		t.Fatalf("FailureResult.Correct rejected snapshot evidence: %+v", result)
+	}
+}
+
 func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
 	t.Parallel()
 

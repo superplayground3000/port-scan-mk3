@@ -479,3 +479,29 @@ The base median was approximately `584.85ns/op`.
 The branch median was approximately `577.8ns/op`.
 This change was approximately `-1.2%`.
 Both sides used `454B/op` and `4 allocs/op`.
+
+## Snapshot-save failure precedence
+
+The first state test did not compile.
+The state package had no public failure injection for an atomic save operation.
+
+The new state injection uses the production temp-write path.
+It fails during replacement after write, flush, `fsync`, and close.
+The prior snapshot remains byte-identical and loadable.
+The failed save leaves no temp file and releases the file handle.
+
+The first harness test failed on the old missing-directory case.
+That case failed before a previous snapshot existed.
+
+The green harness case first saves a valid snapshot.
+It then injects three pressure failures during a real scan.
+The runtime tries to save corrected progress and fails during replacement.
+The snapshot-save error takes precedence over the pressure error.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/pkg/state  1.017s
+ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  1.055s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.026s
+```
