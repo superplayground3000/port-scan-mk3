@@ -219,7 +219,7 @@ func runInputParsingCancellation(ctx context.Context, manifest Manifest, spec Ca
 	}
 	defer func() { _ = file.Close() }()
 	reader := &progressReader{reader: file, totalBytes: manifest.ActualBytes, totalItems: spec.Items, injector: injector}
-	_, err = input.LoadCIDRsWithColumnsContext(ctx, reader, "ip", "ip_cidr")
+	_, err = input.LoadCIDRsWithColumnsContextAndLimits(ctx, reader, "ip", "ip_cidr", cancellationCIDRLimits())
 	return err
 }
 
@@ -503,9 +503,15 @@ func cancellationSnapshotLimits() state.SnapshotLimits {
 	return limits
 }
 
+func cancellationCIDRLimits() input.CIDRLimits {
+	limits := input.DefaultCIDRLimits("")
+	limits.MaxBytes = 0
+	return limits
+}
+
 func cancellationGenerateResourceLimits() config.GenerateBucketsResourceLimits {
 	return config.GenerateBucketsResourceLimits{
-		CIDR:     input.DefaultCIDRLimits(""),
+		CIDR:     cancellationCIDRLimits(),
 		Port:     input.DefaultPortLimits(""),
 		Snapshot: cancellationSnapshotLimits(),
 	}
@@ -513,7 +519,7 @@ func cancellationGenerateResourceLimits() config.GenerateBucketsResourceLimits {
 
 func cancellationScanResourceLimits() config.ScanResourceLimits {
 	return config.ScanResourceLimits{
-		CIDR:     input.DefaultCIDRLimits(""),
+		CIDR:     cancellationCIDRLimits(),
 		Port:     input.DefaultPortLimits(""),
 		Snapshot: cancellationSnapshotLimits(),
 		Pressure: pressure.DefaultResponseLimits(),

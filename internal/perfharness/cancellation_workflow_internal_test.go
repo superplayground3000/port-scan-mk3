@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
@@ -65,5 +66,16 @@ func TestCancellationSnapshotLimitBypassChangesOnlySerializedBytes(t *testing.T)
 	if limits.MaxChunks != defaults.MaxChunks || limits.MaxPortEntries != defaults.MaxPortEntries ||
 		limits.MaxUnreachableIPs != defaults.MaxUnreachableIPs {
 		t.Fatalf("snapshot object limits changed: got %+v, defaults %+v", limits, defaults)
+	}
+}
+
+func TestCancellationCIDRLimitBypassChangesOnlyInputBytes(t *testing.T) {
+	limits := cancellationCIDRLimits()
+	defaults := input.DefaultCIDRLimits("")
+	if limits.MaxBytes != 0 {
+		t.Fatalf("CIDR byte limit = %d, want disabled", limits.MaxBytes)
+	}
+	if limits.MaxRecords != defaults.MaxRecords {
+		t.Fatalf("CIDR record limit = %d, want %d", limits.MaxRecords, defaults.MaxRecords)
 	}
 }
