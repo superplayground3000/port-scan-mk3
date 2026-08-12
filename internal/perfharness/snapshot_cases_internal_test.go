@@ -63,3 +63,24 @@ func TestSnapshotCaseHelpersReportFilesystemAndSummaryErrors(t *testing.T) {
 		t.Fatalf("snapshot names = %q and %q", loadName, saveName)
 	}
 }
+
+func TestSnapshotSavePreparationRemovesFailedCalibrationAttempt(t *testing.T) {
+	t.Parallel()
+
+	outputDir := filepath.Join(t.TempDir(), "save")
+	_, _, err := New().prepareSnapshotSaveFixture(context.Background(), outputDir, FixtureSpec{
+		Family: FamilySnapshotHeavy,
+		Shape:  "unknown",
+		Scale:  Scale{TargetBytes: 100_000},
+	})
+	if err == nil {
+		t.Fatal("prepareSnapshotSaveFixture accepted an unknown shape")
+	}
+	attempts, globErr := filepath.Glob(filepath.Join(outputDir, "attempt-*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(attempts) != 0 {
+		t.Fatalf("failed calibration retained %d attempts", len(attempts))
+	}
+}
