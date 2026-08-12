@@ -186,11 +186,13 @@ func startCancellableScanExecutor(ctx context.Context, workers int, timeout time
 					state = LogEventError
 				}
 				reportLocalResource(res)
-				logger.eventf(LogEventScanProbeResult, t.ip, t.port, state, errCause, map[string]any{
-					"status":  res.Status,
-					"outcome": string(res.Outcome),
-					"error":   res.Error,
-				})
+				if logger.enabledEvent(LogEventScanProbeResult) {
+					logger.eventf(LogEventScanProbeResult, t.ip, t.port, state, errCause, map[string]any{
+						"status":  res.Status,
+						"outcome": string(res.Outcome),
+						"error":   res.Error,
+					})
+				}
 				resultCh <- scanResult{
 					chunkIdx: t.chunkIdx,
 					taskIdx:  t.taskIdx,

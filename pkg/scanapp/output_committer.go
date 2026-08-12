@@ -173,6 +173,9 @@ func (c *outputCommitter) fail(err error) error {
 }
 
 func emitPendingScanResult(logger *scanLogger, result scanResult, batchID uint64) {
+	if !logger.enabledEvent("scan_result") {
+		return
+	}
 	logger.eventf("scan_result", result.record.IP, result.record.Port, "scanned", statusErrorCause(result.record.Status), map[string]any{
 		"status":           result.record.Status,
 		"response_time_ms": result.record.ResponseMS,
