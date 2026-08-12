@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -174,19 +175,19 @@ func (suite Suite) prepareSnapshotSaveFixture(ctx context.Context, outputDir str
 		attemptDir := filepath.Join(outputDir, fmt.Sprintf("attempt-%d", attempt))
 		manifest, err := suite.Generate(ctx, attemptSpec, attemptDir)
 		if err != nil {
-			return Manifest{}, state.Snapshot{}, err
+			return Manifest{}, state.Snapshot{}, cleanupSnapshotCalibrationAttempt(attemptDir, err)
 		}
 		snapshot, err := state.LoadSnapshotWithLimits(manifest.ArtifactPath, state.SnapshotLimits{})
 		if err != nil {
-			return Manifest{}, state.Snapshot{}, err
+			return Manifest{}, state.Snapshot{}, cleanupSnapshotCalibrationAttempt(attemptDir, err)
 		}
 		probePath := filepath.Join(attemptDir, "sized.json")
 		if err := state.SaveSnapshotWithLimits(probePath, snapshot, state.SnapshotLimits{}); err != nil {
-			return Manifest{}, state.Snapshot{}, err
+			return Manifest{}, state.Snapshot{}, cleanupSnapshotCalibrationAttempt(attemptDir, err)
 		}
 		info, err := os.Stat(probePath)
 		if err != nil {
-			return Manifest{}, state.Snapshot{}, err
+			return Manifest{}, state.Snapshot{}, cleanupSnapshotCalibrationAttempt(attemptDir, err)
 		}
 		actual := uint64(info.Size())
 		if actual >= target && actual <= target+tolerance {
@@ -196,15 +197,26 @@ func (suite Suite) prepareSnapshotSaveFixture(ctx context.Context, outputDir str
 			return manifest, snapshot, nil
 		}
 		if actual == 0 || compactTarget > ^uint64(0)/target {
-			return Manifest{}, state.Snapshot{}, fmt.Errorf("snapshot size calibration cannot represent target %d", target)
+			calibrationErr := fmt.Errorf("snapshot size calibration cannot represent target %d", target)
+			return Manifest{}, state.Snapshot{}, cleanupSnapshotCalibrationAttempt(attemptDir, calibrationErr)
 		}
 		next := compactTarget * target / actual
 		if actual < target {
 			next++
 		}
+		if err := os.RemoveAll(attemptDir); err != nil {
+			return Manifest{}, state.Snapshot{}, fmt.Errorf("remove rejected snapshot calibration attempt: %w", err)
+		}
 		compactTarget = max(uint64(1), next)
 	}
 	return Manifest{}, state.Snapshot{}, fmt.Errorf("snapshot save fixture did not reach target %d bytes", target)
+}
+
+func cleanupSnapshotCalibrationAttempt(attemptDir string, calibrationErr error) error {
+	if err := os.RemoveAll(attemptDir); err != nil {
+		return errors.Join(calibrationErr, fmt.Errorf("remove failed snapshot calibration attempt: %w", err))
+	}
+	return calibrationErr
 }
 
 func snapshotScaleLabel(target uint64) string {

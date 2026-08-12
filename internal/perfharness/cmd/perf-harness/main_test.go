@@ -110,6 +110,54 @@ func TestSnapshotCaseContractRejectsTheOldCombinedResult(t *testing.T) {
 	}
 }
 
+func TestSnapshotCaseContractRequiresBothSplitResults(t *testing.T) {
+	t.Parallel()
+
+	spec := perfharness.FixtureSpec{
+		Family: perfharness.FamilySnapshotHeavy,
+		Shape:  "mixed",
+		Scale:  perfharness.Scale{TargetBytes: 1_000_000_000},
+	}
+	loadName, saveName := perfharness.SnapshotCaseNames(spec)
+	for _, results := range [][]perfharness.CaseResult{
+		{{Name: loadName, Verdict: perfharness.Verdict{Passed: true}}},
+		{{Name: saveName, Verdict: perfharness.Verdict{Passed: true}}},
+	} {
+		if applySnapshotCaseContract(results, []perfharness.FixtureSpec{spec}) {
+			t.Fatalf("snapshot case contract accepted incomplete results: %+v", results)
+		}
+	}
+	if !applySnapshotCaseContract(nil, []perfharness.FixtureSpec{{Family: perfharness.FamilyRecordHeavy}}) {
+		t.Fatal("snapshot case contract required split cases for a non-snapshot fixture")
+	}
+}
+
+func TestApplyAbsoluteThresholdsRejectsMissingBudget(t *testing.T) {
+	t.Parallel()
+
+	results := []perfharness.CaseResult{{Name: "snapshot-load/mixed/one-gigabyte", Verdict: perfharness.Verdict{Passed: true}}}
+	if applyAbsoluteThresholds(results, perfharness.New(), perfharness.Contract{}) {
+		t.Fatal("absolute thresholds accepted a snapshot case without a budget")
+	}
+	if !results[0].Verdict.HasFailure("absolute-budget-missing") {
+		t.Fatalf("snapshot verdict = %+v", results[0].Verdict)
+	}
+}
+
+func TestWorkerMemoryUsesPlatformMetricsBeforeCommittedMemory(t *testing.T) {
+	t.Parallel()
+
+	if got := workerMemory(perfharness.Observation{LinuxPeakRSSBytes: 10, WindowsWorkingSetBytes: 20, PeakCommittedBytes: 30}); got != 10 {
+		t.Fatalf("Linux worker memory = %d, want 10", got)
+	}
+	if got := workerMemory(perfharness.Observation{WindowsWorkingSetBytes: 20, PeakCommittedBytes: 30}); got != 20 {
+		t.Fatalf("Windows worker memory = %d, want 20", got)
+	}
+	if got := workerMemory(perfharness.Observation{PeakCommittedBytes: 30}); got != 30 {
+		t.Fatalf("fallback worker memory = %d, want 30", got)
+	}
+}
+
 func TestApplyGrowthThresholdBlocksNonlinearMedianGrowth(t *testing.T) {
 	t.Parallel()
 
@@ -396,6 +444,37 @@ func TestRunCommandComparesPortableReports(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "semantic parity passed") {
 		t.Fatalf("compare output = %q", stdout.String())
+	}
+}
+
+func TestRunCommandRejectsUnreadableComparisonReports(t *testing.T) {
+	t.Parallel()
+
+	validPath := filepath.Join(t.TempDir(), "report.json")
+	encoded, err := json.Marshal(perfharness.Report{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(validPath, encoded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invalidPath := filepath.Join(t.TempDir(), "invalid.json")
+	if err := os.WriteFile(invalidPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missingPath := filepath.Join(t.TempDir(), "missing.json")
+	for _, paths := range [][2]string{
+		{missingPath, validPath},
+		{validPath, missingPath},
+		{invalidPath, validPath},
+	} {
+		var stderr bytes.Buffer
+		if code := runCommand([]string{"-compare-left", paths[0], "-compare-right", paths[1]}, io.Discard, &stderr); code != 1 {
+			t.Fatalf("compare %q and %q exit = %d, want 1", paths[0], paths[1], code)
+		}
+		if stderr.Len() == 0 {
+			t.Fatalf("compare %q and %q did not explain the failure", paths[0], paths[1])
+		}
 	}
 }
 

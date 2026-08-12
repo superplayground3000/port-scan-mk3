@@ -41,7 +41,8 @@ func TestRunSnapshotCasesMeasureLoadAndSaveSeparately(t *testing.T) {
 	t.Parallel()
 
 	const targetBytes = uint64(100_000)
-	results, err := perfharness.New().RunSnapshotCases(context.Background(), filepath.Join(t.TempDir(), "snapshot case"), perfharness.FixtureSpec{
+	outputDir := filepath.Join(t.TempDir(), "snapshot case")
+	results, err := perfharness.New().RunSnapshotCases(context.Background(), outputDir, perfharness.FixtureSpec{
 		Family: perfharness.FamilySnapshotHeavy,
 		Shape:  "mixed",
 		Scale:  perfharness.Scale{TargetBytes: targetBytes},
@@ -86,6 +87,13 @@ func TestRunSnapshotCasesMeasureLoadAndSaveSeparately(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(load.Manifest.ArtifactPath), "roundtrip.json")); err != nil {
 		t.Fatalf("retained production round trip: %v", err)
+	}
+	attempts, err := filepath.Glob(filepath.Join(outputDir, "run-0", "save", "attempt-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("retained calibration attempts = %d, want only the accepted fixture", len(attempts))
 	}
 }
 
