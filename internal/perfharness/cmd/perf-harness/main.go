@@ -109,7 +109,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 
 	workflowItems := smokeItems
 	for _, workers := range contract.FakeWorkers {
-		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-workers-"+strconv.Itoa(workers)), workflowItems, workers)
+		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-workers-"+strconv.Itoa(workers)), workflowItems, workers, "")
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run workflow workers=%d: %v\n", workers, err); writeErr != nil {
 				return 1
@@ -120,6 +120,17 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
 			return 1
 		}
+	}
+	crlfResult, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-crlf-workers-16"), workflowItems, 16, "CRLF")
+	if err != nil {
+		if writeErr := writeStatus(stderr, "run CRLF workflow: %v\n", err); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
+	results = append(results, crlfResult)
+	if err := writeStatus(stdout, "case passed: %s\n", crlfResult.Name); err != nil {
+		return 1
 	}
 	for _, workers := range contract.LoopbackWorkers {
 		result, err := runLoopbackCase(context.Background(), harness, filepath.Join(casesDir, "loopback-workers-"+strconv.Itoa(workers)), workers)
@@ -232,7 +243,7 @@ func fixtureSpecs(profile string, items, snapshotBytes uint64, contract perfharn
 	}
 }
 
-func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int) (perfharness.CaseResult, error) {
+func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, lineEnding string) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create workflow case directory: %w", err)
 	}
@@ -241,7 +252,7 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 	correct := true
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
-		workflow, err := harness.RunProductionSmoke(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: items, Workers: workers})
+		workflow, err := harness.RunProductionSmoke(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: items, Workers: workers, LineEnding: lineEnding})
 		if err != nil {
 			return perfharness.CaseResult{}, err
 		}
@@ -252,7 +263,11 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
 		observations = append(observations, workflow.Stage)
 	}
-	result, err := perfharness.SummarizeCase(fmt.Sprintf("production-workflow/workers-%d", workers), observations)
+	name := fmt.Sprintf("production-workflow/workers-%d", workers)
+	if lineEnding == "CRLF" {
+		name = fmt.Sprintf("production-workflow/crlf/workers-%d", workers)
+	}
+	result, err := perfharness.SummarizeCase(name, observations)
 	if err != nil {
 		return perfharness.CaseResult{}, err
 	}

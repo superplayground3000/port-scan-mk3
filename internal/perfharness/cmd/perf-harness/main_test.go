@@ -40,8 +40,8 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 7 {
-		t.Fatalf("case count = %d, want fixture, fake-worker, and loopback-worker cases", len(report.Cases))
+	if len(report.Cases) != 8 {
+		t.Fatalf("case count = %d, want fixture, fake-worker, CRLF, and loopback-worker cases", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
 		t.Fatalf("evidence label = %q", report.Hardware.EvidenceLabel)
@@ -50,6 +50,9 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 		t.Fatalf("report lacks the matrix contract: %+v", report.Contract)
 	}
 	for _, result := range report.Cases {
+		if result.Name == "production-workflow/crlf/workers-16" && result.Verdict.Passed {
+			continue
+		}
 		if result.Name == "production-workflow/workers-16" {
 			if result.FixtureGeneration == nil || len(result.FixtureGeneration.Runs) != 6 {
 				t.Fatalf("workflow fixture-generation metrics = %+v", result.FixtureGeneration)

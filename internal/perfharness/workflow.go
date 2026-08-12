@@ -20,9 +20,10 @@ import (
 
 // WorkflowSpec defines one bounded production workflow run.
 type WorkflowSpec struct {
-	OutputDir string `json:"output_dir"`
-	Items     uint64 `json:"items"`
-	Workers   int    `json:"workers"`
+	OutputDir  string `json:"output_dir"`
+	Items      uint64 `json:"items"`
+	Workers    int    `json:"workers"`
+	LineEnding string `json:"line_ending,omitempty"`
 }
 
 // WorkflowResult records correctness data from the production workflow.
@@ -93,9 +94,10 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 	portData := []byte(fmt.Sprintf("%d/tcp\n", port))
 	fixtureGeneration, err := suite.Measure(ctx, 0, spec.Items, func(runCtx context.Context) (uint64, error) {
 		generated, generateErr := suite.Generate(runCtx, FixtureSpec{
-			Family: FamilyCandidateHeavy,
-			Scale:  Scale{InputRecords: spec.Items, CandidateAddresses: spec.Items},
-			Seed:   DefaultGeneratorSeed,
+			Family:     FamilyCandidateHeavy,
+			LineEnding: spec.LineEnding,
+			Scale:      Scale{InputRecords: spec.Items, CandidateAddresses: spec.Items},
+			Seed:       DefaultGeneratorSeed,
 		}, fixtureDir)
 		if generateErr != nil {
 			return 0, fmt.Errorf("generate workflow input: %w", generateErr)

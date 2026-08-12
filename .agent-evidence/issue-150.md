@@ -135,12 +135,12 @@ case passed: production-workflow/workers-16
 case passed: production-workflow/workers-256
 case passed: native-loopback/workers-1
 case passed: native-loopback/workers-32
-performance matrix passed: JSON=performance-out/run-20260812T080206Z-1907639/report/performance-report.json Markdown=performance-out/run-20260812T080206Z-1907639/report/performance-report.md
-Performance matrix artifacts: performance-out/run-20260812T080206Z-1907639
+performance matrix passed: JSON=performance-out/run-20260812T080915Z-1968180/report/performance-report.json Markdown=performance-out/run-20260812T080915Z-1968180/report/performance-report.md
+Performance matrix artifacts: performance-out/run-20260812T080915Z-1968180
 ```
 
-The final complete matrix used 9.9 GB and 4:00.73 of wall time.
-The maximum RSS was 218,808 KB. It used zero swaps and three major page faults.
+The final complete matrix used 9.9 GB and 4:02.77 of wall time.
+The maximum RSS was 230,484 KB. It used zero swaps and seven major page faults.
 All 24 case observations contain nonzero Linux peak RSS and committed memory.
 The runner applied the cold and steady worker-memory threshold.
 
@@ -156,7 +156,7 @@ power mode: powersave
 filesystem: tmpfs
 disk: WD_BLACK SN7100 2TB
 Go: go1.24.4
-commit under test: 4febd75330d1ba979ba90dc38d2bf7f0b1776c95 plus the worktree changes
+commit under test: ca55ca026c962295f00ac4d549eae46faa59ddc3
 constraints: none recorded
 ```
 
@@ -299,6 +299,42 @@ insufficient free space: have 49586282496 bytes, require 50000000000 bytes
 The previous generated matrix directory was the exact cause of the space shortage.
 After its evidence was recorded, safe cleanup removed only that exact ignored directory.
 The second attempt passed and produced the final artifact path above.
+
+### Docker context excludes matrix artifacts
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestPerformanceGateEntrypointsKeepOSAdaptersThin -count=1
+```
+
+Observed red reason:
+
+```text
+Docker build contexts do not exclude generated performance artifacts
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness 0.003s
+```
+
+Green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.002s
+```
+
+### CRLF production workflow
+
+Verification command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./internal/perfharness/... -count=1
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.234s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 4.021s
+```
 
 The bounded native Linux smoke passed with nonzero RSS and committed-memory fields for all seven cases.
 The worker-memory evaluator compared the cold and steady 16-worker and 256-worker observations.

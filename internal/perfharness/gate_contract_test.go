@@ -16,6 +16,7 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	linux := readContractFile(t, root, "scripts/performance_gate.sh")
 	windows := readContractFile(t, root, "scripts/performance_gate.ps1")
 	workflow := readContractFile(t, root, ".github/workflows/ci.yml")
+	dockerIgnore := readContractFile(t, root, ".dockerignore")
 
 	if !strings.Contains(makefile, "verify-performance:") || !strings.Contains(makefile, "scripts/performance_gate.sh full") {
 		t.Fatal("Makefile does not expose the complete Linux performance matrix")
@@ -37,6 +38,9 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	}
 	if strings.Count(workflow, "performance smoke") < 2 || !strings.Contains(workflow, "100000 items and 100 MB") {
 		t.Fatal("CI does not run bounded Linux and Windows performance smoke")
+	}
+	if !strings.Contains(dockerIgnore, "performance-out/") {
+		t.Fatal("Docker build contexts do not exclude generated performance artifacts")
 	}
 }
 
