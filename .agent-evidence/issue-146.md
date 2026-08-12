@@ -191,3 +191,8 @@ coverage gate passed: 85.0%
 === RESULT ===
 All selected quality gates passed.
 ```
+
+The isolated Docker gate used `COMPOSE_PROJECT_NAME=issue146_limits_c3d4071`.
+It completed with the same final result line.
+The new cases rejected an oversized port input before snapshot creation.
+They also stopped a scan after three oversized pressure responses.
