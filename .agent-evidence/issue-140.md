@@ -269,6 +269,29 @@ The command exited with code 0. All packages reported `ok`.
 
 The pragmatic Simple English check found no prohibited pattern in added English documentation. The longest added descriptive sentences contain no more than 25 words.
 
+## Final quality gates
+
+`GOTOOLCHAIN=go1.24.4 make verify` exited with code 0:
+
+```text
+coverage gate passed: 85.1%
+
+=== RESULT ===
+All selected quality gates passed.
+```
+
+`COMPOSE_PROJECT_NAME=issue140_rowports_34067ae GOTOOLCHAIN=go1.24.4 make verify-e2e` exited with code 0:
+
+```text
+coverage gate passed: 85.2%
+PASS
+ok github.com/xuxiping/port-scan-mk3/tests/integration 2.725s
+e2e report generated at /tmp/port-scan-mk3-issue-140/e2e/out
+
+=== RESULT ===
+All selected quality gates passed.
+```
+
 ## Mixed row ports: resume does not create a Cartesian product
 
 RED command:
