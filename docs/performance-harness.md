@@ -10,9 +10,13 @@ This interface covers fixture generation, metrics, evaluation, normalization, an
 The issue 150 contract requires this single evidence-run boundary.
 Production packages do not use this interface.
 
-The module calls the production `scanapp.GenerateBuckets` and `scanapp.Run` functions.
+The module calls the production preparation, snapshot, resume, scan, and writer paths.
 The fake-probe adapter uses the existing `scanapp.RunOptions.Dial` seam.
 Production packages do not import the performance harness.
+
+The harness also observes dispatcher order, resume progress, and result progress.
+`scanapp.RunOptions` owns these narrow callbacks because `scanapp` produces the events.
+The callbacks do not contain harness types or threshold rules.
 
 The Linux shell and Windows PowerShell scripts are OS adapters.
 They start the process, collect OS metrics, prepare paths, and remove specific temporary files.
@@ -45,6 +49,22 @@ The bounded `smoke` profile uses 100,000 records and a 100 MB snapshot.
 Linux and Windows CI run this profile.
 The worker-memory threshold applies at this scale and at larger scales.
 
+Cancellation cases use 200 items, and failure-control cases use 100 items.
+This fixed size makes the 1%, 50%, and 99% injection points deterministic.
+The control size is not a production limit.
+
+The matrix executes 15 cancellation cases.
+It covers five stages at 1%, 50%, and 99% progress.
+Each scan cancellation must leave resumable work.
+New work must stop within one second.
+
+The matrix executes bounded production cases for every rich-input family.
+The denied cases must make zero reachability checks and zero TCP probes.
+The accepted cases run pre-ping, snapshot generation, resume, scan, and both writers.
+
+The matrix executes resume cases at 0%, 50%, and 99% completion.
+It also executes snapshot-save and pressure fatal failures.
+
 The production fake-probe cases use 1, 16, and 256 workers.
 The native loopback cases use 1 and 32 workers.
 All network activity in these cases stays in `127.0.0.0/8`.
@@ -69,6 +89,14 @@ Run the bounded Windows smoke profile:
 ./scripts/performance_gate.ps1 -Profile smoke -OutputDir "$env:TEMP\performance smoke"
 ```
 
+Compare portable Linux and Windows reports:
+
+```bash
+go run ./internal/perfharness/cmd/perf-harness \
+  -compare-left linux/performance-report.json \
+  -compare-right windows/performance-report.json
+```
+
 Use a new output path for each run.
 The scripts stop if the selected output path exists.
 
@@ -86,6 +114,7 @@ Each run writes these files:
 - `performance-report.json`
 - `performance-report.md`
 - A raw OS-metrics file from the native adapter.
+- A raw native interrupt-test log.
 - One retained fixture and manifest for each fixture case.
 
 The JSON schema version is `1`.
@@ -118,6 +147,10 @@ It also records free space, Go version, commit, constraints, and evidence label.
 The Go module evaluates absolute runtime and memory budgets.
 It also evaluates growth, regression, and worker-memory budgets.
 
+The runner checks both the cold observation and the steady median.
+The absolute values come from the approved issue 149 contract.
+The report stores these values with the matrix contract.
+
 A ten-fold input increase permits at most 12.5-fold time growth.
 Allocated bytes permit at most 11-fold growth.
 A benchmark change permits at most a 10% increase in `ns/op` or `B/op`.
@@ -133,6 +166,10 @@ These fields are roots, path separators, timestamps, durations, and OS error det
 
 The harness does not normalize task order, row count, status, cursor, or output digest.
 Byte parity applies only to deterministic artifacts.
+
+Each worker run records dispatcher task order and a normalized result digest.
+The runner compares all six runs and the 1, 16, and 256 worker profiles.
+The report comparison command applies the same rules across operating systems.
 
 ## Windows release checklist
 

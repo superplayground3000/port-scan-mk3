@@ -45,7 +45,7 @@ func TestRunCancellationSmokeInjectsEveryProductionStage(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", stage, percent), func(t *testing.T) {
 				result, err := harness.RunCancellationSmoke(context.Background(), perfharness.CancellationSpec{
 					OutputDir: filepath.Join(t.TempDir(), string(stage)),
-					Items:     100,
+					Items:     200,
 					Workers:   4,
 					Stage:     stage,
 					Percent:   percent,
@@ -55,6 +55,9 @@ func TestRunCancellationSmokeInjectsEveryProductionStage(t *testing.T) {
 				}
 				if !result.Injected || result.StopDuration > contract.StopWithin {
 					t.Fatalf("result=%+v", result)
+				}
+				if (stage == perfharness.CancellationResumeRebuild || stage == perfharness.CancellationResultOutput) && !result.Resumable {
+					t.Fatalf("result=%+v, want resumable progress", result)
 				}
 			})
 		}

@@ -23,6 +23,9 @@ type Harness interface {
 	RunRichDenySmoke(context.Context, RichDenySpec) (WorkflowResult, error)
 	RunCancellationSmoke(context.Context, CancellationSpec) (CancellationResult, error)
 	RunRegressionBenchmark(context.Context, RegressionBenchmarkSpec) (CaseResult, error)
+	RunResumeSmoke(context.Context, ResumeSpec) (WorkflowResult, error)
+	RunFailureSmoke(context.Context, FailureSpec) (FailureResult, error)
+	RunRichSmoke(context.Context, RichSpec) (WorkflowResult, error)
 	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 // WorkflowSpec defines one bounded production workflow run.
@@ -51,6 +52,109 @@ type RichDenySpec struct {
 	Shape     string `json:"shape"`
 }
 
+// RichSpec defines one bounded accepted rich-input production run.
+type RichSpec struct {
+	OutputDir string `json:"output_dir"`
+	Items     uint64 `json:"items"`
+	Workers   int    `json:"workers"`
+	Family    Family `json:"family"`
+}
+
+// ResumeSpec defines one bounded production resume-rebuild run.
+type ResumeSpec struct {
+	OutputDir        string `json:"output_dir"`
+	Items            uint64 `json:"items"`
+	Workers          int    `json:"workers"`
+	CompletedPercent int    `json:"completed_percent"`
+}
+
+// RunResumeSmoke rebuilds and scans the incomplete part of a production snapshot.
+func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResult, error) {
+	if spec.Items == 0 || spec.CompletedPercent < 0 || spec.CompletedPercent >= 100 {
+		return WorkflowResult{}, fmt.Errorf("resume smoke requires items and a completion percentage from 0 through 99")
+	}
+	if err := os.MkdirAll(spec.OutputDir, 0o755); err != nil {
+		return WorkflowResult{}, fmt.Errorf("create resume smoke directory: %w", err)
+	}
+	manifest, err := New().Generate(ctx, FixtureSpec{
+		Family: FamilyCandidateHeavy,
+		Scale:  Scale{InputRecords: spec.Items, CandidateAddresses: spec.Items},
+		Seed:   DefaultGeneratorSeed,
+	}, filepath.Join(spec.OutputDir, "fixture"))
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	portPath := filepath.Join(spec.OutputDir, "ports.csv")
+	if err := os.WriteFile(portPath, []byte("443/tcp\n"), 0o644); err != nil {
+		return WorkflowResult{}, fmt.Errorf("write resume smoke ports: %w", err)
+	}
+	snapshotPath := filepath.Join(spec.OutputDir, "buckets.json")
+	bucketConfig, err := config.NewGenerateBuckets(config.GenerateBucketsValues{
+		CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+		PortFile: portPath, SnapshotOutput: snapshotPath, Workers: spec.Workers,
+		ProgressInterval: int(spec.Items) + 1,
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	if err := scanapp.GenerateBuckets(ctx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); err != nil {
+		return WorkflowResult{}, err
+	}
+	snapshot, err := state.LoadSnapshot(snapshotPath)
+	if err != nil {
+		return WorkflowResult{}, fmt.Errorf("load resume smoke snapshot: %w", err)
+	}
+	completed := int(spec.Items) * spec.CompletedPercent / 100
+	remainingCompletion := completed
+	for index := range snapshot.Chunks {
+		chunkCompletion := min(remainingCompletion, snapshot.Chunks[index].TotalCount)
+		snapshot.Chunks[index].NextIndex = chunkCompletion
+		snapshot.Chunks[index].ScannedCount = chunkCompletion
+		if chunkCompletion == snapshot.Chunks[index].TotalCount {
+			snapshot.Chunks[index].Status = "completed"
+		} else if chunkCompletion > 0 {
+			snapshot.Chunks[index].Status = "scanning"
+		}
+		remainingCompletion -= chunkCompletion
+	}
+	if err := state.SaveSnapshot(snapshotPath, snapshot); err != nil {
+		return WorkflowResult{}, fmt.Errorf("save resume smoke snapshot: %w", err)
+	}
+	scanConfig, err := config.NewScan(config.ScanValues{
+		CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+		PortFile: portPath, ResumeInput: snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
+		Workers: spec.Workers, DialTimeout: time.Second, BucketRate: ratelimit.MaxRate,
+		BucketCapacity: ratelimit.MaxCapacity, LogLevel: "error", Format: "json", Quiet: true,
+		Pressure: config.PressureDisabled(),
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	var probes atomic.Uint64
+	var taskOrder []string
+	stage, err := New().Measure(ctx, manifest.ActualBytes, spec.Items-uint64(completed), func(runCtx context.Context) (uint64, error) {
+		runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			DisableKeyboard: true,
+			Dial: func(context.Context, string, string) (net.Conn, error) {
+				probes.Add(1)
+				return fakeOpenConn{}, nil
+			},
+			TaskObserver: func(ip string, taskPort int) {
+				taskOrder = append(taskOrder, net.JoinHostPort(ip, strconv.Itoa(taskPort))+"/tcp")
+			},
+		})
+		return 0, runErr
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	scanPath, openPath, err := workflowOutputPaths(spec.OutputDir)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	return workflowResultFromFiles(probes.Load(), 0, true, Observation{}, stage, scanPath, openPath, taskOrder)
+}
+
 // RunProductionSmoke runs production parsing, bucket, resume, scan, and writer paths.
 func (Suite) RunProductionSmoke(ctx context.Context, spec WorkflowSpec) (WorkflowResult, error) {
 	var probes atomic.Uint64
@@ -69,22 +173,43 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 	if spec.Shape != "deny-only" && spec.Shape != "accept-deny-conflict" {
 		return WorkflowResult{}, fmt.Errorf("unsupported rich-deny shape %q", spec.Shape)
 	}
-	if err := os.MkdirAll(spec.OutputDir, 0o755); err != nil {
-		return WorkflowResult{}, fmt.Errorf("create rich-deny directory: %w", err)
+	return runRichProduction(ctx, spec.OutputDir, spec.Items, spec.Workers, FixtureSpec{
+		Family: FamilyRichDeny,
+		Shape:  spec.Shape,
+		Scale:  Scale{InputRecords: spec.Items},
+		Seed:   DefaultGeneratorSeed,
+	})
+}
+
+// RunRichSmoke runs one accepted rich family through the production workflow.
+func (Suite) RunRichSmoke(ctx context.Context, spec RichSpec) (WorkflowResult, error) {
+	if spec.Items == 0 {
+		return WorkflowResult{}, fmt.Errorf("rich smoke items must be positive")
+	}
+	supported := spec.Family == FamilyRichRecordMixed || spec.Family == FamilyRichUniqueKey ||
+		spec.Family == FamilyRichHotKey || spec.Family == FamilyRichPrecheck
+	if !supported {
+		return WorkflowResult{}, fmt.Errorf("unsupported rich smoke family %q", spec.Family)
+	}
+	return runRichProduction(ctx, spec.OutputDir, spec.Items, spec.Workers, FixtureSpec{
+		Family: spec.Family,
+		Scale:  Scale{InputRecords: spec.Items},
+		Seed:   DefaultGeneratorSeed,
+	})
+}
+
+func runRichProduction(ctx context.Context, outputDir string, items uint64, workers int, fixture FixtureSpec) (WorkflowResult, error) {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return WorkflowResult{}, fmt.Errorf("create rich workflow directory: %w", err)
 	}
 	suite := Suite{}
 	var probes atomic.Uint64
 	var reachability atomic.Uint64
 	var manifest Manifest
-	fixtureGeneration, err := suite.Measure(ctx, 0, spec.Items, func(runCtx context.Context) (uint64, error) {
-		generated, generateErr := suite.Generate(runCtx, FixtureSpec{
-			Family: FamilyRichDeny,
-			Shape:  spec.Shape,
-			Scale:  Scale{InputRecords: spec.Items},
-			Seed:   DefaultGeneratorSeed,
-		}, filepath.Join(spec.OutputDir, "fixture"))
+	fixtureGeneration, err := suite.Measure(ctx, 0, items, func(runCtx context.Context) (uint64, error) {
+		generated, generateErr := suite.Generate(runCtx, fixture, filepath.Join(outputDir, "fixture"))
 		if generateErr != nil {
-			return 0, fmt.Errorf("generate rich-deny input: %w", generateErr)
+			return 0, fmt.Errorf("generate rich input: %w", generateErr)
 		}
 		manifest = generated
 		return manifest.ActualBytes, nil
@@ -92,8 +217,8 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	snapshotPath := filepath.Join(spec.OutputDir, "buckets.json")
-	prePingDir := filepath.Join(spec.OutputDir, "pre-ping")
+	snapshotPath := filepath.Join(outputDir, "buckets.json")
+	prePingDir := filepath.Join(outputDir, "pre-ping")
 	if err := os.Mkdir(prePingDir, 0o755); err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny pre-ping directory: %w", err)
 	}
@@ -102,9 +227,9 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 		CIDRIPCol:        "src_ip",
 		CIDRIPCidrCol:    "src_network_segment",
 		Output:           filepath.Join(prePingDir, "results.csv"),
-		Workers:          spec.Workers,
+		Workers:          workers,
 		PingTimeout:      time.Second,
-		ProgressInterval: int(spec.Items) + 1,
+		ProgressInterval: int(items) + 1,
 	})
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny pre-ping configuration: %w", err)
@@ -114,8 +239,8 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 		CIDRIPCol:        "src_ip",
 		CIDRIPCidrCol:    "src_network_segment",
 		SnapshotOutput:   snapshotPath,
-		Workers:          spec.Workers,
-		ProgressInterval: int(spec.Items) + 1,
+		Workers:          workers,
+		ProgressInterval: int(items) + 1,
 	})
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny bucket configuration: %w", err)
@@ -125,8 +250,8 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 		CIDRIPCol:      "src_ip",
 		CIDRIPCidrCol:  "src_network_segment",
 		ResumeInput:    snapshotPath,
-		Output:         filepath.Join(spec.OutputDir, "results.csv"),
-		Workers:        spec.Workers,
+		Output:         filepath.Join(outputDir, "results.csv"),
+		Workers:        workers,
 		DialTimeout:    time.Second,
 		BucketRate:     ratelimit.MaxRate,
 		BucketCapacity: ratelimit.MaxCapacity,
@@ -140,8 +265,9 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 	}
 	var scanPath string
 	var openPath string
+	var taskOrder []string
 	prePingCompleted := false
-	stage, err := suite.Measure(ctx, manifest.ActualBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
+	stage, err := suite.Measure(ctx, manifest.ActualBytes, items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.RunPrePing(runCtx, prePingConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			ReachabilityChecker: countingReachability{count: &reachability},
 		}); runErr != nil {
@@ -159,11 +285,14 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 			Dial:                dial,
 			DisableKeyboard:     true,
 			ReachabilityChecker: countingReachability{count: &reachability},
+			TaskObserver: func(ip string, taskPort int) {
+				taskOrder = append(taskOrder, net.JoinHostPort(ip, strconv.Itoa(taskPort))+"/tcp")
+			},
 		}); runErr != nil {
 			return 0, fmt.Errorf("run rich-deny scan workflow: %w", runErr)
 		}
 		var pathErr error
-		scanPath, openPath, pathErr = workflowOutputPaths(spec.OutputDir)
+		scanPath, openPath, pathErr = workflowOutputPaths(outputDir)
 		if pathErr != nil {
 			return 0, pathErr
 		}
@@ -180,7 +309,7 @@ func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowR
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	result, err := workflowResultFromFiles(probes.Load(), reachability.Load(), true, fixtureGeneration, stage, scanPath, openPath, nil)
+	result, err := workflowResultFromFiles(probes.Load(), reachability.Load(), true, fixtureGeneration, stage, scanPath, openPath, taskOrder)
 	result.PrePingCompleted = prePingCompleted
 	return result, err
 }

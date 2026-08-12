@@ -63,6 +63,47 @@ func TestProductionWorkerProfilesHaveSemanticParity(t *testing.T) {
 	}
 }
 
+func TestRunResumeSmokeRebuildsRemainingProductionWork(t *testing.T) {
+	t.Parallel()
+
+	var harness perfharness.Harness = perfharness.New()
+	for _, percent := range []int{0, 50, 99} {
+		result, err := harness.RunResumeSmoke(context.Background(), perfharness.ResumeSpec{
+			OutputDir:        filepath.Join(t.TempDir(), "resume"),
+			Items:            100,
+			Workers:          16,
+			CompletedPercent: percent,
+		})
+		if err != nil {
+			t.Fatalf("percent=%d: %v", percent, err)
+		}
+		wantRemaining := uint64(100 - percent)
+		if result.ProbeCount != wantRemaining || result.ScanRows != wantRemaining || result.OpenRows != wantRemaining {
+			t.Fatalf("percent=%d result=%+v, want remaining=%d", percent, result, wantRemaining)
+		}
+	}
+}
+
+func TestRunFailureSmokeExecutesProductionSnapshotAndPressureFailures(t *testing.T) {
+	t.Parallel()
+
+	var harness perfharness.Harness = perfharness.New()
+	for _, scenario := range []string{"snapshot-save-failure", "pressure-fatal-error"} {
+		result, err := harness.RunFailureSmoke(context.Background(), perfharness.FailureSpec{
+			OutputDir: filepath.Join(t.TempDir(), scenario),
+			Items:     100,
+			Workers:   4,
+			Scenario:  scenario,
+		})
+		if err != nil {
+			t.Fatalf("scenario=%s: %v", scenario, err)
+		}
+		if !result.Observed || result.ErrorText == "" {
+			t.Fatalf("scenario=%s result=%+v", scenario, result)
+		}
+	}
+}
+
 func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +159,38 @@ func TestRunRichDenySmokeUsesProductionPathsWithoutProbes(t *testing.T) {
 		}
 		if result.ScanRows != 0 || result.OpenRows != 0 || !result.PrePingCompleted || !result.SnapshotCompleted {
 			t.Fatalf("shape=%s output state = %+v", shape, result)
+		}
+	}
+}
+
+func TestRunRichSmokeUsesProductionPathsForEveryAcceptedFamily(t *testing.T) {
+	t.Parallel()
+
+	var harness perfharness.Harness = perfharness.New()
+	for _, family := range []perfharness.Family{
+		perfharness.FamilyRichRecordMixed,
+		perfharness.FamilyRichUniqueKey,
+		perfharness.FamilyRichHotKey,
+		perfharness.FamilyRichPrecheck,
+	} {
+		result, err := harness.RunRichSmoke(context.Background(), perfharness.RichSpec{
+			OutputDir: filepath.Join(t.TempDir(), string(family)),
+			Items:     100,
+			Workers:   16,
+			Family:    family,
+		})
+		if err != nil {
+			t.Fatalf("family=%s: %v", family, err)
+		}
+		want := uint64(100)
+		if family == perfharness.FamilyRichHotKey {
+			want = 4
+		}
+		if result.ProbeCount != want || result.ScanRows != want || result.OpenRows != want {
+			t.Fatalf("family=%s result=%+v, want=%d", family, result, want)
+		}
+		if result.ReachabilityCount != want || !result.PrePingCompleted {
+			t.Fatalf("family=%s pre-ping result=%+v, want=%d", family, result, want)
 		}
 	}
 }

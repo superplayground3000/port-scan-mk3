@@ -99,7 +99,7 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 26 {
+	if len(report.Cases) != 35 {
 		t.Fatalf("case count = %d, want fixture, fake-worker, rich-deny, cancellation, CRLF, and loopback-worker cases", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
@@ -111,7 +111,28 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	richDenyCases := 0
 	cancellationCases := 0
 	regressionCases := 0
+	resumeCases := 0
+	failureCases := 0
+	richAcceptedCases := 0
 	for _, result := range report.Cases {
+		if strings.HasPrefix(result.Name, "production-rich/") {
+			richAcceptedCases++
+			if !result.Verdict.Passed {
+				t.Fatalf("accepted rich case failed: %+v", result)
+			}
+		}
+		if strings.HasPrefix(result.Name, "production-failure/") {
+			failureCases++
+			if !result.Verdict.Passed {
+				t.Fatalf("failure case failed: %+v", result)
+			}
+		}
+		if strings.HasPrefix(result.Name, "production-resume/") {
+			resumeCases++
+			if !result.Verdict.Passed {
+				t.Fatalf("resume case failed: %+v", result)
+			}
+		}
 		if result.Name == "regression/snapshot-generator" {
 			regressionCases++
 			if result.Regression == nil || !result.Verdict.Passed {
@@ -150,6 +171,15 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	}
 	if regressionCases != 1 {
 		t.Fatalf("regression case count = %d, want 1", regressionCases)
+	}
+	if resumeCases != 3 {
+		t.Fatalf("resume case count = %d, want 3", resumeCases)
+	}
+	if failureCases != 2 {
+		t.Fatalf("failure case count = %d, want 2", failureCases)
+	}
+	if richAcceptedCases != 4 {
+		t.Fatalf("accepted rich case count = %d, want 4", richAcceptedCases)
 	}
 }
 

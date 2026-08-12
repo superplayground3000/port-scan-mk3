@@ -1112,3 +1112,100 @@ Observed green result:
 ```text
 ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.003s
 ```
+
+### Production resume cases
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunResumeSmokeRebuildsRemainingProductionWork -count=1
+```
+
+Observed red reason:
+
+```text
+harness.RunResumeSmoke undefined
+undefined: perfharness.ResumeSpec
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+```
+
+Green command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunResumeSmokeRebuildsRemainingProductionWork -count=1
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.056s
+```
+
+### Production failure cases
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunFailureSmokeExecutesProductionSnapshotAndPressureFailures -count=1
+```
+
+Observed red reason:
+
+```text
+harness.RunFailureSmoke undefined
+undefined: perfharness.FailureSpec
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+```
+
+Green command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunFailureSmokeExecutesProductionSnapshotAndPressureFailures -count=1
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.007s
+```
+
+### Accepted rich-input production families
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunRichSmokeUsesProductionPathsForEveryAcceptedFamily -count=1
+```
+
+Observed red reason:
+
+```text
+harness.RunRichSmoke undefined
+undefined: perfharness.RichSpec
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+```
+
+Green command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunRichSmokeUsesProductionPathsForEveryAcceptedFamily -count=1
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 2.290s
+```
+
+### Deterministic 99 percent cancellation resume state
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./internal/perfharness -run TestRunCancellationSmokeInjectsEveryRequiredStageAndProgressPoint -count=1
+```
+
+Observed red reason:
+
+```text
+stage=result-output percent=99 result={Injected:true StopDuration:2.23ms Resumable:false}
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness
+```
+
+The test now uses 200 items and one scan worker. At 99 percent, at least two
+items remain before cancellation. One in-flight item cannot complete all
+remaining work.
+
+Green command and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./pkg/scanapp ./internal/perfharness ./internal/perfharness/cmd/perf-harness -count=1 -timeout=120s
+ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 2.746s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 17.917s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 119.719s
+```

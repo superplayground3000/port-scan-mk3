@@ -175,9 +175,10 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	const cancellationItems uint64 = 200
 	for _, stage := range contract.CancelStages {
 		for _, percent := range contract.CancelProgress {
-			result, err := runCancellationCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("cancel-%s-%d", stage, percent)), workflowItems, 16, stage, percent, contract.StopWithin)
+			result, err := runCancellationCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("cancel-%s-%d", stage, percent)), cancellationItems, 16, stage, percent, contract.StopWithin)
 			if err != nil {
 				if writeErr := writeStatus(stderr, "run cancellation stage=%s percent=%d: %v\n", stage, percent, err); writeErr != nil {
 					return 1
@@ -200,6 +201,51 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	results = append(results, regressionResult)
 	if err := writeStatus(stdout, "case passed: %s\n", regressionResult.Name); err != nil {
 		return 1
+	}
+	resumeItems := min(workflowItems, uint64(100))
+	for _, percent := range []int{0, 50, 99} {
+		result, err := runResumeCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("resume-%d", percent)), resumeItems, 16, percent)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run resume percent=%d: %v\n", percent, err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
+	}
+	for _, scenario := range []string{"snapshot-save-failure", "pressure-fatal-error"} {
+		result, err := runFailureCase(context.Background(), harness, filepath.Join(casesDir, "failure-"+scenario), 100, 16, scenario)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run failure scenario=%s: %v\n", scenario, err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
+	}
+	for _, family := range []perfharness.Family{
+		perfharness.FamilyRichRecordMixed,
+		perfharness.FamilyRichUniqueKey,
+		perfharness.FamilyRichHotKey,
+		perfharness.FamilyRichPrecheck,
+	} {
+		result, err := runAcceptedRichCase(context.Background(), harness, filepath.Join(casesDir, "rich-"+string(family)), 100, 16, family)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run rich family=%s: %v\n", family, err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
 	}
 	crlfResult, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-crlf-workers-16"), workflowItems, 16, "CRLF")
 	if err != nil {
@@ -594,7 +640,8 @@ func runCancellationCase(ctx context.Context, harness perfharness.Harness, outpu
 		if err != nil {
 			return perfharness.CaseResult{}, err
 		}
-		if !cancellation.Injected || cancellation.StopDuration > stopWithin {
+		if !cancellation.Injected || cancellation.StopDuration > stopWithin ||
+			(stage == perfharness.CancellationResumeRebuild || stage == perfharness.CancellationResultOutput) && !cancellation.Resumable {
 			correct = false
 		}
 		observations = append(observations, observation)
@@ -608,5 +655,115 @@ func runCancellationCase(ctx context.Context, harness perfharness.Harness, outpu
 	if !correct {
 		result.Verdict.Failures = []perfharness.Failure{{Rule: "cancellation-stop", Detail: "production work did not stop within one second"}}
 	}
+	return result, nil
+}
+
+func runResumeCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers, percent int) (perfharness.CaseResult, error) {
+	observations := make([]perfharness.Observation, 0, 6)
+	var semantic perfharness.SemanticArtifact
+	wantRemaining := items - items*uint64(percent)/100
+	for run := 0; run < 6; run++ {
+		workflow, err := harness.RunResumeSmoke(ctx, perfharness.ResumeSpec{
+			OutputDir:        filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+			Items:            items,
+			Workers:          workers,
+			CompletedPercent: percent,
+		})
+		if err != nil {
+			return perfharness.CaseResult{}, err
+		}
+		if workflow.ProbeCount != wantRemaining || workflow.ScanRows != wantRemaining || workflow.OpenRows != wantRemaining {
+			return perfharness.CaseResult{}, fmt.Errorf("resume percent %d produced %+v, want %d remaining", percent, workflow, wantRemaining)
+		}
+		if run == 0 {
+			semantic = workflow.Semantic
+		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
+			return perfharness.CaseResult{}, fmt.Errorf("resume run parity differs in %s", strings.Join(differences, ", "))
+		}
+		observations = append(observations, workflow.Stage)
+	}
+	result, err := perfharness.SummarizeCase(fmt.Sprintf("production-resume/%d", percent), observations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.Semantic = &semantic
+	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
+	result.Verdict = perfharness.Verdict{Passed: true}
+	return result, nil
+}
+
+func runFailureCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, scenario string) (perfharness.CaseResult, error) {
+	observations := make([]perfharness.Observation, 0, 6)
+	correct := true
+	for run := 0; run < 6; run++ {
+		var failure perfharness.FailureResult
+		observation, err := harness.Measure(ctx, 0, items, func(runCtx context.Context) (uint64, error) {
+			result, runErr := harness.RunFailureSmoke(runCtx, perfharness.FailureSpec{
+				OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+				Items:     items,
+				Workers:   workers,
+				Scenario:  scenario,
+			})
+			failure = result
+			return 0, runErr
+		})
+		if err != nil {
+			return perfharness.CaseResult{}, err
+		}
+		if !failure.Observed || failure.ErrorText == "" {
+			correct = false
+		}
+		observations = append(observations, observation)
+	}
+	result, err := perfharness.SummarizeCase("production-failure/"+scenario, observations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: correct, Digests: true}
+	result.Verdict = perfharness.Verdict{Passed: correct}
+	return result, nil
+}
+
+func runAcceptedRichCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, family perfharness.Family) (perfharness.CaseResult, error) {
+	observations := make([]perfharness.Observation, 0, 6)
+	fixtureObservations := make([]perfharness.Observation, 0, 6)
+	want := items
+	if family == perfharness.FamilyRichHotKey {
+		want = min(items, uint64(4))
+	}
+	var semantic perfharness.SemanticArtifact
+	for run := 0; run < 6; run++ {
+		workflow, err := harness.RunRichSmoke(ctx, perfharness.RichSpec{
+			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+			Items:     items,
+			Workers:   workers,
+			Family:    family,
+		})
+		if err != nil {
+			return perfharness.CaseResult{}, err
+		}
+		if workflow.ProbeCount != want || workflow.ReachabilityCount != want || workflow.ScanRows != want || workflow.OpenRows != want {
+			return perfharness.CaseResult{}, fmt.Errorf("rich family %s produced %+v, want %d", family, workflow, want)
+		}
+		if run == 0 {
+			semantic = workflow.Semantic
+		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
+			return perfharness.CaseResult{}, fmt.Errorf("rich run parity differs in %s", strings.Join(differences, ", "))
+		}
+		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
+		observations = append(observations, workflow.Stage)
+	}
+	result, err := perfharness.SummarizeCase("production-rich/"+string(family), observations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	fixtureGeneration, err := perfharness.SummarizePhase("production-rich fixture generation", fixtureObservations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.FixtureGeneration = &fixtureGeneration
+	result.Semantic = &semantic
+	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
+	result.Verdict = perfharness.Verdict{Passed: true}
 	return result, nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
@@ -33,6 +34,7 @@ type CancellationResult struct {
 	Percent      int               `json:"percent"`
 	Injected     bool              `json:"injected"`
 	StopDuration time.Duration     `json:"stop_duration_ns"`
+	Resumable    bool              `json:"resumable"`
 }
 
 // RunCancellationSmoke injects cancellation into one production data stage.
@@ -67,6 +69,18 @@ func (Suite) RunCancellationSmoke(ctx context.Context, spec CancellationSpec) (C
 	result := CancellationResult{Stage: spec.Stage, Percent: spec.Percent, Injected: trigger.fired()}
 	if result.Injected {
 		result.StopDuration = time.Since(trigger.at)
+	}
+	if spec.Stage == CancellationResumeRebuild || spec.Stage == CancellationResultOutput {
+		snapshot, loadErr := state.LoadSnapshot(filepath.Join(spec.OutputDir, "buckets.json"))
+		if loadErr != nil {
+			return result, fmt.Errorf("load canceled production snapshot: %w", loadErr)
+		}
+		for _, chunk := range snapshot.Chunks {
+			if chunk.NextIndex < chunk.TotalCount {
+				result.Resumable = true
+				break
+			}
+		}
 	}
 	if !errors.Is(runErr, context.Canceled) {
 		return result, fmt.Errorf("stage %s did not stop with cancellation: %v", spec.Stage, runErr)
@@ -146,7 +160,7 @@ func runScanCancellation(ctx context.Context, spec CancellationSpec, injector *C
 	scanConfig, err := config.NewScan(config.ScanValues{
 		CIDRFile: manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 		PortFile: portPath, ResumeInput: snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
-		Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: 100 * time.Microsecond, BucketRate: 1,
+		Workers: 1, DialTimeout: time.Second, DispatchDelay: 100 * time.Microsecond, BucketRate: 1,
 		BucketCapacity: 1, LogLevel: "error", Format: "json", Quiet: true,
 		Pressure: config.PressureDisabled(),
 	})

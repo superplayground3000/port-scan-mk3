@@ -251,6 +251,7 @@ func writeRichCSV(ctx context.Context, output io.Writer, spec FixtureSpec) error
 		}
 		if spec.Family == FamilyRichRecordMixed && index%3 == 0 {
 			reason = "PRECHECK_ALLOW_ALL"
+			destinationSegment = destination + "/32"
 		}
 		row := []string{"127.0.0.1", "127.0.0.0/8", destination, destinationSegment, "service", "tcp", "443", decision, fmt.Sprintf("policy-%d", index%16), reason}
 		if err := writer.Write(row); err != nil {
