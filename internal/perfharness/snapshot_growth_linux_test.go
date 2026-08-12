@@ -22,7 +22,7 @@ func TestSnapshotMixedGrowthThroughHundredMegabytesIsLinear(t *testing.T) {
 			t.Fatal(err)
 		}
 		if previous != nil {
-			for index, operation := range []string{"load"} {
+			for index, operation := range []string{"load", "save"} {
 				t.Logf("snapshot %s growth to %d: allocated %d -> %d, wall %s -> %s", operation, target,
 					previous[index].SteadyMedian.GoAllocatedBytes, results[index].SteadyMedian.GoAllocatedBytes,
 					previous[index].SteadyMedian.WallTime, results[index].SteadyMedian.WallTime)

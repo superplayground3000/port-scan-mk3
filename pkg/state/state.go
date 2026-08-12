@@ -24,6 +24,7 @@
 package state
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -165,12 +166,28 @@ func SaveSnapshot(path string, snap Snapshot) error {
 }
 
 // SaveSnapshotWithLimits writes snap to path when its bytes and object counts fit limits.
-// It returns a serialization, limit, or filesystem error. A limit error occurs before temporary-file creation.
+// It returns a serialization, limit, or filesystem error.
 func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) error {
 	_, previousStatErr := os.Stat(path)
 	if err := validateSnapshotLimits(path, snap, limits); err != nil {
 		return err
 	}
+	env := snapshotEnvelopeFromSnapshot(snap)
+
+	if err := writeSnapshotViaTempRename(path, env, limits, snapshotFileMode); err != nil {
+		switch {
+		case previousStatErr == nil:
+			return fmt.Errorf("save snapshot failed: previous snapshot remains usable: %w", err)
+		case os.IsNotExist(previousStatErr):
+			return fmt.Errorf("save snapshot failed: no previous snapshot is available: %w", err)
+		default:
+			return fmt.Errorf("save snapshot failed: previous snapshot usability is unknown: %w", err)
+		}
+	}
+	return nil
+}
+
+func snapshotEnvelopeFromSnapshot(snap Snapshot) snapshotEnvelope {
 	env := snapshotEnvelope{
 		Chunks:           &snap.Chunks,
 		RichDenyExcluded: snap.RichDenyExcluded,
@@ -195,32 +212,15 @@ func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) e
 	env.TargetSemanticsVersion = snap.TargetSemanticsVersion
 	env.BasicPortFallback = append([]string(nil), snap.BasicPortFallback...)
 
-	data, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode snapshot %s: %w", path, err)
-	}
-	if limits.MaxBytes > 0 && uint64(len(data)) > limits.MaxBytes {
-		return snapshotLimitError(path, "serialized bytes", uint64(len(data)), limits.MaxBytes, "-snapshot-size-limit-gb")
-	}
-	if err := writeFileViaTempRename(path, data, snapshotFileMode); err != nil {
-		switch {
-		case previousStatErr == nil:
-			return fmt.Errorf("save snapshot failed: previous snapshot remains usable: %w", err)
-		case os.IsNotExist(previousStatErr):
-			return fmt.Errorf("save snapshot failed: no previous snapshot is available: %w", err)
-		default:
-			return fmt.Errorf("save snapshot failed: previous snapshot usability is unknown: %w", err)
-		}
-	}
-	return nil
+	return env
 }
 
 // snapshotFileMode is the permission the snapshot file ends up with, matching
 // the mode the previous direct-write implementation passed to os.WriteFile.
 const snapshotFileMode os.FileMode = 0o644
 
-// writeFileViaTempRename writes data to a temp file in the destination's own
-// directory and only then renames that file over path.
+// writeSnapshotViaTempRename writes a snapshot to a temporary file in the
+// destination directory. It renames that file over path after a successful write.
 //
 // The guarantee is deliberately narrower than "atomic write":
 //
@@ -237,7 +237,7 @@ const snapshotFileMode os.FileMode = 0o644
 // platform is the three points above. The temp file must be a sibling of the
 // destination: a rename across filesystems is atomic nowhere and may fail
 // outright.
-func writeFileViaTempRename(path string, data []byte, perm os.FileMode) (err error) {
+func writeSnapshotViaTempRename(path string, env snapshotEnvelope, limits SnapshotLimits, perm os.FileMode) (err error) {
 	dir := filepath.Dir(path)
 	f, err := fileOps.createTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -265,8 +265,16 @@ func writeFileViaTempRename(path string, data []byte, perm os.FileMode) (err err
 		return fmt.Errorf("set mode on temp snapshot file %s: %w", tmpPath, chmodErr)
 	}
 
-	if _, writeErr := fileOps.write(f, data); writeErr != nil {
+	writer := io.Writer(snapshotFileWriter{file: f})
+	if limits.MaxBytes > 0 {
+		writer = &snapshotLimitWriter{writer: writer, path: path, limit: limits.MaxBytes}
+	}
+	buffered := bufio.NewWriterSize(writer, 256*1024)
+	if writeErr := encodeSnapshot(buffered, env); writeErr != nil {
 		return fmt.Errorf("write temp snapshot file %s: %w", tmpPath, writeErr)
+	}
+	if flushErr := buffered.Flush(); flushErr != nil {
+		return fmt.Errorf("write buffered temp snapshot file %s: %w", tmpPath, flushErr)
 	}
 	if syncErr := fileOps.sync(f); syncErr != nil {
 		return fmt.Errorf("sync temp snapshot file %s: %w", tmpPath, syncErr)
@@ -281,6 +289,37 @@ func writeFileViaTempRename(path string, data []byte, perm os.FileMode) (err err
 		return fmt.Errorf("replace snapshot %s with temp file %s: %w", path, tmpPath, replaceErr)
 	}
 	return nil
+}
+
+type snapshotFileWriter struct {
+	file *os.File
+}
+
+func (writer snapshotFileWriter) Write(data []byte) (int, error) {
+	return fileOps.write(writer.file, data)
+}
+
+type snapshotLimitWriter struct {
+	writer io.Writer
+	path   string
+	limit  uint64
+	count  uint64
+}
+
+func (writer *snapshotLimitWriter) Write(data []byte) (int, error) {
+	remaining := writer.limit - writer.count
+	if uint64(len(data)) > remaining {
+		data = data[:remaining+1]
+	}
+	count, err := writer.writer.Write(data)
+	writer.count += uint64(count)
+	if err != nil {
+		return count, err
+	}
+	if writer.count > writer.limit {
+		return count, snapshotLimitError(writer.path, "serialized bytes", writer.count, writer.limit, "-snapshot-size-limit-gb")
+	}
+	return count, nil
 }
 
 // destinationMode reports the permissions a replacement file should carry:
