@@ -55,6 +55,7 @@ type PhaseResult struct {
 // CaseResult records six observations and the evaluated summaries.
 type CaseResult struct {
 	Name              string                `json:"name"`
+	LogicalItems      uint64                `json:"logical_items,omitempty"`
 	Manifest          *Manifest             `json:"manifest,omitempty"`
 	FixtureGeneration *PhaseResult          `json:"fixture_generation,omitempty"`
 	Runs              []Observation         `json:"runs"`
@@ -146,8 +147,18 @@ func markdownReport(report Report) string {
 	fmt.Fprintf(&text, "RAM: `%d` bytes\n\n", report.Hardware.RAMBytes)
 	fmt.Fprintf(&text, "Go: `%s`\n\n", report.Hardware.GoVersion)
 	fmt.Fprintf(&text, "Commit: `%s`\n\n", report.Hardware.Commit)
-	fmt.Fprintln(&text, "| Case | Fixture generation median | Stage cold wall time | Stage steady median | Output bytes | Results/s | MB/s | Allocations | Allocated bytes | Peak heap | Verdict |")
-	fmt.Fprintln(&text, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
+	if len(report.Contract.FixtureCases) > 0 {
+		fmt.Fprintln(&text, "## Required fixture mapping")
+		fmt.Fprintln(&text)
+		fmt.Fprintln(&text, "| Fixture | Shape | Production cases |")
+		fmt.Fprintln(&text, "|---|---|---|")
+		for _, mapping := range report.Contract.FixtureCases {
+			fmt.Fprintf(&text, "| %s | %s | %s |\n", mapping.Fixture.Family, mapping.Fixture.Shape, strings.Join(mapping.CaseNames, "<br>"))
+		}
+		fmt.Fprintln(&text)
+	}
+	fmt.Fprintln(&text, "| Case | Logical items | Fixture generation median | Stage cold wall time | Stage steady median | Output bytes | Results/s | MB/s | Allocations | Allocated bytes | Peak heap | Verdict |")
+	fmt.Fprintln(&text, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
 	for _, result := range report.Cases {
 		verdict := "fail"
 		if result.Verdict.Passed {
@@ -157,8 +168,9 @@ func markdownReport(report Report) string {
 		if result.FixtureGeneration != nil {
 			fixtureGeneration = result.FixtureGeneration.SteadyMedian.WallTime.String()
 		}
-		fmt.Fprintf(&text, "| %s | %s | %s | %s | %d | %.2f | %.2f | %d | %d | %d | %s |\n",
+		fmt.Fprintf(&text, "| %s | %d | %s | %s | %s | %d | %.2f | %.2f | %d | %d | %d | %s |\n",
 			result.Name,
+			result.LogicalItems,
 			fixtureGeneration,
 			result.ColdStart.WallTime,
 			result.SteadyMedian.WallTime,

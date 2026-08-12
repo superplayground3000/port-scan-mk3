@@ -113,3 +113,41 @@ func TestRunFixtureCaseUsesProductionCIDRLoader(t *testing.T) {
 		t.Fatalf("production CIDR rows = %d, want 10", result.SteadyMedian.OutputBytes)
 	}
 }
+
+func TestRunFixtureCaseUsesProductionRichAndPortLoaders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		spec perfharness.FixtureSpec
+		want uint64
+	}{
+		{name: "rich", spec: perfharness.FixtureSpec{Family: perfharness.FamilyRichUniqueKey, Scale: perfharness.Scale{InputRecords: 7}, Seed: perfharness.DefaultGeneratorSeed}, want: 7},
+		{name: "ports", spec: perfharness.FixtureSpec{Family: perfharness.FamilyPortHeavy, Scale: perfharness.Scale{ProbeTasks: 5}, Seed: perfharness.DefaultGeneratorSeed}, want: 5},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			result, err := perfharness.New().RunFixtureCase(context.Background(), filepath.Join(t.TempDir(), test.name), test.spec)
+			if err != nil {
+				t.Fatalf("RunFixtureCase: %v", err)
+			}
+			if result.SteadyMedian.OutputBytes != test.want {
+				t.Fatalf("production rows = %d, want %d", result.SteadyMedian.OutputBytes, test.want)
+			}
+		})
+	}
+}
+
+func TestRunFixtureCaseRejectsARequiredFamilyWithoutItsProductionRunner(t *testing.T) {
+	t.Parallel()
+
+	_, err := perfharness.New().RunFixtureCase(context.Background(), filepath.Join(t.TempDir(), "candidate"), perfharness.FixtureSpec{
+		Family: perfharness.FamilyCandidateHeavy,
+		Scale:  perfharness.Scale{CandidateAddresses: 3},
+		Seed:   perfharness.DefaultGeneratorSeed,
+	})
+	if err == nil {
+		t.Fatal("RunFixtureCase returned a successful no-op production stage")
+	}
+}

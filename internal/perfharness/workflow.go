@@ -143,7 +143,7 @@ func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResul
 		return WorkflowResult{}, err
 	}
 	var probes atomic.Uint64
-	var taskOrder []string
+	taskEvidence := newOrderedTaskEvidence()
 	stage, err := New().Measure(ctx, manifest.ActualBytes, spec.Items-uint64(completed), func(runCtx context.Context) (uint64, error) {
 		runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			DisableKeyboard: true,
@@ -152,7 +152,7 @@ func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResul
 				return fakeOpenConn{}, nil
 			},
 			TaskObserver: func(ip string, taskPort int) {
-				taskOrder = append(taskOrder, net.JoinHostPort(ip, strconv.Itoa(taskPort))+"/tcp")
+				taskEvidence.Observe(net.JoinHostPort(ip, strconv.Itoa(taskPort)) + "/tcp")
 			},
 		})
 		return 0, runErr
@@ -164,7 +164,7 @@ func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResul
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	return workflowResultFromFiles(probes.Load(), 0, true, Observation{}, stage, scanPath, openPath, taskOrder)
+	return workflowResultFromFiles(probes.Load(), 0, true, Observation{}, stage, scanPath, openPath, taskEvidence)
 }
 
 // RunProductionSmoke runs production parsing, bucket, resume, scan, and writer paths.
@@ -354,7 +354,7 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 	}
 	var scanPath string
 	var openPath string
-	var taskOrder []string
+	taskEvidence := newOrderedTaskEvidence()
 	prePingCompleted := false
 	stage, err := suite.Measure(ctx, manifest.ActualBytes, items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.RunPrePing(runCtx, prePingConfig, io.Discard, io.Discard, scanapp.RunOptions{
@@ -375,7 +375,7 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 			DisableKeyboard:     true,
 			ReachabilityChecker: countingReachability{count: &reachability},
 			TaskObserver: func(ip string, taskPort int) {
-				taskOrder = append(taskOrder, net.JoinHostPort(ip, strconv.Itoa(taskPort))+"/tcp")
+				taskEvidence.Observe(net.JoinHostPort(ip, strconv.Itoa(taskPort)) + "/tcp")
 			},
 		}); runErr != nil {
 			return 0, fmt.Errorf("run rich-deny scan workflow: %w", runErr)
@@ -398,7 +398,7 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	result, err := workflowResultFromFiles(probes.Load(), reachability.Load(), true, fixtureGeneration, stage, scanPath, openPath, taskOrder)
+	result, err := workflowResultFromFiles(probes.Load(), reachability.Load(), true, fixtureGeneration, stage, scanPath, openPath, taskEvidence)
 	result.PrePingCompleted = prePingCompleted
 	return result, err
 }
@@ -502,7 +502,7 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 	}
 	var scanPath string
 	var openPath string
-	taskOrder := make([]string, 0, spec.Items)
+	taskEvidence := newOrderedTaskEvidence()
 	stage, err := suite.Measure(ctx, fixtureGeneration.OutputBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.GenerateBuckets(runCtx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); runErr != nil {
 			return 0, fmt.Errorf("run production bucket workflow: %w", runErr)
@@ -511,7 +511,7 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 			Dial:            dial,
 			DisableKeyboard: true,
 			TaskObserver: func(ip string, taskPort int) {
-				taskOrder = append(taskOrder, net.JoinHostPort(ip, strconv.Itoa(taskPort))+"/tcp")
+				taskEvidence.Observe(net.JoinHostPort(ip, strconv.Itoa(taskPort)) + "/tcp")
 			},
 		}); runErr != nil {
 			return 0, fmt.Errorf("run production scan workflow: %w", runErr)
@@ -534,7 +534,7 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	return workflowResultFromFiles(probes.Load(), 0, true, fixtureGeneration, stage, scanPath, openPath, taskOrder)
+	return workflowResultFromFiles(probes.Load(), 0, true, fixtureGeneration, stage, scanPath, openPath, taskEvidence)
 }
 
 func fileSize(path string) (uint64, error) {
@@ -597,7 +597,7 @@ func fileDigest(path string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-func workflowResultFromFiles(probes, reachability uint64, completed bool, fixtureGeneration, stage Observation, scanPath, openPath string, taskOrder []string) (WorkflowResult, error) {
+func workflowResultFromFiles(probes, reachability uint64, completed bool, fixtureGeneration, stage Observation, scanPath, openPath string, taskEvidence *orderedTaskEvidence) (WorkflowResult, error) {
 	scanRows, err := countCSVRows(scanPath)
 	if err != nil {
 		return WorkflowResult{}, err
@@ -618,6 +618,7 @@ func workflowResultFromFiles(probes, reachability uint64, completed bool, fixtur
 	if err != nil {
 		return WorkflowResult{}, err
 	}
+	tasks := taskEvidence.Snapshot()
 	return WorkflowResult{
 		ProbeCount:        probes,
 		ReachabilityCount: reachability,
@@ -631,46 +632,17 @@ func workflowResultFromFiles(probes, reachability uint64, completed bool, fixtur
 		Semantic: SemanticArtifact{
 			Root:         filepath.Dir(scanPath),
 			Path:         filepath.Join(filepath.Dir(scanPath), "scan-results.csv"),
-			TaskOrder:    append([]string(nil), taskOrder...),
+			TaskOrder:    tasks.Full,
+			TaskCount:    tasks.Count,
+			TaskDigest:   tasks.Digest,
+			TaskPrefix:   tasks.Prefix,
+			TaskSuffix:   tasks.Suffix,
 			RowCount:     scanRows,
 			Status:       "completed",
 			Cursor:       scanRows,
 			OutputDigest: normalizedDigest,
 		},
 	}, nil
-}
-
-func normalizedCSVDigest(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open workflow CSV for normalization: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-	rows, err := csv.NewReader(file).ReadAll()
-	if err != nil {
-		return "", fmt.Errorf("read workflow CSV for normalization: %w", err)
-	}
-	if len(rows) == 0 {
-		return "", fmt.Errorf("workflow CSV has no header")
-	}
-	durationColumn := -1
-	for index, name := range rows[0] {
-		if name == "response_time_ms" {
-			durationColumn = index
-			break
-		}
-	}
-	normalized := make([]string, 0, len(rows)-1)
-	for _, row := range rows[1:] {
-		copyRow := append([]string(nil), row...)
-		if durationColumn >= 0 && durationColumn < len(copyRow) {
-			copyRow[durationColumn] = "<duration>"
-		}
-		normalized = append(normalized, strings.Join(copyRow, "\x00"))
-	}
-	sort.Strings(normalized)
-	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	return fmt.Sprintf("%x", digest[:]), nil
 }
 
 type countingReachability struct {

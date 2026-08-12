@@ -128,7 +128,14 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	results := make([]perfharness.CaseResult, 0, len(specs)+5)
 	for index, spec := range specs {
 		caseDir := filepath.Join(casesDir, fmt.Sprintf("%02d-%s", index, spec.Family))
-		if spec.Family == perfharness.FamilySnapshotHeavy {
+		route, err := fixtureRouteFor(spec)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "route fixture %s: %v\n", spec.Family, err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		if route == fixtureRouteSnapshot {
 			snapshotResults, err := harness.RunSnapshotCases(context.Background(), caseDir, spec)
 			if err != nil {
 				if writeErr := writeStatus(stderr, "run snapshot fixture %s: %v\n", spec.Shape, err); writeErr != nil {
@@ -144,7 +151,19 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			}
 			continue
 		}
-		result, err := harness.RunFixtureCase(context.Background(), caseDir, spec)
+		var result perfharness.CaseResult
+		switch route {
+		case fixtureRoutePrePing:
+			result, err = harness.RunPrePingCase(context.Background(), perfharness.ProductionStageSpec{OutputDir: caseDir, Items: spec.Scale.CandidateAddresses, Workers: 16})
+		case fixtureRouteBuckets:
+			result, err = harness.RunBucketCase(context.Background(), perfharness.ProductionStageSpec{OutputDir: caseDir, Items: spec.Scale.ProbeTasks, Workers: 16})
+		case fixtureRouteOutput, fixtureRouteResume:
+			continue
+		case fixtureRouteValidate, fixtureRoutePort, fixtureRouteRich, fixtureRouteRichDeny:
+			result, err = harness.RunFixtureCase(context.Background(), caseDir, spec)
+		default:
+			err = fmt.Errorf("fixture family %q resolved to invalid production route %d", spec.Family, route)
+		}
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run fixture %s: %v\n", spec.Family, err); writeErr != nil {
 				return 1
@@ -203,7 +222,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	workflowItems := smokeItems
+	workflowItems := profileItemCount(profile, smokeItems)
 	for _, workers := range contract.FakeWorkers {
 		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-workers-"+strconv.Itoa(workers)), workflowItems, workers, "")
 		if err != nil {
@@ -244,7 +263,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	const cancellationItems uint64 = 200
+	cancellationItems := fullOrBoundedItems(profile, 200)
 	for _, stage := range contract.CancelStages {
 		for _, percent := range contract.CancelProgress {
 			result, err := runCancellationCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("cancel-%s-%d", stage, percent)), cancellationItems, 16, stage, percent, contract.StopWithin)
@@ -271,7 +290,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	if err := writeStatus(stdout, "case passed: %s\n", regressionResult.Name); err != nil {
 		return 1
 	}
-	resumeItems := min(workflowItems, uint64(100))
+	resumeItems := workflowItems
 	for _, percent := range []int{0, 50, 99} {
 		result, err := runResumeCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("resume-%d", percent)), resumeItems, 16, percent)
 		if err != nil {
@@ -286,7 +305,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	for _, scenario := range []string{"output-failure", "snapshot-save-failure", "pressure-fatal-error"} {
-		result, err := runFailureCase(context.Background(), harness, filepath.Join(casesDir, "failure-"+scenario), 100, 16, scenario)
+		result, err := runFailureCase(context.Background(), harness, filepath.Join(casesDir, "failure-"+scenario), fullOrBoundedItems(profile, 100), 16, scenario)
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run failure scenario=%s: %v\n", scenario, err); writeErr != nil {
 				return 1
@@ -304,7 +323,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		perfharness.FamilyRichHotKey,
 		perfharness.FamilyRichPrecheck,
 	} {
-		result, err := runAcceptedRichCase(context.Background(), harness, filepath.Join(casesDir, "rich-"+string(family)), 100, 16, family)
+		result, err := runAcceptedRichCase(context.Background(), harness, filepath.Join(casesDir, "rich-"+string(family)), fullOrBoundedItems(profile, 100), 16, family)
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run rich family=%s: %v\n", family, err); writeErr != nil {
 				return 1
@@ -363,7 +382,11 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	matrixPassed := applyAbsoluteThresholds(results, harness, contract)
-	if !applySnapshotCaseContract(results, specs) {
+	if profile == "full" {
+		if !applyFixtureCaseContract(results, contract.FixtureCases) {
+			matrixPassed = false
+		}
+	} else if !applySnapshotCaseContract(results, specs) {
 		matrixPassed = false
 	}
 	if !applyWorkerParity(results, harness, contract.FakeWorkers) {
@@ -439,6 +462,37 @@ func applySnapshotCaseContract(results []perfharness.CaseResult, specs []perfhar
 		}
 	}
 	return true
+}
+
+func applyFixtureCaseContract(results []perfharness.CaseResult, mappings []perfharness.FixtureCaseMapping) bool {
+	for _, mapping := range mappings {
+		wantItems := fixtureLogicalItems(mapping.Fixture)
+		if len(mapping.CaseNames) == 0 || wantItems == 0 {
+			return false
+		}
+		for _, name := range mapping.CaseNames {
+			result := findCase(results, name)
+			if result == nil || result.LogicalItems != wantItems {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func fixtureLogicalItems(spec perfharness.FixtureSpec) uint64 {
+	for _, count := range []uint64{
+		spec.Scale.ExpectedOutputs,
+		spec.Scale.ProbeTasks,
+		spec.Scale.CandidateAddresses,
+		spec.Scale.InputRecords,
+		spec.Scale.TargetBytes,
+	} {
+		if count > 0 {
+			return count
+		}
+	}
+	return 0
 }
 
 func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, harness perfharness.Harness) bool {
@@ -722,6 +776,63 @@ func fixtureSpecs(profile string, items, snapshotBytes uint64, contract perfharn
 	}
 }
 
+func profileItemCount(profile string, smokeItems uint64) uint64 {
+	if profile == "full" {
+		return perfharness.FullItemCount
+	}
+	return smokeItems
+}
+
+func fullOrBoundedItems(profile string, bounded uint64) uint64 {
+	if profile == "full" {
+		return perfharness.FullItemCount
+	}
+	return bounded
+}
+
+type fixtureRoute uint8
+
+const (
+	fixtureRouteNone fixtureRoute = iota
+	fixtureRouteValidate
+	fixtureRoutePrePing
+	fixtureRoutePort
+	fixtureRouteBuckets
+	fixtureRouteOutput
+	fixtureRouteSnapshot
+	fixtureRouteResume
+	fixtureRouteRich
+	fixtureRouteRichDeny
+)
+
+func fixtureRouteFor(spec perfharness.FixtureSpec) (fixtureRoute, error) {
+	switch spec.Family {
+	case perfharness.FamilyRecordHeavy:
+		return fixtureRouteValidate, nil
+	case perfharness.FamilyCandidateHeavy:
+		return fixtureRoutePrePing, nil
+	case perfharness.FamilyPortHeavy:
+		return fixtureRoutePort, nil
+	case perfharness.FamilyTaskHeavy:
+		return fixtureRouteBuckets, nil
+	case perfharness.FamilyOutputHeavy:
+		return fixtureRouteOutput, nil
+	case perfharness.FamilySnapshotHeavy:
+		return fixtureRouteSnapshot, nil
+	case perfharness.FamilyResumeHeavy:
+		return fixtureRouteResume, nil
+	case perfharness.FamilyRichRecordMixed,
+		perfharness.FamilyRichUniqueKey,
+		perfharness.FamilyRichHotKey,
+		perfharness.FamilyRichPrecheck:
+		return fixtureRouteRich, nil
+	case perfharness.FamilyRichDeny:
+		return fixtureRouteRichDeny, nil
+	default:
+		return fixtureRouteNone, fmt.Errorf("fixture family %q has no production route", spec.Family)
+	}
+}
+
 func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, lineEnding string) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create workflow case directory: %w", err)
@@ -747,6 +858,9 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
 			return perfharness.CaseResult{}, fmt.Errorf("workflow run parity differs in %s", strings.Join(differences, ", "))
 		}
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	name := fmt.Sprintf("production-workflow/workers-%d", workers)
 	if lineEnding == "CRLF" {
@@ -761,6 +875,7 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 		return perfharness.CaseResult{}, err
 	}
 	result.FixtureGeneration = &fixtureGeneration
+	result.LogicalItems = items
 	result.Correctness = perfharness.Correctness{Headers: correct, RowCounts: correct, SnapshotProgress: correct, ExpectedValues: correct, Digests: correct}
 	result.Verdict = perfharness.Verdict{Passed: correct}
 	result.Semantic = &semantic
@@ -784,6 +899,9 @@ func runLoopbackCase(ctx context.Context, harness perfharness.Harness, outputDir
 		}
 		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
 		observations = append(observations, workflow.Stage)
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	result, err := perfharness.SummarizeCase(fmt.Sprintf("native-loopback/workers-%d", workers), observations)
 	if err != nil {
@@ -794,6 +912,7 @@ func runLoopbackCase(ctx context.Context, harness perfharness.Harness, outputDir
 		return perfharness.CaseResult{}, err
 	}
 	result.FixtureGeneration = &fixtureGeneration
+	result.LogicalItems = 1
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
 	result.Verdict = perfharness.Verdict{Passed: true}
 	return result, nil
@@ -820,6 +939,9 @@ func runRichDenyCase(ctx context.Context, harness perfharness.Harness, outputDir
 		}
 		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
 		observations = append(observations, workflow.Stage)
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	result, err := perfharness.SummarizeCase("production-rich-deny/"+shape, observations)
 	if err != nil {
@@ -830,6 +952,7 @@ func runRichDenyCase(ctx context.Context, harness perfharness.Harness, outputDir
 		return perfharness.CaseResult{}, err
 	}
 	result.FixtureGeneration = &fixtureGeneration
+	result.LogicalItems = items
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
 	result.Verdict = perfharness.Verdict{Passed: true}
 	return result, nil
@@ -865,12 +988,16 @@ func runCancellationCase(ctx context.Context, harness perfharness.Harness, outpu
 			correct = false
 		}
 		observations = append(observations, observation)
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	result, err := perfharness.SummarizeCase(fmt.Sprintf("production-cancellation/%s/%d", stage, percent), observations)
 	if err != nil {
 		return perfharness.CaseResult{}, err
 	}
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: correct, ExpectedValues: correct, Digests: true}
+	result.LogicalItems = items
 	result.Verdict = perfharness.Verdict{Passed: correct}
 	if !correct {
 		result.Verdict.Failures = []perfharness.Failure{{Rule: "cancellation-stop", Detail: "production work did not stop within one second"}}
@@ -901,12 +1028,16 @@ func runResumeCase(ctx context.Context, harness perfharness.Harness, outputDir s
 			return perfharness.CaseResult{}, fmt.Errorf("resume run parity differs in %s", strings.Join(differences, ", "))
 		}
 		observations = append(observations, workflow.Stage)
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	result, err := perfharness.SummarizeCase(fmt.Sprintf("production-resume/%d", percent), observations)
 	if err != nil {
 		return perfharness.CaseResult{}, err
 	}
 	result.Semantic = &semantic
+	result.LogicalItems = items
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
 	result.Verdict = perfharness.Verdict{Passed: true}
 	return result, nil
@@ -934,12 +1065,16 @@ func runFailureCase(ctx context.Context, harness perfharness.Harness, outputDir 
 			correct = false
 		}
 		observations = append(observations, observation)
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	result, err := perfharness.SummarizeCase("production-failure/"+scenario, observations)
 	if err != nil {
 		return perfharness.CaseResult{}, err
 	}
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: correct, Digests: true}
+	result.LogicalItems = items
 	result.Verdict = perfharness.Verdict{Passed: correct}
 	return result, nil
 }
@@ -972,6 +1107,9 @@ func runAcceptedRichCase(ctx context.Context, harness perfharness.Harness, outpu
 		}
 		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
 		observations = append(observations, workflow.Stage)
+		if err := removeCompletedCaseRun(outputDir, run); err != nil {
+			return perfharness.CaseResult{}, err
+		}
 	}
 	result, err := perfharness.SummarizeCase("production-rich/"+string(family), observations)
 	if err != nil {
@@ -982,8 +1120,20 @@ func runAcceptedRichCase(ctx context.Context, harness perfharness.Harness, outpu
 		return perfharness.CaseResult{}, err
 	}
 	result.FixtureGeneration = &fixtureGeneration
+	result.LogicalItems = items
 	result.Semantic = &semantic
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
 	result.Verdict = perfharness.Verdict{Passed: true}
 	return result, nil
+}
+
+func removeCompletedCaseRun(outputDir string, run int) error {
+	if run == 0 {
+		return nil
+	}
+	path := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove completed case run %s: %w", path, err)
+	}
+	return nil
 }

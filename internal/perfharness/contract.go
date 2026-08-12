@@ -65,10 +65,17 @@ type CaseBudget struct {
 	Budget     AbsoluteBudget `json:"budget"`
 }
 
+// FixtureCaseMapping connects one required fixture to its production cases.
+type FixtureCaseMapping struct {
+	Fixture   FixtureSpec `json:"fixture"`
+	CaseNames []string    `json:"case_names"`
+}
+
 // Contract is the versioned matrix definition shared by both OS adapters.
 type Contract struct {
 	SchemaVersion        string                  `json:"schema_version"`
 	FullFixtures         []FixtureSpec           `json:"full_fixtures"`
+	FixtureCases         []FixtureCaseMapping    `json:"fixture_cases"`
 	Limits               []LimitCases            `json:"limits"`
 	FakeWorkers          []int                   `json:"fake_workers"`
 	LoopbackWorkers      []int                   `json:"loopback_workers"`
@@ -136,6 +143,7 @@ func DefaultContract() Contract {
 	return Contract{
 		SchemaVersion:        SchemaVersion,
 		FullFixtures:         fixtures,
+		FixtureCases:         fixtureCaseMappings(fixtures),
 		Limits:               limits,
 		FakeWorkers:          []int{1, 16, 256},
 		LoopbackWorkers:      []int{1, 32},
@@ -150,8 +158,14 @@ func DefaultContract() Contract {
 		OutputFlushIntervals: []int{1, 1000, 0},
 		AbsoluteBudgets: []CaseBudget{
 			{NamePrefix: "record-heavy", Budget: AbsoluteBudget{MaxWallTime: 5 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
+			{NamePrefix: "candidate-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "port-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "task-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
 			{NamePrefix: "rich-record-mixed", Budget: AbsoluteBudget{MaxWallTime: 10 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
+			{NamePrefix: "rich-unique-key", Budget: AbsoluteBudget{MaxWallTime: 10 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
 			{NamePrefix: "rich-hot-key", Budget: AbsoluteBudget{MaxWallTime: 10 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
+			{NamePrefix: "rich-precheck", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "rich-deny", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
 			{NamePrefix: "snapshot-load", Budget: AbsoluteBudget{MaxWallTime: 2 * time.Minute, MaxCommittedBytes: 6_000_000_000}},
 			{NamePrefix: "snapshot-save", Budget: AbsoluteBudget{MaxWallTime: 2 * time.Minute, MaxCommittedBytes: 6_000_000_000}},
 			{NamePrefix: "output-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 4_000_000_000}},

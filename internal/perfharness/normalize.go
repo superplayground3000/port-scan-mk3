@@ -15,6 +15,10 @@ type SemanticArtifact struct {
 	Duration     time.Duration `json:"duration_ns"`
 	OSError      string        `json:"os_error"`
 	TaskOrder    []string      `json:"task_order"`
+	TaskCount    uint64        `json:"task_count"`
+	TaskDigest   string        `json:"task_digest"`
+	TaskPrefix   []string      `json:"task_prefix"`
+	TaskSuffix   []string      `json:"task_suffix"`
 	RowCount     uint64        `json:"row_count"`
 	Status       string        `json:"status"`
 	Cursor       uint64        `json:"cursor"`
@@ -83,7 +87,9 @@ func (Suite) CompareSemantic(left, right SemanticArtifact) []string {
 	if leftPath != rightPath {
 		differences = append(differences, "path")
 	}
-	if !slices.Equal(left.TaskOrder, right.TaskOrder) {
+	if left.TaskCount != right.TaskCount || left.TaskDigest != right.TaskDigest ||
+		!slices.Equal(left.TaskPrefix, right.TaskPrefix) || !slices.Equal(left.TaskSuffix, right.TaskSuffix) ||
+		!slices.Equal(left.TaskOrder, right.TaskOrder) {
 		differences = append(differences, "task_order")
 	}
 	if left.RowCount != right.RowCount {

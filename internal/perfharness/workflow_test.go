@@ -63,6 +63,67 @@ func TestProductionWorkerProfilesHaveSemanticParity(t *testing.T) {
 	}
 }
 
+func TestProductionWorkflowKeepsBoundedOrderedTaskEvidence(t *testing.T) {
+	t.Parallel()
+
+	const items = uint64(300)
+	result, err := perfharness.New().RunProductionSmoke(context.Background(), perfharness.WorkflowSpec{
+		OutputDir: filepath.Join(t.TempDir(), "bounded evidence"),
+		Items:     items,
+		Workers:   16,
+	})
+	if err != nil {
+		t.Fatalf("RunProductionSmoke: %v", err)
+	}
+	semantic := result.Semantic
+	if semantic.TaskCount != items || semantic.TaskDigest == "" {
+		t.Fatalf("task evidence = %+v", semantic)
+	}
+	if semantic.TaskOrder != nil {
+		t.Fatalf("large workflow retained %d task strings", len(semantic.TaskOrder))
+	}
+	if len(semantic.TaskPrefix) != 8 || len(semantic.TaskSuffix) != 8 {
+		t.Fatalf("bounded evidence prefix=%d suffix=%d", len(semantic.TaskPrefix), len(semantic.TaskSuffix))
+	}
+}
+
+func TestProductionCandidateAndBucketCasesUseExactDeclaredCounts(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	for _, test := range []struct {
+		name string
+		run  func() (perfharness.CaseResult, error)
+	}{
+		{name: "candidate", run: func() (perfharness.CaseResult, error) {
+			return harness.RunPrePingCase(context.Background(), perfharness.ProductionStageSpec{OutputDir: filepath.Join(t.TempDir(), "candidate"), Items: 9, Workers: 4})
+		}},
+		{name: "bucket", run: func() (perfharness.CaseResult, error) {
+			return harness.RunBucketCase(context.Background(), perfharness.ProductionStageSpec{OutputDir: filepath.Join(t.TempDir(), "bucket"), Items: 9, Workers: 4})
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			result, err := test.run()
+			if err != nil {
+				t.Fatalf("production stage: %v", err)
+			}
+			if len(result.Runs) != 6 || result.ColdStart.ThroughputPerSecond <= 0 || !result.Verdict.Passed {
+				t.Fatalf("production stage result = %+v", result)
+			}
+			if result.LogicalItems != 9 || result.Manifest == nil {
+				t.Fatalf("production stage scale evidence = %+v", result)
+			}
+			if test.name == "candidate" && (result.Manifest.Family != perfharness.FamilyCandidateHeavy || result.Manifest.CandidateAddresses != 9) {
+				t.Fatalf("candidate manifest = %+v", result.Manifest)
+			}
+			if test.name == "bucket" && (result.Manifest.Family != perfharness.FamilyTaskHeavy || result.Manifest.ProbeTasks != 9) {
+				t.Fatalf("task manifest = %+v", result.Manifest)
+			}
+		})
+	}
+}
+
 func TestRunResumeSmokeRebuildsRemainingProductionWork(t *testing.T) {
 	t.Parallel()
 

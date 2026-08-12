@@ -149,8 +149,10 @@ func summarizeSnapshotCases(spec FixtureSpec, loadManifest, saveManifest Manifes
 		return nil, err
 	}
 	loadResult.Manifest = &loadManifest
+	loadResult.LogicalItems = spec.Scale.TargetBytes
 	loadResult.FixtureGeneration = &fixtureGeneration
 	saveResult.Manifest = &saveManifest
+	saveResult.LogicalItems = spec.Scale.TargetBytes
 	correctness := Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
 	loadResult.Correctness = correctness
 	saveResult.Correctness = correctness

@@ -20,7 +20,7 @@ type OutputSpec struct {
 }
 
 // RunOutputCase writes all-open results through both production CSV writers.
-// It runs the case five times and removes each output after measurement.
+// It runs the case six times and removes each output after measurement.
 func (suite Suite) RunOutputCase(ctx context.Context, spec OutputSpec) (CaseResult, error) {
 	if spec.Results == 0 {
 		return CaseResult{}, fmt.Errorf("output results must be positive")
@@ -32,8 +32,8 @@ func (suite Suite) RunOutputCase(ctx context.Context, spec OutputSpec) (CaseResu
 		return CaseResult{}, fmt.Errorf("create output case directory: %w", err)
 	}
 
-	observations := make([]Observation, 0, 5)
-	for run := 0; run < 5; run++ {
+	observations := make([]Observation, 0, 6)
+	for run := 0; run < 6; run++ {
 		scanPath := filepath.Join(spec.OutputDir, fmt.Sprintf("scan-%d.csv", run))
 		openPath := filepath.Join(spec.OutputDir, fmt.Sprintf("opened-%d.csv", run))
 		observation, err := suite.Measure(ctx, 0, spec.Results, func(runCtx context.Context) (uint64, error) {
@@ -54,8 +54,12 @@ func (suite Suite) RunOutputCase(ctx context.Context, spec OutputSpec) (CaseResu
 		observations = append(observations, observation)
 	}
 
-	result := summarizeFiveRunCase(fmt.Sprintf("output-heavy/results-%d/flush-%d", spec.Results, spec.FlushResults), observations)
+	result, err := SummarizeCase(fmt.Sprintf("output-heavy/results-%d/flush-%d", spec.Results, spec.FlushResults), observations)
+	if err != nil {
+		return CaseResult{}, err
+	}
 	result.Correctness = Correctness{Headers: true, RowCounts: true, ExpectedValues: true, Digests: true}
+	result.LogicalItems = spec.Results
 	result.Verdict = Verdict{Passed: true}
 	return result, nil
 }

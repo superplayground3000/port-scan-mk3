@@ -20,7 +20,7 @@ func TestRunOutputCaseMeasuresBothWritersAndRemovesTemporaryOutputs(t *testing.T
 		if err != nil {
 			t.Fatalf("interval=%d RunOutputCase() error = %v", interval, err)
 		}
-		if len(result.Runs) != 5 || !result.Correctness.Headers || !result.Correctness.RowCounts || !result.Correctness.ExpectedValues {
+		if len(result.Runs) != 6 || !result.Correctness.Headers || !result.Correctness.RowCounts || !result.Correctness.ExpectedValues {
 			t.Fatalf("interval=%d result = %+v", interval, result)
 		}
 		if result.SteadyMedian.OutputBytes == 0 || result.SteadyMedian.ThroughputPerSecond <= 0 || result.SteadyMedian.MegabytesPerSecond <= 0 {

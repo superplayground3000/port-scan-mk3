@@ -216,6 +216,77 @@ func TestOutputSpecsContainTheApprovedFullAndSmokeMatrix(t *testing.T) {
 	}
 }
 
+func TestEveryFullFixtureHasAnExplicitProductionRoute(t *testing.T) {
+	t.Parallel()
+
+	contract := perfharness.DefaultContract()
+	for _, spec := range contract.FullFixtures {
+		route, err := fixtureRouteFor(spec)
+		if err != nil {
+			t.Fatalf("fixture %s/%s has no production route: %v", spec.Family, spec.Shape, err)
+		}
+		if route == fixtureRouteNone {
+			t.Fatalf("fixture %s/%s uses the no-op route", spec.Family, spec.Shape)
+		}
+	}
+
+	if _, err := fixtureRouteFor(perfharness.FixtureSpec{Family: perfharness.Family("unsupported")}); err == nil {
+		t.Fatal("unsupported fixture family has a successful route")
+	}
+}
+
+func TestFullProfilePropagatesTheExactWorkCount(t *testing.T) {
+	t.Parallel()
+
+	if got := profileItemCount("full", 7); got != perfharness.FullItemCount {
+		t.Fatalf("full item count = %d, want %d", got, perfharness.FullItemCount)
+	}
+	if got := profileItemCount("smoke", 7); got != 7 {
+		t.Fatalf("smoke item count = %d, want 7", got)
+	}
+	if got := fullOrBoundedItems("full", 200); got != perfharness.FullItemCount {
+		t.Fatalf("full bounded-stage item count = %d, want %d", got, perfharness.FullItemCount)
+	}
+	if got := fullOrBoundedItems("smoke", 200); got != 200 {
+		t.Fatalf("smoke bounded-stage item count = %d, want 200", got)
+	}
+}
+
+func TestFullFixtureCaseContractRequiresEveryAliasAndExactLogicalCount(t *testing.T) {
+	t.Parallel()
+
+	mappings := perfharness.DefaultContract().FixtureCases
+	results := make([]perfharness.CaseResult, 0)
+	for _, mapping := range mappings {
+		for _, name := range mapping.CaseNames {
+			results = append(results, perfharness.CaseResult{Name: name, LogicalItems: fixtureLogicalItems(mapping.Fixture)})
+		}
+	}
+	if !applyFixtureCaseContract(results, mappings) {
+		t.Fatal("complete fixture aliases failed the contract")
+	}
+	results[len(results)-1].LogicalItems--
+	if applyFixtureCaseContract(results, mappings) {
+		t.Fatal("fixture contract accepted a reduced logical count")
+	}
+	results = results[:len(results)-1]
+	if applyFixtureCaseContract(results, mappings) {
+		t.Fatal("fixture contract accepted a missing dedicated case alias")
+	}
+}
+
+func TestCandidateAndTaskStagesUseTheirApprovedBudgets(t *testing.T) {
+	t.Parallel()
+
+	contract := perfharness.DefaultContract()
+	for _, name := range []string{"candidate-heavy/pre-ping", "task-heavy/bucket-generation"} {
+		budget, ok := absoluteBudgetFor(name, contract.AbsoluteBudgets)
+		if !ok || budget.MaxWallTime != 15*time.Minute || budget.MaxCommittedBytes != 24_000_000_000 {
+			t.Fatalf("budget for %s = %+v, found=%t", name, budget, ok)
+		}
+	}
+}
+
 func TestApplyOutputThresholdsBlocksGrowthAndFlushSpeedViolations(t *testing.T) {
 	results := []perfharness.CaseResult{
 		outputThresholdCase(100_000, 1, 4*time.Second, 100),
@@ -328,7 +399,7 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 		}
 		if strings.HasPrefix(result.Name, "output-heavy/results-") {
 			outputCases++
-			if len(result.Runs) != 5 || !result.Verdict.Passed || result.SteadyMedian.MegabytesPerSecond <= 0 {
+			if len(result.Runs) != 6 || !result.Verdict.Passed || result.SteadyMedian.MegabytesPerSecond <= 0 {
 				t.Fatalf("output case failed: %+v", result)
 			}
 		}

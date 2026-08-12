@@ -31,8 +31,10 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 	if result.ColdStart.WallTime != 9*time.Second || result.SteadyMedian.WallTime != 3*time.Second {
 		t.Fatalf("unexpected summaries: cold=%s median=%s", result.ColdStart.WallTime, result.SteadyMedian.WallTime)
 	}
+	result.LogicalItems = perfharness.FullItemCount
 	report := perfharness.Report{
 		SchemaVersion: perfharness.SchemaVersion,
+		Contract:      perfharness.DefaultContract(),
 		Platform:      "linux/amd64",
 		Hardware: perfharness.HardwareProfile{
 			EvidenceLabel: perfharness.EvidenceHardwareQualified,
@@ -66,6 +68,11 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 	for _, metric := range []string{"Output bytes", "Results/s", "MB/s", "Allocations", "Allocated bytes", "Peak heap"} {
 		if !strings.Contains(string(markdown), metric) {
 			t.Fatalf("Markdown report lacks %q:\n%s", metric, markdown)
+		}
+	}
+	for _, evidence := range []string{"Required fixture mapping", "Logical items", "candidate-heavy/pre-ping", "task-heavy/bucket-generation", "10000000"} {
+		if !strings.Contains(string(markdown), evidence) {
+			t.Fatalf("Markdown report lacks %q:\n%s", evidence, markdown)
 		}
 	}
 }

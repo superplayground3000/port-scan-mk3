@@ -3,10 +3,13 @@ package perfharness
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
@@ -34,6 +37,8 @@ type Harness interface {
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
 	RunSnapshotCases(context.Context, string, FixtureSpec) ([]CaseResult, error)
 	RunOutputCase(context.Context, OutputSpec) (CaseResult, error)
+	RunPrePingCase(context.Context, ProductionStageSpec) (CaseResult, error)
+	RunBucketCase(context.Context, ProductionStageSpec) (CaseResult, error)
 }
 
 var _ Harness = Suite{}
@@ -83,6 +88,7 @@ func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec Fi
 		return CaseResult{}, err
 	}
 	result.Manifest = &retained
+	result.LogicalItems = fixtureUnits(spec.Scale)
 	fixtureGeneration, err := SummarizePhase(name+" fixture generation", fixtureObservations)
 	if err != nil {
 		return CaseResult{}, err
@@ -133,8 +139,49 @@ func runFixtureProductionStage(ctx context.Context, suite Suite, spec FixtureSpe
 		}
 		return uint64(len(rows)), nil
 	}
+	if spec.Family == FamilyPortHeavy {
+		ports, err := input.LoadPortsFileContext(ctx, manifest.ArtifactPath, input.PortLimits{})
+		if err != nil {
+			return 0, fmt.Errorf("load production port fixture: %w", err)
+		}
+		cidrPath := filepath.Join(filepath.Dir(manifest.ArtifactPath), "port-consumer-input.csv")
+		if err := os.WriteFile(cidrPath, []byte("ip,ip_cidr\n127.0.0.1,127.0.0.1/32\n"), 0o644); err != nil {
+			return 0, fmt.Errorf("write port consumer input: %w", err)
+		}
+		snapshotPath := filepath.Join(filepath.Dir(manifest.ArtifactPath), "port-consumer-snapshot.json")
+		cfg, err := config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
+			CIDRFile: cidrPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+			PortFile: manifest.ArtifactPath, SnapshotOutput: snapshotPath, Workers: 1,
+		}, config.GenerateBucketsResourceLimits{CIDR: input.CIDRLimits{}, Port: input.PortLimits{}, Snapshot: state.SnapshotLimits{}})
+		if err != nil {
+			return 0, fmt.Errorf("create port consumer configuration: %w", err)
+		}
+		if err := scanapp.GenerateBuckets(ctx, cfg, io.Discard, scanapp.GenerateBucketsOptions{}); err != nil {
+			return 0, fmt.Errorf("run port consumer: %w", err)
+		}
+		snapshot, err := state.LoadSnapshotWithLimits(snapshotPath, state.SnapshotLimits{})
+		if err != nil {
+			return 0, fmt.Errorf("load port consumer snapshot: %w", err)
+		}
+		var tasks uint64
+		for _, chunk := range snapshot.Chunks {
+			tasks += uint64(chunk.TotalCount)
+		}
+		if tasks != uint64(len(ports)) {
+			return 0, fmt.Errorf("port consumer generated %d tasks from %d ports", tasks, len(ports))
+		}
+		return tasks, nil
+	}
+	if spec.Family == FamilyRichRecordMixed || spec.Family == FamilyRichUniqueKey ||
+		spec.Family == FamilyRichHotKey || spec.Family == FamilyRichPrecheck || spec.Family == FamilyRichDeny {
+		rows, err := input.LoadCIDRsFileWithColumnsContext(ctx, manifest.ArtifactPath, "src_ip", "src_network_segment", input.CIDRLimits{})
+		if err != nil {
+			return 0, fmt.Errorf("load production rich CIDR fixture: %w", err)
+		}
+		return uint64(len(rows)), nil
+	}
 	if spec.Family != FamilySnapshotHeavy && spec.Family != FamilyResumeHeavy {
-		return 0, nil
+		return 0, fmt.Errorf("fixture family %q requires a dedicated production runner", spec.Family)
 	}
 	disabledLimits := state.SnapshotLimits{}
 	snapshot, err := state.LoadSnapshotWithLimits(manifest.ArtifactPath, disabledLimits)
@@ -165,7 +212,13 @@ func fixtureUnits(scale Scale) uint64 {
 }
 
 func removeFixtureRun(manifest Manifest) error {
-	for _, path := range []string{manifest.ArtifactPath, manifest.ManifestPath, filepath.Join(filepath.Dir(manifest.ArtifactPath), "roundtrip.json")} {
+	for _, path := range []string{
+		manifest.ArtifactPath,
+		manifest.ManifestPath,
+		filepath.Join(filepath.Dir(manifest.ArtifactPath), "roundtrip.json"),
+		filepath.Join(filepath.Dir(manifest.ArtifactPath), "port-consumer-input.csv"),
+		filepath.Join(filepath.Dir(manifest.ArtifactPath), "port-consumer-snapshot.json"),
+	} {
 		if err := os.Remove(path); err != nil {
 			if os.IsNotExist(err) {
 				continue
