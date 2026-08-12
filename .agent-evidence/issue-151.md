@@ -233,3 +233,32 @@ The retained diagnostic files are in these directories:
 
 The current implementation reduced the worker-1 stage peak from `6,529,245,184` bytes to `1,197,219,840` bytes.
 It reduced the peak by 81.7 percent without changing task or normalized-result digests.
+
+## Resume diagnostic results
+
+These one-run diagnostics used production commit `fab8b9c`.
+A temporary build-tag driver was present, so each result is marked as diagnostic.
+The driver called `RunResumeSmoke` one time for each completion percentage.
+
+The measured stage included the production resume rebuild, fake probes, and both CSV writers.
+Fixture preparation was outside the measured stage.
+The harness did not measure fixture preparation, so these results make no preparation-performance claim.
+
+| Completed | Remaining tasks | Stage time | Peak committed | Peak heap | Allocated bytes | 24 GB result |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 99% | `100,000` | `18.150s` | `17,247,334,400` | `16,949,387,264` | `18,344,933,744` | Pass |
+| 50% | `5,000,000` | `65.462s` | `18,202,533,888` | `17,880,793,088` | `20,783,604,416` | Pass |
+| 0% | `10,000,000` | `131.043s` | `18,093,965,312` | `17,762,443,264` | `23,265,465,128` | Pass |
+
+All three stages used zero swap and zero paging input or output.
+Each run ended with status `completed` and cursor `10,000,000`.
+The probe, task, scan-row, and open-row counts matched the remaining task count.
+
+| Completed | Task digest | Normalized output digest |
+| ---: | --- | --- |
+| 99% | `d05ddc124eae4fc74bff0088ec0eb81b4d084a4c3f21a8a7b41f6401b6fa0637` | `8b78f54b22e938596ca2baafd108c8241c7a0c7e82261be96065e1814e5870e7` |
+| 50% | `b53711ea4e6180fc87d323c42c6abbf9ea9994546b9926f3cf179d1d98a85519` | `644aef3aa385cf2bf8f7ffb0427ed8b32dca40bd6be1d8e38a5735655f38f0d2` |
+| 0% | `075122422d95cbe3683a6d55fced180fbcaada9a6a845d3139b5c83165cf894a` | `cd92280828500597c28b88c2312b2ae21c0b852d298331f1032a77baa3cf1f1c` |
+
+The retained diagnostics are in `/media/hp/secondary/issue151-performance-fab8b9c-diagnostics/`.
+The `resume-99`, `resume-50`, and `resume-0` directories contain the reports and output files.
