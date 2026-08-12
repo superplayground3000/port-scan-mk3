@@ -49,6 +49,9 @@ func (suite Suite) CompareReports(left, right Report) []string {
 		if manifestDifferences(leftCase.Manifest, rightCase.Manifest) {
 			differences = append(differences, name+":manifest")
 		}
+		if cancellationDifferences(leftCase.Cancellation, rightCase.Cancellation) {
+			differences = append(differences, name+":cancellation")
+		}
 		switch {
 		case leftCase.Semantic == nil && rightCase.Semantic == nil:
 		case leftCase.Semantic == nil || rightCase.Semantic == nil:
@@ -60,6 +63,30 @@ func (suite Suite) CompareReports(left, right Report) []string {
 		}
 	}
 	return differences
+}
+
+func cancellationDifferences(left, right *CancellationCaseEvidence) bool {
+	if left == nil || right == nil {
+		return left != right
+	}
+	if left.SchemaVersion != right.SchemaVersion || len(left.Runs) != len(right.Runs) {
+		return true
+	}
+	for index := range left.Runs {
+		a, b := left.Runs[index], right.Runs[index]
+		if a.Stage != b.Stage || a.Percent != b.Percent || a.TotalItems != b.TotalItems ||
+			a.InjectionThreshold != b.InjectionThreshold || a.ProgressUnit != b.ProgressUnit ||
+			a.ContextCanceled != b.ContextCanceled || a.ProbeStartsAfterCancel != b.ProbeStartsAfterCancel ||
+			(a.Recovery == nil) != (b.Recovery == nil) {
+			return true
+		}
+		if a.Recovery != nil && (a.Recovery.RecoveryCompleted != b.Recovery.RecoveryCompleted ||
+			a.Recovery.FinalScanRows != b.Recovery.FinalScanRows || a.Recovery.FinalOpenRows != b.Recovery.FinalOpenRows ||
+			a.Recovery.FinalCursor != b.Recovery.FinalCursor) {
+			return true
+		}
+	}
+	return false
 }
 
 func manifestDifferences(left, right *Manifest) bool {

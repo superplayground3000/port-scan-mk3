@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 )
 
 // CancellationInjector cancels one stage at a deterministic progress point.
@@ -11,6 +12,7 @@ type CancellationInjector struct {
 	threshold uint64
 	cancel    func()
 	once      sync.Once
+	completed atomic.Uint64
 }
 
 // NewCancellationInjector returns one deterministic cancellation injector.
@@ -37,5 +39,15 @@ func (injector *CancellationInjector) Tick(completed uint64) {
 	if injector == nil || completed < injector.threshold {
 		return
 	}
-	injector.once.Do(injector.cancel)
+	injector.once.Do(func() {
+		injector.completed.Store(completed)
+		injector.cancel()
+	})
+}
+
+func (injector *CancellationInjector) completedAtInjection() uint64 {
+	if injector == nil {
+		return 0
+	}
+	return injector.completed.Load()
 }

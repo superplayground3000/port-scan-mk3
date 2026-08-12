@@ -1,11 +1,13 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
@@ -359,6 +361,35 @@ func TestBuildRuntime_StatusCompletedButUnfinished_IsDispatchSafe(t *testing.T) 
 		t.Fatalf("chunk with remaining work must be expanded, got %d targets", len(rt.targets))
 	}
 	rt.bkt.Close()
+}
+
+func TestBuildRuntime_RemainingWorkWithinInitialCapacity_DispatchesWithoutBucket(t *testing.T) {
+	records := []input.CIDRRecord{
+		richRecord(1, "10.1.0.0/30", "10.1.0.0", "10.1.0.0:80/tcp", reasonPrecheckAllowAll),
+	}
+	chunks := []task.Chunk{{
+		CIDR: "10.1.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 2, ScannedCount: 2, TotalCount: 3, Status: "scanning",
+	}}
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtimes) != 1 {
+		t.Fatalf("runtime count = %d, want 1", len(runtimes))
+	}
+	if runtimes[0].bkt != nil {
+		runtimes[0].bkt.Close()
+		t.Fatal("one remaining task allocated a rate limiter even though the initial capacity already covers it")
+	}
+
+	taskCh := make(chan scanTask, 1)
+	err = dispatchTasks(context.Background(), dispatchPolicy{}, speedctrl.NewController(), newLogger("error", true, nil), runtimes, taskCh)
+	if err != nil {
+		t.Fatalf("dispatch one task without a rate limiter: %v", err)
+	}
+	if got := <-taskCh; got.taskIdx != 2 || got.ip != "10.1.0.2" || got.port != 80 {
+		t.Fatalf("dispatched task = %+v", got)
+	}
 }
 
 // TestBuildRuntime_LegacyZeroTotalCount_PreservesOwnership guards the byte-for-byte

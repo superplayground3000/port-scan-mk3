@@ -64,3 +64,51 @@ func TestCompareReportsEnforcesPortableCaseParity(t *testing.T) {
 		t.Fatalf("task-order difference = %v", differences)
 	}
 }
+
+func TestCompareReportsKeepsStableCancellationEvidence(t *testing.T) {
+	t.Parallel()
+
+	leftRun := perfharness.CancellationResult{
+		Stage:                  perfharness.CancellationResultOutput,
+		Percent:                50,
+		TotalItems:             perfharness.FullItemCount,
+		InjectionThreshold:     perfharness.FullItemCount / 2,
+		CompletedAtInjection:   perfharness.FullItemCount/2 + 3,
+		ProgressUnit:           perfharness.CancellationProgressOutputResults,
+		ContextCanceled:        true,
+		ProbeStarts:            perfharness.FullItemCount / 2,
+		ProbeStartsAfterCancel: 0,
+		StopDuration:           10 * time.Millisecond,
+		Recovery: &perfharness.CancellationRecovery{
+			RecoveryCompleted: true,
+			FinalScanRows:     perfharness.FullItemCount,
+			FinalOpenRows:     perfharness.FullItemCount,
+			FinalCursor:       perfharness.FullItemCount,
+		},
+	}
+	left := perfharness.Report{Cases: []perfharness.CaseResult{{
+		Name: "production-cancellation/result-output/50",
+		Cancellation: &perfharness.CancellationCaseEvidence{
+			SchemaVersion: perfharness.CancellationEvidenceSchemaVersion,
+			Runs:          []perfharness.CancellationResult{leftRun},
+		},
+	}}}
+	right := left
+	right.Cases = append([]perfharness.CaseResult(nil), left.Cases...)
+	rightEvidence := *left.Cases[0].Cancellation
+	rightEvidence.Runs = append([]perfharness.CancellationResult(nil), left.Cases[0].Cancellation.Runs...)
+	rightRun := rightEvidence.Runs[0]
+	rightRun.StopDuration = 20 * time.Millisecond
+	rightRun.CompletedAtInjection += 7
+	rightRun.ProbeStarts += 7
+	rightEvidence.Runs[0] = rightRun
+	right.Cases[0].Cancellation = &rightEvidence
+
+	if differences := perfharness.New().CompareReports(left, right); len(differences) != 0 {
+		t.Fatalf("volatile cancellation observations caused differences: %v", differences)
+	}
+	right.Cases[0].Cancellation.Runs[0].ProgressUnit = perfharness.CancellationProgressResumeItems
+	if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "production-cancellation/result-output/50:cancellation") {
+		t.Fatalf("stable cancellation difference = %v", differences)
+	}
+}

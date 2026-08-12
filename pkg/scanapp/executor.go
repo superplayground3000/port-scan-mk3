@@ -16,6 +16,8 @@ type scanExecutorTelemetry struct {
 	inFlightAtStop int
 	abandoned      int
 	stopStartedAt  time.Time
+	totalStarted   uint64
+	startedAtStop  uint64
 }
 
 func (t *scanExecutorTelemetry) markStopping() {
@@ -26,6 +28,7 @@ func (t *scanExecutorTelemetry) markStopping() {
 	}
 	t.stopping = true
 	t.inFlightAtStop = t.inFlight
+	t.startedAtStop = t.totalStarted
 	t.stopStartedAt = time.Now()
 }
 
@@ -36,6 +39,7 @@ func (t *scanExecutorTelemetry) startProbe(ctx context.Context) bool {
 		return false
 	}
 	t.inFlight++
+	t.totalStarted++
 	return true
 }
 
@@ -44,6 +48,7 @@ func (t *scanExecutorTelemetry) finishProbe(ctx context.Context) {
 	if !t.stopping && ctx.Err() != nil {
 		t.stopping = true
 		t.inFlightAtStop = t.inFlight
+		t.startedAtStop = t.totalStarted
 		t.stopStartedAt = time.Now()
 	}
 	t.inFlight--
@@ -56,10 +61,14 @@ func (t *scanExecutorTelemetry) abandon() {
 	t.mu.Unlock()
 }
 
-func (t *scanExecutorTelemetry) snapshot() (int, int, time.Time) {
+func (t *scanExecutorTelemetry) snapshot() (int, int, time.Time, uint64, uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.inFlightAtStop, t.abandoned, t.stopStartedAt
+	startsAfterStop := uint64(0)
+	if t.stopping && t.totalStarted > t.startedAtStop {
+		startsAfterStop = t.totalStarted - t.startedAtStop
+	}
+	return t.inFlightAtStop, t.abandoned, t.stopStartedAt, t.totalStarted, startsAfterStop
 }
 
 // startScanExecutor launches worker goroutines that consume scanTask items from taskCh,

@@ -41,6 +41,7 @@ type scanRuntimeAdapters struct {
 	taskObserver              func(ip string, port int)
 	resumeObserver            func(completed, total int)
 	resultObserver            func(completed uint64)
+	probeTelemetryObserver    func(ProbeTelemetry)
 }
 
 type scanRuntime struct {
@@ -304,7 +305,11 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		outputFlushResults:     r.input.outputFlushResults,
 		resultObserverCallback: r.adapters.resultObserver,
 	})
-	if inFlight, abandoned, stopStarted := executorTelemetry.snapshot(); !stopStarted.IsZero() {
+	inFlight, abandoned, stopStarted, totalStarted, startsAfterStop := executorTelemetry.snapshot()
+	if r.adapters.probeTelemetryObserver != nil {
+		r.adapters.probeTelemetryObserver(ProbeTelemetry{TotalStarted: totalStarted, StartsAfterStop: startsAfterStop})
+	}
+	if !stopStarted.IsZero() {
 		logger.eventf("probe_drain_complete", "", 0, "probe_drain_complete", LogEventNone, map[string]any{
 			"duration_ms":            time.Since(stopStarted).Milliseconds(),
 			"in_flight_probes":       inFlight,

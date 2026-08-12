@@ -248,7 +248,7 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 			basicTargets: group.basicTargets,
 			state:        ch,
 			tracker:      newChunkStateTracker(ch),
-			bkt:          ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity),
+			bkt:          newRuntimeBucket(ch.TotalCount-ch.NextIndex, policy),
 		}
 		runtimes = append(runtimes, rt)
 		// One progress tick per incomplete chunk actually expanded (Phase 5). The
@@ -258,6 +258,20 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 		}
 	}
 	return runtimes, nil
+}
+
+func newRuntimeBucket(remaining int, policy runtimePolicy) *ratelimit.LeakyBucket {
+	capacity := policy.bucketCapacity
+	if capacity < 1 {
+		capacity = 1
+	}
+	if capacity > ratelimit.MaxCapacity {
+		capacity = ratelimit.MaxCapacity
+	}
+	if remaining <= capacity {
+		return nil
+	}
+	return ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity)
 }
 
 func hasBasicRowPorts(records []input.CIDRRecord) bool {

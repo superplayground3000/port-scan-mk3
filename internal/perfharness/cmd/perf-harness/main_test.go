@@ -391,7 +391,7 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 112 {
+	if len(report.Cases) != 113 {
 		t.Fatalf("case count = %d, want separate snapshot load and save results", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
@@ -462,7 +462,10 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 		}
 		if strings.HasPrefix(result.Name, "production-cancellation/") {
 			cancellationCases++
-			if !result.Verdict.Passed {
+			if !result.Verdict.Passed || result.LogicalItems != 1000 || len(result.Runs) != 6 ||
+				result.FixtureGeneration == nil || len(result.FixtureGeneration.Runs) != 6 ||
+				result.Cancellation == nil || result.Cancellation.SchemaVersion != perfharness.CancellationEvidenceSchemaVersion ||
+				len(result.Cancellation.Runs) != 6 {
 				t.Fatalf("cancellation case failed: %+v", result)
 			}
 		}
@@ -513,6 +516,26 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	}
 	if snapshotLoadCases != 1 || snapshotSaveCases != 1 {
 		t.Fatalf("snapshot cases = load %d save %d, want one of each", snapshotLoadCases, snapshotSaveCases)
+	}
+}
+
+func TestFullCancellationRoutesKeepTenMillionItemsAndAllEvidence(t *testing.T) {
+	t.Parallel()
+
+	specs := cancellationCaseSpecs("full", perfharness.DefaultContract())
+	if len(specs) != 15 {
+		t.Fatalf("full cancellation route count = %d, want 15", len(specs))
+	}
+	seen := make(map[string]bool, len(specs))
+	for _, spec := range specs {
+		if spec.Items != perfharness.FullItemCount {
+			t.Fatalf("route %+v has %d items, want %d", spec, spec.Items, perfharness.FullItemCount)
+		}
+		key := fmt.Sprintf("%s/%d", spec.Stage, spec.Percent)
+		if seen[key] {
+			t.Fatalf("duplicate cancellation route %s", key)
+		}
+		seen[key] = true
 	}
 }
 

@@ -52,19 +52,28 @@ type PhaseResult struct {
 	SteadyMedian Observation   `json:"steady_state_median"`
 }
 
+const CancellationEvidenceSchemaVersion = "1"
+
+// CancellationCaseEvidence retains the six production cancellation results.
+type CancellationCaseEvidence struct {
+	SchemaVersion string               `json:"schema_version"`
+	Runs          []CancellationResult `json:"runs"`
+}
+
 // CaseResult records six observations and the evaluated summaries.
 type CaseResult struct {
-	Name              string                `json:"name"`
-	LogicalItems      uint64                `json:"logical_items,omitempty"`
-	Manifest          *Manifest             `json:"manifest,omitempty"`
-	FixtureGeneration *PhaseResult          `json:"fixture_generation,omitempty"`
-	Runs              []Observation         `json:"runs"`
-	ColdStart         Observation           `json:"cold_start"`
-	SteadyMedian      Observation           `json:"steady_state_median"`
-	Correctness       Correctness           `json:"correctness"`
-	Verdict           Verdict               `json:"verdict"`
-	Semantic          *SemanticArtifact     `json:"semantic,omitempty"`
-	Regression        *RegressionComparison `json:"regression,omitempty"`
+	Name              string                    `json:"name"`
+	LogicalItems      uint64                    `json:"logical_items,omitempty"`
+	Manifest          *Manifest                 `json:"manifest,omitempty"`
+	FixtureGeneration *PhaseResult              `json:"fixture_generation,omitempty"`
+	Runs              []Observation             `json:"runs"`
+	ColdStart         Observation               `json:"cold_start"`
+	SteadyMedian      Observation               `json:"steady_state_median"`
+	Correctness       Correctness               `json:"correctness"`
+	Verdict           Verdict                   `json:"verdict"`
+	Semantic          *SemanticArtifact         `json:"semantic,omitempty"`
+	Regression        *RegressionComparison     `json:"regression,omitempty"`
+	Cancellation      *CancellationCaseEvidence `json:"cancellation,omitempty"`
 }
 
 // Report is the portable evidence document for one matrix run.
@@ -182,6 +191,36 @@ func markdownReport(report Report) string {
 			result.SteadyMedian.GoPeakHeapBytes,
 			verdict,
 		)
+	}
+	fmt.Fprintln(&text)
+	fmt.Fprintln(&text, "## Cancellation evidence")
+	fmt.Fprintln(&text)
+	fmt.Fprintln(&text, "| Case | Runs | Progress | Maximum stop | Probe starts after stop | Recovery |")
+	fmt.Fprintln(&text, "|---|---:|---|---:|---:|---|")
+	for _, result := range report.Cases {
+		if result.Cancellation == nil {
+			continue
+		}
+		var maximumStop time.Duration
+		var startsAfterStop uint64
+		recovery := "n/a"
+		for _, run := range result.Cancellation.Runs {
+			maximumStop = max(maximumStop, run.StopDuration)
+			startsAfterStop += run.ProbeStartsAfterCancel
+			if run.Recovery != nil {
+				if run.Recovery.RecoveryCompleted {
+					recovery = "complete"
+				} else {
+					recovery = "failed"
+				}
+			}
+		}
+		progress := ""
+		if len(result.Cancellation.Runs) > 0 {
+			run := result.Cancellation.Runs[0]
+			progress = fmt.Sprintf("%s at %d", run.ProgressUnit, run.InjectionThreshold)
+		}
+		fmt.Fprintf(&text, "| %s | %d | %s | %s | %d | %s |\n", result.Name, len(result.Cancellation.Runs), progress, maximumStop, startsAfterStop, recovery)
 	}
 	return text.String()
 }

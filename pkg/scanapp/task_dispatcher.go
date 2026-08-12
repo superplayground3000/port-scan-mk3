@@ -54,9 +54,11 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 			// Note: target/port use ch.CIDR and 0 because actual target/port are not yet
 			// determined at bucket wait; they are derived from index after gate release.
 			logger.eventf(LogEventBucketWaitStart, ch.CIDR, 0, LogEventBucketWaitStart, LogEventNone, nil)
-			if err := rt.bkt.Acquire(ctx); err != nil {
-				logger.eventf(LogEventBucketAcquireError, ch.CIDR, 0, LogEventBucketAcquireError, err.Error(), nil)
-				return err
+			if rt.bkt != nil {
+				if err := rt.bkt.Acquire(ctx); err != nil {
+					logger.eventf(LogEventBucketAcquireError, ch.CIDR, 0, LogEventBucketAcquireError, err.Error(), nil)
+					return err
+				}
 			}
 			obs.OnBucketAcquired(ch.CIDR, i)
 			logger.eventf(LogEventBucketAcquired, ch.CIDR, 0, LogEventBucketAcquired, LogEventNone, nil)

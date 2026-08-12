@@ -275,20 +275,17 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	cancellationItems := fullOrBoundedItems(profile, 200)
-	for _, stage := range contract.CancelStages {
-		for _, percent := range contract.CancelProgress {
-			result, err := runCancellationCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("cancel-%s-%d", stage, percent)), cancellationItems, 16, stage, percent, contract.StopWithin)
-			if err != nil {
-				if writeErr := writeStatus(stderr, "run cancellation stage=%s percent=%d: %v\n", stage, percent, err); writeErr != nil {
-					return 1
-				}
+	for _, cancellation := range cancellationCaseSpecs(profile, contract) {
+		result, err := runCancellationCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("cancel-%s-%d", cancellation.Stage, cancellation.Percent)), cancellation.Items, cancellation.Workers, cancellation.Stage, cancellation.Percent, contract.StopWithin)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run cancellation stage=%s percent=%d: %v\n", cancellation.Stage, cancellation.Percent, err); writeErr != nil {
 				return 1
 			}
-			results = append(results, result)
-			if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
-				return 1
-			}
+			return 1
+		}
+		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
 		}
 	}
 	regressionResult, err := harness.RunRegressionBenchmark(context.Background(), contract.RegressionBenchmark)
@@ -993,31 +990,36 @@ func runCancellationCase(ctx context.Context, harness perfharness.Harness, outpu
 		return perfharness.CaseResult{}, fmt.Errorf("create cancellation case directory: %w", err)
 	}
 	observations := make([]perfharness.Observation, 0, 6)
+	preparations := make([]perfharness.Observation, 0, 6)
+	evidence := make([]perfharness.CancellationResult, 0, 6)
 	correct := true
 	for run := 0; run < 6; run++ {
-		var cancellation perfharness.CancellationResult
-		observation, err := harness.Measure(ctx, 0, items, func(runCtx context.Context) (uint64, error) {
-			result, runErr := harness.RunCancellationSmoke(runCtx, perfharness.CancellationSpec{
-				OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
-				Items:     items,
-				Workers:   workers,
-				Stage:     stage,
-				Percent:   percent,
-			})
-			cancellation = result
-			if !errors.Is(runErr, context.Canceled) {
-				return 0, runErr
-			}
-			return 0, nil
+		cancellation, runErr := harness.RunCancellationSmoke(ctx, perfharness.CancellationSpec{
+			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+			Items:     items,
+			Workers:   workers,
+			Stage:     stage,
+			Percent:   percent,
 		})
-		if err != nil {
-			return perfharness.CaseResult{}, err
+		if !errors.Is(runErr, context.Canceled) {
+			return perfharness.CaseResult{}, fmt.Errorf("cancellation stage %s did not return context.Canceled: %w", stage, runErr)
 		}
 		if !cancellation.Injected || cancellation.StopDuration > stopWithin ||
-			(stage == perfharness.CancellationResumeRebuild || stage == perfharness.CancellationResultOutput) && !cancellation.Resumable {
+			!cancellation.ContextCanceled || cancellation.TotalItems != items ||
+			cancellation.InjectionThreshold != cancellationThresholdForCase(items, percent) ||
+			cancellation.CompletedAtInjection < cancellation.InjectionThreshold || cancellation.ProgressUnit == "" ||
+			cancellation.ProbeStartsAfterCancel != 0 {
 			correct = false
 		}
-		observations = append(observations, observation)
+		if stage == perfharness.CancellationResumeRebuild || stage == perfharness.CancellationResultOutput {
+			if cancellation.Recovery == nil || !cancellation.Recovery.RecoveryCompleted ||
+				(cancellation.Recovery.Remaining > 0 && !cancellation.Resumable) {
+				correct = false
+			}
+		}
+		observations = append(observations, cancellation.StageObservation)
+		preparations = append(preparations, cancellation.Preparation)
+		evidence = append(evidence, cancellation)
 		if err := removeCompletedCaseRun(outputDir, run); err != nil {
 			return perfharness.CaseResult{}, err
 		}
@@ -1027,12 +1029,40 @@ func runCancellationCase(ctx context.Context, harness perfharness.Harness, outpu
 		return perfharness.CaseResult{}, err
 	}
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: correct, ExpectedValues: correct, Digests: true}
+	preparation, err := perfharness.SummarizePhase(result.Name+" preparation", preparations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.FixtureGeneration = &preparation
+	result.Cancellation = &perfharness.CancellationCaseEvidence{SchemaVersion: perfharness.CancellationEvidenceSchemaVersion, Runs: evidence}
 	result.LogicalItems = items
 	result.Verdict = perfharness.Verdict{Passed: correct}
 	if !correct {
 		result.Verdict.Failures = []perfharness.Failure{{Rule: "cancellation-stop", Detail: "production work did not stop within one second"}}
 	}
 	return result, nil
+}
+
+type cancellationCaseSpec struct {
+	Items   uint64
+	Workers int
+	Stage   perfharness.CancellationStage
+	Percent int
+}
+
+func cancellationCaseSpecs(profile string, contract perfharness.Contract) []cancellationCaseSpec {
+	items := fullOrBoundedItems(profile, 1000)
+	result := make([]cancellationCaseSpec, 0, len(contract.CancelStages)*len(contract.CancelProgress))
+	for _, stage := range contract.CancelStages {
+		for _, percent := range contract.CancelProgress {
+			result = append(result, cancellationCaseSpec{Items: items, Workers: 16, Stage: stage, Percent: percent})
+		}
+	}
+	return result
+}
+
+func cancellationThresholdForCase(total uint64, percent int) uint64 {
+	return (total*uint64(percent) + 99) / 100
 }
 
 func runResumeCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers, percent int) (perfharness.CaseResult, error) {

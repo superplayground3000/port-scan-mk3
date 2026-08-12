@@ -38,6 +38,12 @@ type ScanConfiguration interface {
 	Resolve() (config.ScanValues, error)
 }
 
+// ProbeTelemetry records probes accepted by the executor around a stop.
+type ProbeTelemetry struct {
+	TotalStarted    uint64
+	StartsAfterStop uint64
+}
+
 // RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
 	Dial DialFunc
@@ -47,12 +53,15 @@ type RunOptions struct {
 	// ResumeObserver receives completed resume chunks during runtime rebuild.
 	ResumeObserver func(completed, total int)
 	// ResultObserver receives the count after each committed result.
-	ResultObserver      func(completed uint64)
-	PressureLimit       int
-	DisableKeyboard     bool
-	PressureSource      PressureSource
-	ProgressInterval    int
-	ReachabilityChecker ReachabilityChecker
+	ResultObserver func(completed uint64)
+	// ProbeTelemetryObserver receives the final accepted-probe counts. The
+	// executor records the stop and the accepted count under one lock.
+	ProbeTelemetryObserver func(ProbeTelemetry)
+	PressureLimit          int
+	DisableKeyboard        bool
+	PressureSource         PressureSource
+	ProgressInterval       int
+	ReachabilityChecker    ReachabilityChecker
 
 	dashboardTerminalDetector func(io.Writer) bool
 	dashboardRefreshInterval  time.Duration
@@ -137,6 +146,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		taskObserver:              opts.TaskObserver,
 		resumeObserver:            opts.ResumeObserver,
 		resultObserver:            opts.ResultObserver,
+		probeTelemetryObserver:    opts.ProbeTelemetryObserver,
 	})
 	if err := runtime.execute(ctx); err != nil {
 		return fmt.Errorf("execute scan runtime: %w", err)

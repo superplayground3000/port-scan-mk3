@@ -168,7 +168,9 @@ func TestPrepareRuntimePlanBasicFallbackPreservesPerRowMetadataAndResumeOrder(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer plan.runtimes[0].bkt.Close()
+	if plan.runtimes[0].bkt != nil {
+		defer plan.runtimes[0].bkt.Close()
+	}
 	if len(plan.runtimes) != 1 || len(plan.runtimes[0].targets) != 0 || len(plan.runtimes[0].basicTargets) != 2 {
 		t.Fatalf("runtime target storage = %+v", plan.runtimes)
 	}

@@ -32,6 +32,17 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 		t.Fatalf("unexpected summaries: cold=%s median=%s", result.ColdStart.WallTime, result.SteadyMedian.WallTime)
 	}
 	result.LogicalItems = perfharness.FullItemCount
+	result.Cancellation = &perfharness.CancellationCaseEvidence{
+		SchemaVersion: perfharness.CancellationEvidenceSchemaVersion,
+		Runs: []perfharness.CancellationResult{{
+			Stage:                  perfharness.CancellationInputParsing,
+			Percent:                1,
+			InjectionThreshold:     100_000,
+			ProgressUnit:           perfharness.CancellationProgressInputRecords,
+			StopDuration:           15 * time.Millisecond,
+			ProbeStartsAfterCancel: 0,
+		}},
+	}
 	report := perfharness.Report{
 		SchemaVersion: perfharness.SchemaVersion,
 		Contract:      perfharness.DefaultContract(),
@@ -73,6 +84,11 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 	for _, evidence := range []string{"Required fixture mapping", "Logical items", "candidate-heavy/pre-ping", "task-heavy/bucket-generation", "10000000"} {
 		if !strings.Contains(string(markdown), evidence) {
 			t.Fatalf("Markdown report lacks %q:\n%s", evidence, markdown)
+		}
+	}
+	for _, evidence := range []string{"Cancellation evidence", "input-records at 100000", "Probe starts after stop"} {
+		if !strings.Contains(string(markdown), evidence) {
+			t.Fatalf("Markdown report lacks cancellation evidence %q:\n%s", evidence, markdown)
 		}
 	}
 }

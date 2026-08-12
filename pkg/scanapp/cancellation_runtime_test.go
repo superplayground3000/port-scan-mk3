@@ -457,9 +457,12 @@ func TestScanExecutor_WhenCanceled_AbandonsQueuedTasksButFinishesInFlightProbe(t
 	if len(abandonedTasks) != 2 || abandonedTasks[0].taskIdx != 1 || abandonedTasks[1].taskIdx != 2 {
 		t.Fatalf("abandoned tasks = %+v, want task indexes [1 2]", abandonedTasks)
 	}
-	inFlight, abandonedCount, stopStarted := telemetry.snapshot()
+	inFlight, abandonedCount, stopStarted, totalStarted, startsAfterStop := telemetry.snapshot()
 	if inFlight != 1 || abandonedCount != 2 || stopStarted.IsZero() {
 		t.Fatalf("executor telemetry = (in-flight %d, abandoned %d, stop %v), want (1, 2, non-zero)", inFlight, abandonedCount, stopStarted)
+	}
+	if totalStarted != 1 || startsAfterStop != 0 {
+		t.Fatalf("probe starts = total %d, after stop %d; want 1 and 0", totalStarted, startsAfterStop)
 	}
 }
 
