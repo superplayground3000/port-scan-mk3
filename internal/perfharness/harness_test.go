@@ -74,6 +74,22 @@ func TestGenerateRecordHeavySupportsCRLF(t *testing.T) {
 	}
 }
 
+func TestRichFixtureTargetBytesIsALowerBound(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := perfharness.New().Generate(context.Background(), perfharness.FixtureSpec{
+		Family: perfharness.FamilyRichHotKey,
+		Scale:  perfharness.Scale{InputRecords: 100, TargetBytes: 20_000},
+		Seed:   perfharness.DefaultGeneratorSeed,
+	}, filepath.Join(t.TempDir(), "fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ActualBytes < 20_000 {
+		t.Fatalf("actual bytes = %d, want at least 20000", manifest.ActualBytes)
+	}
+}
+
 func TestSnapshotHeavyShapesProduceDistinctValidSnapshots(t *testing.T) {
 	t.Parallel()
 

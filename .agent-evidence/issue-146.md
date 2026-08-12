@@ -196,3 +196,21 @@ The isolated Docker gate used `COMPOSE_PROJECT_NAME=issue146_limits_c3d4071`.
 It completed with the same final result line.
 The new cases rejected an oversized port input before snapshot creation.
 They also stopped a scan after three oversized pressure responses.
+
+### Full performance fixture correction
+
+The first full performance run passed all cases through the rich oversized group.
+Its first default-reject observation then failed with:
+
+```text
+default rich input limit did not reject the oversized fixture: <nil>
+```
+
+The manifest showed `963750116` actual bytes for a `1000000001` byte target.
+The production limit correctly accepted this file because it was less than 1 GB.
+The rich fixture now uses a conservative fixed-width estimate.
+A fixture test verifies that `TargetBytes` is a lower bound.
+
+The failed run took `14:05.20` and reached `18996320` KB maximum RSS.
+Its raw `/usr/bin/time -v` process metric reported `Swaps: 0`.
+This value describes only that measured process; it does not assign global swap activity.

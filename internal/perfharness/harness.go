@@ -228,7 +228,8 @@ func writeRichCSV(ctx context.Context, output io.Writer, spec FixtureSpec) error
 	serviceLabel := "service"
 	if spec.Scale.InputRecords > 0 && spec.Scale.TargetBytes > 0 {
 		bytesPerRecord := spec.Scale.TargetBytes / spec.Scale.InputRecords
-		const estimatedFixedRichRecordBytes = uint64(130)
+		// Use a conservative estimate so TargetBytes is a lower bound.
+		const estimatedFixedRichRecordBytes = uint64(95)
 		if bytesPerRecord > estimatedFixedRichRecordBytes {
 			padding := bytesPerRecord - estimatedFixedRichRecordBytes
 			maxInt := uint64(^uint(0) >> 1)

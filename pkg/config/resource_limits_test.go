@@ -74,6 +74,12 @@ func TestResourceLimitFlagsRejectNegativeAndOverflowValues(t *testing.T) {
 		{"-port-input-size-limit-mb", strconv.FormatInt(math.MaxInt64, 10)},
 		{"-snapshot-size-limit-gb", strconv.FormatInt(math.MaxInt64, 10)},
 		{"-pressure-response-size-limit-mb", strconv.FormatInt(math.MaxInt64, 10)},
+		{"-cidr-input-record-limit", strconv.FormatUint(uint64(math.MaxInt64)+1, 10)},
+		{"-port-input-record-limit", strconv.FormatUint(uint64(math.MaxInt64)+1, 10)},
+		{"-snapshot-chunk-limit", strconv.FormatUint(uint64(math.MaxInt64)+1, 10)},
+		{"-snapshot-port-entry-limit", strconv.FormatUint(uint64(math.MaxInt64)+1, 10)},
+		{"-snapshot-unreachable-ip-limit", strconv.FormatUint(uint64(math.MaxInt64)+1, 10)},
+		{"-pressure-response-entry-limit", strconv.FormatUint(uint64(math.MaxInt64)+1, 10)},
 	} {
 		_, err := config.ParseScan([]string{"-cidr-file", "unopened.csv", "-resume", "unopened.json", "-disable-api", pair[0], pair[1]})
 		if err == nil {

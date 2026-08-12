@@ -57,7 +57,7 @@ func executeResourceLimitCase(spec ResourceLimitSpec) error {
 		if strings.HasSuffix(spec.Flag, "-gb") || strings.HasSuffix(spec.Flag, "-mb") {
 			return expectResourceLimitParseFailure(spec.Flag, strconv.FormatInt(math.MaxInt64, 10))
 		}
-		return expectResourceLimitParseFailure(spec.Flag, "-1")
+		return expectResourceLimitParseFailure(spec.Flag, strconv.FormatUint(uint64(math.MaxInt64)+1, 10))
 	}
 	defaults, err := parsedResourceLimits(spec.Flag, "")
 	if err != nil {
