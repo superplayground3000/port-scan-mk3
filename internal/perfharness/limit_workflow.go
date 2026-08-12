@@ -48,11 +48,21 @@ func executeTargetLimitCase(spec TargetLimitSpec) error {
 	case BypassNegative:
 		return expectTargetLimitParseFailure(spec.Flag, "-1")
 	case BypassOverflow:
-		value := strconv.FormatUint(math.MaxUint64, 10)
 		if spec.Flag == "-target-memory-limit-gb" {
-			value = strconv.FormatInt(math.MaxInt64, 10)
+			return expectTargetLimitParseFailure(spec.Flag, strconv.FormatInt(math.MaxInt64, 10))
 		}
-		return expectTargetLimitParseFailure(spec.Flag, value)
+		limits, err := parsedTargetLimits(0, 0)
+		if err != nil {
+			return err
+		}
+		_, err = task.EstimateCandidateCounts([]task.CandidateInput{
+			{Row: 1, CIDR: "first", Count: math.MaxUint64},
+			{Row: 2, CIDR: "second", Count: 1},
+		}, limits)
+		if err == nil {
+			return fmt.Errorf("%s accepted overflowing candidate count", spec.Flag)
+		}
+		return nil
 	}
 	limits, candidates, wantFailure, err := targetLimitInputs(spec)
 	if err != nil {

@@ -2,6 +2,7 @@ package perfharness_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -21,8 +22,9 @@ func TestRunTargetLimitCaseExecutesEveryRequiredBypassKind(t *testing.T) {
 			{Kind: perfharness.BypassNegative},
 			{Kind: perfharness.BypassOverflow},
 		} {
+			outputDir := filepath.Join(t.TempDir(), string(bypass.Kind))
 			result, err := harness.RunTargetLimitCase(context.Background(), perfharness.TargetLimitSpec{
-				OutputDir: filepath.Join(t.TempDir(), string(bypass.Kind)),
+				OutputDir: outputDir,
 				Flag:      flagName,
 				Case:      bypass,
 			})
@@ -31,6 +33,9 @@ func TestRunTargetLimitCaseExecutesEveryRequiredBypassKind(t *testing.T) {
 			}
 			if !result.Verdict.Passed || !result.Correctness.ExpectedValues {
 				t.Fatalf("flag=%s kind=%s result=%+v", flagName, bypass.Kind, result)
+			}
+			if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+				t.Fatalf("flag=%s kind=%s performed I/O: %v", flagName, bypass.Kind, statErr)
 			}
 		}
 	}
