@@ -23,14 +23,15 @@ type resultLoopChannels struct {
 // and emit progress/telemetry. Kept as a struct so runResultLoop stays
 // unit-testable without reconstructing the whole Run pipeline.
 type resultLoopDeps struct {
-	outputs        *batchOutputs
-	runtimes       []*chunkRuntime
-	resultObserver resultTelemetryObserver
-	stdout         io.Writer
-	logger         *scanLogger
-	ctrl           *speedctrl.Controller
-	progressStep   int
-	quiet          bool
+	outputs                *batchOutputs
+	runtimes               []*chunkRuntime
+	resultObserver         resultTelemetryObserver
+	stdout                 io.Writer
+	logger                 *scanLogger
+	ctrl                   *speedctrl.Controller
+	progressStep           int
+	quiet                  bool
+	resultObserverCallback func(completed uint64)
 }
 
 // runResultLoop consumes the scan pipeline's channels until dispatch is done,
@@ -106,6 +107,9 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			}
 			if persisted {
 				applyScanResult(deps.runtimes, res, &summary, deps.resultObserver)
+				if deps.resultObserverCallback != nil {
+					deps.resultObserverCallback(uint64(summary.written))
+				}
 				emitScanResultEvents(deps.stdout, deps.logger, deps.ctrl, deps.progressStep, deps.runtimes, res, &summary, deps.quiet)
 			} else if errors.Is(runErr, errScanOutputWrite) {
 				deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)

@@ -1,6 +1,7 @@
 package perfharness
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,60 @@ type SemanticArtifact struct {
 	Status       string        `json:"status"`
 	Cursor       uint64        `json:"cursor"`
 	OutputDigest string        `json:"output_digest"`
+}
+
+// CompareReports checks portable Linux and Windows case evidence.
+func (suite Suite) CompareReports(left, right Report) []string {
+	differences := make([]string, 0)
+	if len(left.Cases) != len(right.Cases) {
+		differences = append(differences, "case_count")
+	}
+	count := min(len(left.Cases), len(right.Cases))
+	for index := 0; index < count; index++ {
+		leftCase := left.Cases[index]
+		rightCase := right.Cases[index]
+		name := leftCase.Name
+		if name != rightCase.Name {
+			differences = append(differences, fmt.Sprintf("case_%d:name", index))
+			continue
+		}
+		if leftCase.Verdict.Passed != rightCase.Verdict.Passed {
+			differences = append(differences, name+":verdict")
+		}
+		if leftCase.Correctness != rightCase.Correctness {
+			differences = append(differences, name+":correctness")
+		}
+		if manifestDifferences(leftCase.Manifest, rightCase.Manifest) {
+			differences = append(differences, name+":manifest")
+		}
+		switch {
+		case leftCase.Semantic == nil && rightCase.Semantic == nil:
+		case leftCase.Semantic == nil || rightCase.Semantic == nil:
+			differences = append(differences, name+":semantic")
+		default:
+			for _, difference := range suite.CompareSemantic(*leftCase.Semantic, *rightCase.Semantic) {
+				differences = append(differences, name+":"+difference)
+			}
+		}
+	}
+	return differences
+}
+
+func manifestDifferences(left, right *Manifest) bool {
+	if left == nil || right == nil {
+		return left != right
+	}
+	return left.SchemaVersion != right.SchemaVersion ||
+		left.Family != right.Family ||
+		left.Shape != right.Shape ||
+		left.Seed != right.Seed ||
+		left.InputRecords != right.InputRecords ||
+		left.CandidateAddresses != right.CandidateAddresses ||
+		left.ProbeTasks != right.ProbeTasks ||
+		left.ExpectedOutputs != right.ExpectedOutputs ||
+		left.ActualBytes != right.ActualBytes ||
+		left.SHA256 != right.SHA256 ||
+		left.ArtifactName != right.ArtifactName
 }
 
 // CompareSemantic compares portable behavior after permitted normalization.

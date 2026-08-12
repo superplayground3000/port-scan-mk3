@@ -40,7 +40,14 @@ type ScanConfiguration interface {
 
 // RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
-	Dial                DialFunc
+	Dial DialFunc
+	// TaskObserver receives tasks in dispatcher order.
+	// The observer must return quickly because it runs in the dispatcher.
+	TaskObserver func(ip string, port int)
+	// ResumeObserver receives completed resume chunks during runtime rebuild.
+	ResumeObserver func(completed, total int)
+	// ResultObserver receives the count after each persisted result row.
+	ResultObserver      func(completed uint64)
 	PressureLimit       int
 	DisableKeyboard     bool
 	PressureSource      PressureSource
@@ -116,6 +123,9 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		pressureObserver:          opts.pressureObserver,
 		controllerObserver:        opts.controllerObserver,
 		batchOutputsOpener:        openOutputs,
+		taskObserver:              opts.TaskObserver,
+		resumeObserver:            opts.ResumeObserver,
+		resultObserver:            opts.ResultObserver,
 	})
 	if err := runtime.execute(ctx); err != nil {
 		return fmt.Errorf("execute scan runtime: %w", err)

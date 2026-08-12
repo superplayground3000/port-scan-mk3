@@ -35,6 +35,8 @@ fi
 
 adapter_tmp="$(mktemp -d)"
 time_log="$adapter_tmp/matrix-os-metrics.txt"
+signal_log="$adapter_tmp/signal-cases.txt"
+go test ./cmd/port-scan -run '^TestScanInterruptContext_OnLinux_' -count=1 -timeout=30s >"$signal_log" 2>&1
 cpu="$(lscpu | awk -F: '/Model name/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
 physical_cores="$(lscpu -p=CORE,SOCKET | awk '!/^#/ {seen[$1 ":" $2]=1} END {print length(seen)}')"
 logical_cores="$(nproc)"
@@ -70,5 +72,6 @@ fi
     -commit "$commit"
 
 mv "$time_log" "$output_dir/matrix-os-metrics.txt"
+mv "$signal_log" "$output_dir/signal-cases.txt"
 rmdir "$adapter_tmp"
 echo "Performance matrix artifacts: $output_dir"

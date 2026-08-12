@@ -9,8 +9,9 @@ import (
 )
 
 type dispatchPolicy struct {
-	delay    time.Duration
-	observer dispatchObserver
+	delay        time.Duration
+	observer     dispatchObserver
+	taskObserver func(ip string, port int)
 }
 
 // dispatchTasks iterates over runtimes and dispatches scan tasks through taskCh.
@@ -87,6 +88,9 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 			}:
 			}
 			obs.OnTaskEnqueued(ch.CIDR, i)
+			if policy.taskObserver != nil {
+				policy.taskObserver(target.ip, port)
+			}
 			rt.tracker.AdvanceNextIndex(i + 1)
 			logger.debugf("dispatch cidr=%s target=%s:%d next_index=%d/%d", ch.CIDR, target.ip, port, i+1, snap.TotalCount)
 			if policy.delay > 0 {

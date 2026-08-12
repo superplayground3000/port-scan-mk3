@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/xuxiping/port-scan-mk3/internal/perfharness"
 )
@@ -36,6 +40,10 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		logicalCores       int
 		smokeItems         uint64
 		smokeSnapshotBytes uint64
+		compareLeft        string
+		compareRight       string
+		regressionBeforeNS float64
+		regressionBeforeB  float64
 	)
 	flags.StringVar(&profile, "profile", "full", "matrix profile: full or smoke")
 	flags.StringVar(&outputDir, "output", "", "new output directory")
@@ -52,8 +60,21 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	flags.StringVar(&commit, "commit", "unknown", "git commit")
 	flags.Uint64Var(&smokeItems, "smoke-items", perfharness.SmokeItemCount, "bounded smoke item count")
 	flags.Uint64Var(&smokeSnapshotBytes, "smoke-snapshot-bytes", perfharness.SmokeSnapshotBytes, "bounded smoke snapshot bytes")
+	flags.StringVar(&compareLeft, "compare-left", "", "Linux or Windows JSON report")
+	flags.StringVar(&compareRight, "compare-right", "", "other OS JSON report")
+	flags.Float64Var(&regressionBeforeNS, "regression-before-ns", 0, "recorded before median in ns/op")
+	flags.Float64Var(&regressionBeforeB, "regression-before-bytes", 0, "recorded before median in B/op")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if compareLeft != "" || compareRight != "" {
+		if compareLeft == "" || compareRight == "" {
+			if writeErr := writeStatus(stderr, "-compare-left and -compare-right must be used together\n"); writeErr != nil {
+				return 1
+			}
+			return 2
+		}
+		return compareReportFiles(compareLeft, compareRight, perfharness.New(), stdout, stderr)
 	}
 	if outputDir == "" {
 		if writeErr := writeStatus(stderr, "-output is required\n"); writeErr != nil {
@@ -83,6 +104,12 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 
 	harness := perfharness.New()
 	contract := perfharness.DefaultContract()
+	if regressionBeforeNS > 0 {
+		contract.RegressionBenchmark.BeforeNSPerOp = regressionBeforeNS
+	}
+	if regressionBeforeB > 0 {
+		contract.RegressionBenchmark.BeforeBPerOp = regressionBeforeB
+	}
 	specs := fixtureSpecs(profile, smokeItems, smokeSnapshotBytes, contract)
 	casesDir := filepath.Join(outputDir, "cases")
 	if err := os.Mkdir(casesDir, 0o755); err != nil {
@@ -121,6 +148,59 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	if workflowItems >= 10 {
+		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-growth-1x-workers-16"), workflowItems/10, 16, "")
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run workflow 1x growth case: %v\n", err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		result.Name = "production-workflow/growth-1x/workers-16"
+		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
+	}
+	for _, shape := range []string{"deny-only", "accept-deny-conflict"} {
+		result, err := runRichDenyCase(context.Background(), harness, filepath.Join(casesDir, "rich-deny-"+shape), workflowItems, 16, shape)
+		if err != nil {
+			if writeErr := writeStatus(stderr, "run rich-deny shape=%s: %v\n", shape, err); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		results = append(results, result)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
+	}
+	for _, stage := range contract.CancelStages {
+		for _, percent := range contract.CancelProgress {
+			result, err := runCancellationCase(context.Background(), harness, filepath.Join(casesDir, fmt.Sprintf("cancel-%s-%d", stage, percent)), workflowItems, 16, stage, percent, contract.StopWithin)
+			if err != nil {
+				if writeErr := writeStatus(stderr, "run cancellation stage=%s percent=%d: %v\n", stage, percent, err); writeErr != nil {
+					return 1
+				}
+				return 1
+			}
+			results = append(results, result)
+			if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+				return 1
+			}
+		}
+	}
+	regressionResult, err := harness.RunRegressionBenchmark(context.Background(), contract.RegressionBenchmark)
+	if err != nil {
+		if writeErr := writeStatus(stderr, "run regression benchmark: %v\n", err); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
+	results = append(results, regressionResult)
+	if err := writeStatus(stdout, "case passed: %s\n", regressionResult.Name); err != nil {
+		return 1
+	}
 	crlfResult, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-crlf-workers-16"), workflowItems, 16, "CRLF")
 	if err != nil {
 		if writeErr := writeStatus(stderr, "run CRLF workflow: %v\n", err); writeErr != nil {
@@ -145,9 +225,17 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	matrixPassed := true
+	matrixPassed := applyAbsoluteThresholds(results, harness, contract)
+	if !applyWorkerParity(results, harness, contract.FakeWorkers) {
+		matrixPassed = false
+	}
+	if workflowItems >= 10 && !applyGrowthThreshold(results, harness, "production-workflow/growth-1x/workers-16", "production-workflow/workers-16") {
+		matrixPassed = false
+	}
 	if workflowItems >= contract.SmokeItems {
-		matrixPassed = applyWorkerMemoryThreshold(results, harness)
+		if !applyWorkerMemoryThreshold(results, harness) {
+			matrixPassed = false
+		}
 	}
 
 	report := perfharness.Report{
@@ -209,6 +297,98 @@ func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfha
 	return workers256.Verdict.Passed
 }
 
+func applyAbsoluteThresholds(results []perfharness.CaseResult, harness perfharness.Harness, contract perfharness.Contract) bool {
+	passed := true
+	for index := range results {
+		budget, ok := absoluteBudgetFor(results[index].Name, contract.AbsoluteBudgets)
+		if !ok {
+			results[index].Verdict.Passed = false
+			results[index].Verdict.Failures = append(results[index].Verdict.Failures, perfharness.Failure{
+				Rule:   "absolute-budget-missing",
+				Detail: "case has no absolute budget",
+			})
+			passed = false
+			continue
+		}
+		for _, observation := range []perfharness.Observation{results[index].ColdStart, results[index].SteadyMedian} {
+			verdict := harness.Evaluate(perfharness.EvaluationInput{Observation: observation, Absolute: budget})
+			if !verdict.Passed {
+				results[index].Verdict.Passed = false
+				results[index].Verdict.Failures = append(results[index].Verdict.Failures, verdict.Failures...)
+				passed = false
+			}
+		}
+		if !results[index].Verdict.Passed {
+			passed = false
+		}
+	}
+	return passed
+}
+
+func applyGrowthThreshold(results []perfharness.CaseResult, harness perfharness.Harness, smallName, largeName string) bool {
+	small := findCase(results, smallName)
+	large := findCase(results, largeName)
+	if small == nil || large == nil {
+		return false
+	}
+	verdict := harness.Evaluate(perfharness.EvaluationInput{Growth: &perfharness.GrowthComparison{
+		Small: small.SteadyMedian,
+		Large: large.SteadyMedian,
+	}})
+	if !verdict.Passed {
+		large.Verdict.Passed = false
+		large.Verdict.Failures = append(large.Verdict.Failures, verdict.Failures...)
+	}
+	return verdict.Passed
+}
+
+func applyWorkerParity(results []perfharness.CaseResult, harness perfharness.Harness, workers []int) bool {
+	if len(workers) == 0 {
+		return false
+	}
+	baseline := findCase(results, "production-workflow/workers-"+strconv.Itoa(workers[0]))
+	if baseline == nil || baseline.Semantic == nil {
+		return false
+	}
+	passed := true
+	for _, workerCount := range workers[1:] {
+		candidate := findCase(results, "production-workflow/workers-"+strconv.Itoa(workerCount))
+		if candidate == nil || candidate.Semantic == nil {
+			passed = false
+			continue
+		}
+		differences := harness.CompareSemantic(*baseline.Semantic, *candidate.Semantic)
+		if len(differences) == 0 {
+			continue
+		}
+		candidate.Verdict.Passed = false
+		candidate.Verdict.Failures = append(candidate.Verdict.Failures, perfharness.Failure{
+			Rule:   "semantic-parity",
+			Detail: "worker profiles differ in " + strings.Join(differences, ", "),
+		})
+		candidate.Correctness.Detail = "worker semantic parity failed"
+		passed = false
+	}
+	return passed
+}
+
+func absoluteBudgetFor(name string, budgets []perfharness.CaseBudget) (perfharness.AbsoluteBudget, bool) {
+	var fallback *perfharness.AbsoluteBudget
+	for index := range budgets {
+		if budgets[index].NamePrefix == "" {
+			fallback = &budgets[index].Budget
+			continue
+		}
+		if strings.HasPrefix(name, budgets[index].NamePrefix) {
+			return budgets[index].Budget, true
+		}
+	}
+	if fallback != nil {
+		return *fallback, true
+	}
+	return perfharness.AbsoluteBudget{}, false
+}
+
 func workerMemory(observation perfharness.Observation) uint64 {
 	if observation.LinuxPeakRSSBytes > 0 {
 		return observation.LinuxPeakRSSBytes
@@ -233,6 +413,39 @@ func writeStatus(output io.Writer, format string, values ...any) error {
 	return err
 }
 
+func compareReportFiles(leftPath, rightPath string, harness perfharness.Harness, stdout, stderr io.Writer) int {
+	read := func(path string) (perfharness.Report, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return perfharness.Report{}, fmt.Errorf("read report %s: %w", path, err)
+		}
+		var report perfharness.Report
+		if err := json.Unmarshal(data, &report); err != nil {
+			return perfharness.Report{}, fmt.Errorf("decode report %s: %w", path, err)
+		}
+		return report, nil
+	}
+	left, err := read(leftPath)
+	if err != nil {
+		_ = writeStatus(stderr, "%v\n", err)
+		return 1
+	}
+	right, err := read(rightPath)
+	if err != nil {
+		_ = writeStatus(stderr, "%v\n", err)
+		return 1
+	}
+	differences := harness.CompareReports(left, right)
+	if len(differences) != 0 {
+		_ = writeStatus(stderr, "semantic parity failed: %s\n", strings.Join(differences, ", "))
+		return 1
+	}
+	if err := writeStatus(stdout, "semantic parity passed\n"); err != nil {
+		return 1
+	}
+	return 0
+}
+
 func fixtureSpecs(profile string, items, snapshotBytes uint64, contract perfharness.Contract) []perfharness.FixtureSpec {
 	if profile == "full" {
 		return contract.FullFixtures
@@ -250,6 +463,7 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 	observations := make([]perfharness.Observation, 0, 6)
 	fixtureObservations := make([]perfharness.Observation, 0, 6)
 	correct := true
+	var semantic perfharness.SemanticArtifact
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
 		workflow, err := harness.RunProductionSmoke(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: items, Workers: workers, LineEnding: lineEnding})
@@ -262,6 +476,11 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 		}
 		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
 		observations = append(observations, workflow.Stage)
+		if run == 0 {
+			semantic = workflow.Semantic
+		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
+			return perfharness.CaseResult{}, fmt.Errorf("workflow run parity differs in %s", strings.Join(differences, ", "))
+		}
 	}
 	name := fmt.Sprintf("production-workflow/workers-%d", workers)
 	if lineEnding == "CRLF" {
@@ -278,6 +497,7 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 	result.FixtureGeneration = &fixtureGeneration
 	result.Correctness = perfharness.Correctness{Headers: correct, RowCounts: correct, SnapshotProgress: correct, ExpectedValues: correct, Digests: correct}
 	result.Verdict = perfharness.Verdict{Passed: correct}
+	result.Semantic = &semantic
 	return result, nil
 }
 
@@ -310,5 +530,83 @@ func runLoopbackCase(ctx context.Context, harness perfharness.Harness, outputDir
 	result.FixtureGeneration = &fixtureGeneration
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
 	result.Verdict = perfharness.Verdict{Passed: true}
+	return result, nil
+}
+
+func runRichDenyCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, shape string) (perfharness.CaseResult, error) {
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		return perfharness.CaseResult{}, fmt.Errorf("create rich-deny case directory: %w", err)
+	}
+	observations := make([]perfharness.Observation, 0, 6)
+	fixtureObservations := make([]perfharness.Observation, 0, 6)
+	for run := 0; run < 6; run++ {
+		workflow, err := harness.RunRichDenySmoke(ctx, perfharness.RichDenySpec{
+			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+			Items:     items,
+			Workers:   workers,
+			Shape:     shape,
+		})
+		if err != nil {
+			return perfharness.CaseResult{}, err
+		}
+		if workflow.ProbeCount != 0 || workflow.ReachabilityCount != 0 || workflow.ScanRows != 0 || workflow.OpenRows != 0 || !workflow.SnapshotCompleted {
+			return perfharness.CaseResult{}, fmt.Errorf("rich-deny shape %s performed denied work: %+v", shape, workflow)
+		}
+		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)
+		observations = append(observations, workflow.Stage)
+	}
+	result, err := perfharness.SummarizeCase("production-rich-deny/"+shape, observations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	fixtureGeneration, err := perfharness.SummarizePhase("production-rich-deny fixture generation", fixtureObservations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.FixtureGeneration = &fixtureGeneration
+	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: true, Digests: true}
+	result.Verdict = perfharness.Verdict{Passed: true}
+	return result, nil
+}
+
+func runCancellationCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, stage perfharness.CancellationStage, percent int, stopWithin time.Duration) (perfharness.CaseResult, error) {
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		return perfharness.CaseResult{}, fmt.Errorf("create cancellation case directory: %w", err)
+	}
+	observations := make([]perfharness.Observation, 0, 6)
+	correct := true
+	for run := 0; run < 6; run++ {
+		var cancellation perfharness.CancellationResult
+		observation, err := harness.Measure(ctx, 0, items, func(runCtx context.Context) (uint64, error) {
+			result, runErr := harness.RunCancellationSmoke(runCtx, perfharness.CancellationSpec{
+				OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+				Items:     items,
+				Workers:   workers,
+				Stage:     stage,
+				Percent:   percent,
+			})
+			cancellation = result
+			if !errors.Is(runErr, context.Canceled) {
+				return 0, runErr
+			}
+			return 0, nil
+		})
+		if err != nil {
+			return perfharness.CaseResult{}, err
+		}
+		if !cancellation.Injected || cancellation.StopDuration > stopWithin {
+			correct = false
+		}
+		observations = append(observations, observation)
+	}
+	result, err := perfharness.SummarizeCase(fmt.Sprintf("production-cancellation/%s/%d", stage, percent), observations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: correct, ExpectedValues: correct, Digests: true}
+	result.Verdict = perfharness.Verdict{Passed: correct}
+	if !correct {
+		result.Verdict.Failures = []perfharness.Failure{{Rule: "cancellation-stop", Detail: "production work did not stop within one second"}}
+	}
 	return result, nil
 }

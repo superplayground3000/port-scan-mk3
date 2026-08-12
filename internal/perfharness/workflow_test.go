@@ -35,6 +35,34 @@ func TestRunProductionSmokeUsesTheProductionWorkflowWithFakeProbes(t *testing.T)
 	}
 }
 
+func TestProductionWorkerProfilesHaveSemanticParity(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	left, err := harness.RunProductionSmoke(context.Background(), perfharness.WorkflowSpec{
+		OutputDir: filepath.Join(t.TempDir(), "workers 1"),
+		Items:     12,
+		Workers:   1,
+	})
+	if err != nil {
+		t.Fatalf("workers=1: %v", err)
+	}
+	right, err := harness.RunProductionSmoke(context.Background(), perfharness.WorkflowSpec{
+		OutputDir: filepath.Join(t.TempDir(), "workers 16"),
+		Items:     12,
+		Workers:   16,
+	})
+	if err != nil {
+		t.Fatalf("workers=16: %v", err)
+	}
+	if len(left.Semantic.TaskOrder) != 12 || len(right.Semantic.TaskOrder) != 12 {
+		t.Fatalf("task orders have lengths %d and %d", len(left.Semantic.TaskOrder), len(right.Semantic.TaskOrder))
+	}
+	if differences := harness.CompareSemantic(left.Semantic, right.Semantic); len(differences) != 0 {
+		t.Fatalf("worker profiles differ: %v", differences)
+	}
+}
+
 func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
 	t.Parallel()
 
@@ -67,6 +95,29 @@ func TestRunNativeLoopbackSmokeSupportsRequiredWorkerProfiles(t *testing.T) {
 		}
 		if result.ProbeCount != 1 || result.OpenRows != 1 {
 			t.Fatalf("workers=%d result=%+v", workers, result)
+		}
+	}
+}
+
+func TestRunRichDenySmokeUsesProductionPathsWithoutProbes(t *testing.T) {
+	t.Parallel()
+
+	var harness perfharness.Harness = perfharness.New()
+	for _, shape := range []string{"deny-only", "accept-deny-conflict"} {
+		result, err := harness.RunRichDenySmoke(context.Background(), perfharness.RichDenySpec{
+			OutputDir: filepath.Join(t.TempDir(), "rich deny", shape),
+			Items:     8,
+			Workers:   16,
+			Shape:     shape,
+		})
+		if err != nil {
+			t.Fatalf("shape=%s: %v", shape, err)
+		}
+		if result.ProbeCount != 0 || result.ReachabilityCount != 0 {
+			t.Fatalf("shape=%s probe counts = %+v, want zero", shape, result)
+		}
+		if result.ScanRows != 0 || result.OpenRows != 0 || !result.PrePingCompleted || !result.SnapshotCompleted {
+			t.Fatalf("shape=%s output state = %+v", shape, result)
 		}
 	}
 }

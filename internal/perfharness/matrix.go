@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 // Harness is the approved boundary for one complete performance evidence run.
@@ -15,8 +17,12 @@ type Harness interface {
 	Measure(context.Context, uint64, uint64, MeasuredAction) (Observation, error)
 	Evaluate(EvaluationInput) Verdict
 	CompareSemantic(SemanticArtifact, SemanticArtifact) []string
+	CompareReports(Report, Report) []string
 	WriteReports(context.Context, string, Report) (ReportPaths, error)
 	RunProductionSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
+	RunRichDenySmoke(context.Context, RichDenySpec) (WorkflowResult, error)
+	RunCancellationSmoke(context.Context, CancellationSpec) (CancellationResult, error)
+	RunRegressionBenchmark(context.Context, RegressionBenchmarkSpec) (CaseResult, error)
 	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
 }
@@ -29,25 +35,30 @@ func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec Fi
 		return CaseResult{}, fmt.Errorf("create case directory: %w", err)
 	}
 	observations := make([]Observation, 0, 6)
+	fixtureObservations := make([]Observation, 0, 6)
 	var retained Manifest
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
 		var manifest Manifest
 		units := fixtureUnits(spec.Scale)
-		observation, err := suite.Measure(ctx, 0, units, func(runCtx context.Context) (uint64, error) {
+		fixtureObservation, err := suite.Measure(ctx, 0, units, func(runCtx context.Context) (uint64, error) {
 			generated, generateErr := suite.Generate(runCtx, spec, runDir)
 			if generateErr != nil {
 				return 0, generateErr
 			}
 			manifest = generated
-			if validateErr := suite.Validate(manifest); validateErr != nil {
-				return manifest.ActualBytes, validateErr
-			}
 			return manifest.ActualBytes, nil
+		})
+		if err != nil {
+			return CaseResult{}, fmt.Errorf("generate fixture case %s observation %d: %w", spec.Family, run+1, err)
+		}
+		observation, err := suite.Measure(ctx, manifest.ActualBytes, units, func(runCtx context.Context) (uint64, error) {
+			return runFixtureProductionStage(runCtx, suite, spec, manifest)
 		})
 		if err != nil {
 			return CaseResult{}, fmt.Errorf("run fixture case %s observation %d: %w", spec.Family, run+1, err)
 		}
+		fixtureObservations = append(fixtureObservations, fixtureObservation)
 		observations = append(observations, observation)
 		if run == 0 {
 			retained = manifest
@@ -66,6 +77,11 @@ func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec Fi
 		return CaseResult{}, err
 	}
 	result.Manifest = &retained
+	fixtureGeneration, err := SummarizePhase(name+" fixture generation", fixtureObservations)
+	if err != nil {
+		return CaseResult{}, err
+	}
+	result.FixtureGeneration = &fixtureGeneration
 	result.Correctness = Correctness{
 		Headers:          true,
 		RowCounts:        true,
@@ -75,6 +91,34 @@ func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec Fi
 	}
 	result.Verdict = Verdict{Passed: true}
 	return result, nil
+}
+
+func runFixtureProductionStage(ctx context.Context, suite Suite, spec FixtureSpec, manifest Manifest) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := suite.Validate(manifest); err != nil {
+		return 0, err
+	}
+	if spec.Family != FamilySnapshotHeavy && spec.Family != FamilyResumeHeavy {
+		return 0, nil
+	}
+	snapshot, err := state.LoadSnapshot(manifest.ArtifactPath)
+	if err != nil {
+		return 0, fmt.Errorf("load production snapshot fixture: %w", err)
+	}
+	roundtripPath := filepath.Join(filepath.Dir(manifest.ArtifactPath), "roundtrip.json")
+	if err := state.SaveSnapshot(roundtripPath, snapshot); err != nil {
+		return 0, fmt.Errorf("save production snapshot fixture: %w", err)
+	}
+	if _, err := state.LoadSnapshot(roundtripPath); err != nil {
+		return 0, fmt.Errorf("reload production snapshot fixture: %w", err)
+	}
+	info, err := os.Stat(roundtripPath)
+	if err != nil {
+		return 0, fmt.Errorf("read production snapshot fixture size: %w", err)
+	}
+	return uint64(info.Size()), nil
 }
 
 func fixtureUnits(scale Scale) uint64 {
@@ -87,8 +131,11 @@ func fixtureUnits(scale Scale) uint64 {
 }
 
 func removeFixtureRun(manifest Manifest) error {
-	for _, path := range []string{manifest.ArtifactPath, manifest.ManifestPath} {
+	for _, path := range []string{manifest.ArtifactPath, manifest.ManifestPath, filepath.Join(filepath.Dir(manifest.ArtifactPath), "roundtrip.json")} {
 		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return fmt.Errorf("remove generated fixture file %s: %w", path, err)
 		}
 	}

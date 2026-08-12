@@ -36,3 +36,26 @@ func TestRunFixtureCaseKeepsOneFixtureAndSummarizesSixRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestRunFixtureCaseSeparatesGenerationAndUsesProductionSnapshotRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	result, err := perfharness.New().RunFixtureCase(context.Background(), filepath.Join(t.TempDir(), "snapshot case"), perfharness.FixtureSpec{
+		Family: perfharness.FamilySnapshotHeavy,
+		Shape:  "mixed",
+		Scale:  perfharness.Scale{TargetBytes: 4_096},
+		Seed:   perfharness.DefaultGeneratorSeed,
+	})
+	if err != nil {
+		t.Fatalf("RunFixtureCase: %v", err)
+	}
+	if result.FixtureGeneration == nil || len(result.FixtureGeneration.Runs) != 6 {
+		t.Fatalf("fixture generation phase = %+v", result.FixtureGeneration)
+	}
+	if result.ColdStart.InputBytes == 0 || result.ColdStart.OutputBytes == 0 {
+		t.Fatalf("snapshot production phase = %+v", result.ColdStart)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(result.Manifest.ArtifactPath), "roundtrip.json")); err != nil {
+		t.Fatalf("retained production round trip: %v", err)
+	}
+}

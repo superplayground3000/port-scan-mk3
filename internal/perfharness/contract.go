@@ -59,24 +59,32 @@ type LimitCases struct {
 	Cases []BypassCase `json:"cases"`
 }
 
+// CaseBudget binds an absolute budget to a case-name prefix.
+type CaseBudget struct {
+	NamePrefix string         `json:"name_prefix"`
+	Budget     AbsoluteBudget `json:"budget"`
+}
+
 // Contract is the versioned matrix definition shared by both OS adapters.
 type Contract struct {
-	SchemaVersion        string              `json:"schema_version"`
-	FullFixtures         []FixtureSpec       `json:"full_fixtures"`
-	Limits               []LimitCases        `json:"limits"`
-	FakeWorkers          []int               `json:"fake_workers"`
-	LoopbackWorkers      []int               `json:"loopback_workers"`
-	CancelStages         []CancellationStage `json:"cancel_stages"`
-	CancelProgress       []int               `json:"cancel_progress"`
-	StopWithin           time.Duration       `json:"stop_within_ns"`
-	ForceWithin          time.Duration       `json:"force_within_ns"`
-	ForceExitCode        int                 `json:"force_exit_code"`
-	InputLineEndings     []string            `json:"input_line_endings"`
-	FailureScenarios     []string            `json:"failure_scenarios"`
-	RichOversizeCases    []string            `json:"rich_oversize_cases"`
-	OutputFlushIntervals []int               `json:"output_flush_intervals"`
-	SmokeItems           uint64              `json:"smoke_items"`
-	SmokeSnapshotBytes   uint64              `json:"smoke_snapshot_bytes"`
+	SchemaVersion        string                  `json:"schema_version"`
+	FullFixtures         []FixtureSpec           `json:"full_fixtures"`
+	Limits               []LimitCases            `json:"limits"`
+	FakeWorkers          []int                   `json:"fake_workers"`
+	LoopbackWorkers      []int                   `json:"loopback_workers"`
+	CancelStages         []CancellationStage     `json:"cancel_stages"`
+	CancelProgress       []int                   `json:"cancel_progress"`
+	StopWithin           time.Duration           `json:"stop_within_ns"`
+	ForceWithin          time.Duration           `json:"force_within_ns"`
+	ForceExitCode        int                     `json:"force_exit_code"`
+	InputLineEndings     []string                `json:"input_line_endings"`
+	FailureScenarios     []string                `json:"failure_scenarios"`
+	RichOversizeCases    []string                `json:"rich_oversize_cases"`
+	OutputFlushIntervals []int                   `json:"output_flush_intervals"`
+	AbsoluteBudgets      []CaseBudget            `json:"absolute_budgets"`
+	RegressionBenchmark  RegressionBenchmarkSpec `json:"regression_benchmark"`
+	SmokeItems           uint64                  `json:"smoke_items"`
+	SmokeSnapshotBytes   uint64                  `json:"smoke_snapshot_bytes"`
 }
 
 // DefaultContract returns the complete approved performance matrix.
@@ -135,8 +143,25 @@ func DefaultContract() Contract {
 		FailureScenarios:     []string{"output-failure", "snapshot-save-failure", "pressure-fatal-error", "rewind", "resume"},
 		RichOversizeCases:    []string{"default-reject", "override-complete"},
 		OutputFlushIntervals: []int{1, 1000, 0},
-		SmokeItems:           SmokeItemCount,
-		SmokeSnapshotBytes:   SmokeSnapshotBytes,
+		AbsoluteBudgets: []CaseBudget{
+			{NamePrefix: "record-heavy", Budget: AbsoluteBudget{MaxWallTime: 5 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
+			{NamePrefix: "rich-record-mixed", Budget: AbsoluteBudget{MaxWallTime: 10 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
+			{NamePrefix: "rich-hot-key", Budget: AbsoluteBudget{MaxWallTime: 10 * time.Minute, MaxCommittedBytes: 8_000_000_000}},
+			{NamePrefix: "snapshot-heavy", Budget: AbsoluteBudget{MaxWallTime: 2 * time.Minute, MaxCommittedBytes: 6_000_000_000}},
+			{NamePrefix: "output-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 4_000_000_000}},
+			{NamePrefix: "resume-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "production-workflow", Budget: AbsoluteBudget{MaxWallTime: 45 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "production-rich-deny", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "native-loopback", Budget: AbsoluteBudget{MaxWallTime: 45 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+		},
+		RegressionBenchmark: RegressionBenchmarkSpec{
+			TargetBytes:   1_000_000,
+			BeforeNSPerOp: 7_762_347,
+			BeforeBPerOp:  1_134_359,
+		},
+		SmokeItems:         SmokeItemCount,
+		SmokeSnapshotBytes: SmokeSnapshotBytes,
 	}
 }
 

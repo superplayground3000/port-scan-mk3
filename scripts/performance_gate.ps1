@@ -23,10 +23,17 @@ $adapterDir = Join-Path ([System.IO.Path]::GetTempPath()) ("port-scan-perf-adapt
 $harnessExe = Join-Path $adapterDir 'perf-harness.exe'
 $stdoutLog = Join-Path $adapterDir 'stdout.log'
 $stderrLog = Join-Path $adapterDir 'stderr.log'
+$signalLog = Join-Path $adapterDir 'signal-cases.txt'
 
 & go build -o $harnessExe ./internal/perfharness/cmd/perf-harness
 if ($LASTEXITCODE -ne 0) {
     throw "build performance harness failed with exit code $LASTEXITCODE"
+}
+
+& go test ./cmd/port-scan -run '^TestScanInterruptContext_OnWindows_' -count=1 -timeout=30s *> $signalLog
+if ($LASTEXITCODE -ne 0) {
+    Get-Content -LiteralPath $signalLog -ErrorAction SilentlyContinue | Write-Error
+    throw "Windows interrupt case failed with exit code $LASTEXITCODE"
 }
 
 $cpuRows = @(Get-CimInstance Win32_Processor)
@@ -97,6 +104,7 @@ $metricsJSON = $metrics | ConvertTo-Json
 [System.IO.File]::WriteAllText($metricsPath, $metricsJSON)
 Move-Item -LiteralPath $stdoutLog -Destination (Join-Path $OutputDir 'stdout.log')
 Move-Item -LiteralPath $stderrLog -Destination (Join-Path $OutputDir 'stderr.log')
+Move-Item -LiteralPath $signalLog -Destination (Join-Path $OutputDir 'signal-cases.txt')
 Remove-Item -LiteralPath $harnessExe
 Remove-Item -LiteralPath $adapterDir
 Write-Host "Performance matrix artifacts: $OutputDir"

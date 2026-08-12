@@ -203,7 +203,11 @@ func writeBasicCSV(ctx context.Context, output io.Writer, spec FixtureSpec, reco
 			}
 		}
 		address := fixtureIPv4(index)
-		if err := writer.Write([]string{address, "127.0.0.0/8", fmt.Sprintf("fab-%d", spec.Seed), cidrName}); err != nil {
+		boundary := "127.0.0.0/8"
+		if spec.Shape == "unique-groups" {
+			boundary = address + "/32"
+		}
+		if err := writer.Write([]string{address, boundary, fmt.Sprintf("fab-%d", spec.Seed), cidrName}); err != nil {
 			return fmt.Errorf("write fixture record: %w", err)
 		}
 	}
@@ -231,6 +235,9 @@ func writeRichCSV(ctx context.Context, output io.Writer, spec FixtureSpec) error
 		if spec.Family == FamilyRichHotKey || spec.Family == FamilyRichDeny {
 			keyIndex = index % 4
 		}
+		if spec.Family == FamilyRichDeny && spec.Shape == "accept-deny-conflict" {
+			keyIndex = index / 2 % 4
+		}
 		destination := fixtureIPv4(keyIndex)
 		destinationSegment := "127.0.0.0/8"
 		decision := "accept"
@@ -239,7 +246,7 @@ func writeRichCSV(ctx context.Context, output io.Writer, spec FixtureSpec) error
 			reason = "PRECHECK_ALLOW_ALL"
 			destinationSegment = destination + "/32"
 		}
-		if spec.Family == FamilyRichDeny && (spec.Shape == "deny-only" || index%2 == 1) {
+		if spec.Family == FamilyRichDeny && (spec.Shape == "deny-only" || spec.Shape == "accept-deny-conflict" && index%2 == 0) {
 			decision = "deny"
 		}
 		if spec.Family == FamilyRichRecordMixed && index%3 == 0 {

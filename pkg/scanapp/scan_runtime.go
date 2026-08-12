@@ -33,6 +33,9 @@ type scanRuntimeAdapters struct {
 	pressureObserver          pressureTelemetryObserver
 	controllerObserver        controllerTelemetryObserver
 	batchOutputsOpener        batchOutputsOpenFunc
+	taskObserver              func(ip string, port int)
+	resumeObserver            func(completed, total int)
+	resultObserver            func(completed uint64)
 }
 
 type scanRuntime struct {
@@ -139,9 +142,18 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	parseStart := time.Now()
 	var parseReporter chunkExpandReporter
 	var bucketProgress progress.Reporter
-	if !cfg.Quiet {
+	if !cfg.Quiet || r.adapters.resumeObserver != nil {
+		completed := 0
 		bucketProgress = progress.New("bucket_parse_progress", incompleteChunks, progressStep, r.input.stderr)
-		parseReporter = bucketProgress.Inc
+		parseReporter = func() {
+			completed++
+			if !cfg.Quiet {
+				bucketProgress.Inc()
+			}
+			if r.adapters.resumeObserver != nil {
+				r.adapters.resumeObserver(completed, incompleteChunks)
+			}
+		}
 	}
 
 	plan, err := prepareRuntimePlanContext(ctx, runtimePolicy{
@@ -152,7 +164,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		return err
 	}
 
-	if bucketProgress != nil {
+	if bucketProgress != nil && !cfg.Quiet {
 		bucketProgress.Done()
 	}
 	targetsGenerated := 0
@@ -222,7 +234,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	taskCh := make(chan scanTask, queueSize)
 	resultCh, executorErrCh, abandonedCh, executorTelemetry := startCancellableScanExecutor(runCtx, workers, cfg.DialTimeout, r.adapters.dial, logger, taskCh)
 
-	dispatchPolicy := dispatchPolicy{delay: cfg.DispatchDelay, observer: noopDispatchObserver{}}
+	dispatchPolicy := dispatchPolicy{delay: cfg.DispatchDelay, observer: noopDispatchObserver{}, taskObserver: r.adapters.taskObserver}
 	if dashboardState != nil {
 		dispatchPolicy.observer = newDashboardDispatchObserver(dashboardState)
 	}
@@ -248,14 +260,15 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		resultCh:      resultCh,
 		abandonedCh:   abandonedCh,
 	}, resultLoopDeps{
-		outputs:        outputs,
-		runtimes:       plan.runtimes,
-		resultObserver: resultObserver,
-		stdout:         r.input.stdout,
-		logger:         logger,
-		ctrl:           ctrl,
-		progressStep:   progressStep,
-		quiet:          cfg.Quiet,
+		outputs:                outputs,
+		runtimes:               plan.runtimes,
+		resultObserver:         resultObserver,
+		stdout:                 r.input.stdout,
+		logger:                 logger,
+		ctrl:                   ctrl,
+		progressStep:           progressStep,
+		quiet:                  cfg.Quiet,
+		resultObserverCallback: r.adapters.resultObserver,
 	})
 	if inFlight, abandoned, stopStarted := executorTelemetry.snapshot(); !stopStarted.IsZero() {
 		logger.eventf("probe_drain_complete", "", 0, "probe_drain_complete", LogEventNone, map[string]any{

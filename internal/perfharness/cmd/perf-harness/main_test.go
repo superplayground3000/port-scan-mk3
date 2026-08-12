@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/xuxiping/port-scan-mk3/internal/perfharness"
 )
@@ -14,6 +17,60 @@ type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) {
 	return 0, os.ErrClosed
+}
+
+func TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations(t *testing.T) {
+	t.Parallel()
+
+	results := []perfharness.CaseResult{{
+		Name:         "bounded/case",
+		ColdStart:    perfharness.Observation{WallTime: 2 * time.Second, PeakCommittedBytes: 50},
+		SteadyMedian: perfharness.Observation{WallTime: time.Second, PeakCommittedBytes: 101},
+		Verdict:      perfharness.Verdict{Passed: true},
+	}}
+	contract := perfharness.Contract{AbsoluteBudgets: []perfharness.CaseBudget{{
+		NamePrefix: "bounded/",
+		Budget:     perfharness.AbsoluteBudget{MaxWallTime: time.Second, MaxCommittedBytes: 100},
+	}}}
+
+	if applyAbsoluteThresholds(results, perfharness.New(), contract) {
+		t.Fatal("absolute thresholds accepted failed cold and median observations")
+	}
+	if !results[0].Verdict.HasFailure("absolute-wall-time") || !results[0].Verdict.HasFailure("absolute-committed-memory") {
+		t.Fatalf("case verdict = %+v", results[0].Verdict)
+	}
+}
+
+func TestApplyGrowthThresholdBlocksNonlinearMedianGrowth(t *testing.T) {
+	t.Parallel()
+
+	results := []perfharness.CaseResult{
+		{Name: "small", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "large", SteadyMedian: perfharness.Observation{WallTime: 13 * time.Second, GoAllocatedBytes: 1_101}, Verdict: perfharness.Verdict{Passed: true}},
+	}
+
+	if applyGrowthThreshold(results, perfharness.New(), "small", "large") {
+		t.Fatal("growth threshold accepted nonlinear growth")
+	}
+	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[1].Verdict.HasFailure("growth-allocated-bytes") {
+		t.Fatalf("large verdict = %+v", results[1].Verdict)
+	}
+}
+
+func TestApplyWorkerParityBlocksTaskOrderDifference(t *testing.T) {
+	t.Parallel()
+
+	results := []perfharness.CaseResult{
+		{Name: "production-workflow/workers-1", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"a", "b"}}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "production-workflow/workers-16", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"b", "a"}}, Verdict: perfharness.Verdict{Passed: true}},
+	}
+
+	if applyWorkerParity(results, perfharness.New(), []int{1, 16}) {
+		t.Fatal("worker parity accepted different task order")
+	}
+	if !results[1].Verdict.HasFailure("semantic-parity") {
+		t.Fatalf("workers-16 verdict = %+v", results[1].Verdict)
+	}
 }
 
 func TestRunCommandWritesSmokeReports(t *testing.T) {
@@ -27,6 +84,8 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 		"-output", outputDir,
 		"-smoke-items", "5",
 		"-smoke-snapshot-bytes", "4096",
+		"-regression-before-ns", "1000000000000",
+		"-regression-before-bytes", "1000000000000",
 		"-evidence-label", "hardware-qualified",
 	}, &stdout, &stderr)
 	if exitCode != 0 {
@@ -40,8 +99,8 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("Unmarshal(report): %v", err)
 	}
-	if len(report.Cases) != 8 {
-		t.Fatalf("case count = %d, want fixture, fake-worker, CRLF, and loopback-worker cases", len(report.Cases))
+	if len(report.Cases) != 26 {
+		t.Fatalf("case count = %d, want fixture, fake-worker, rich-deny, cancellation, CRLF, and loopback-worker cases", len(report.Cases))
 	}
 	if report.Hardware.EvidenceLabel != perfharness.EvidenceHardwareQualified {
 		t.Fatalf("evidence label = %q", report.Hardware.EvidenceLabel)
@@ -49,7 +108,28 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 	if len(report.Contract.Limits) != 12 || len(report.Contract.CancelStages) != 5 {
 		t.Fatalf("report lacks the matrix contract: %+v", report.Contract)
 	}
+	richDenyCases := 0
+	cancellationCases := 0
+	regressionCases := 0
 	for _, result := range report.Cases {
+		if result.Name == "regression/snapshot-generator" {
+			regressionCases++
+			if result.Regression == nil || !result.Verdict.Passed {
+				t.Fatalf("regression case failed: %+v", result)
+			}
+		}
+		if strings.HasPrefix(result.Name, "production-cancellation/") {
+			cancellationCases++
+			if !result.Verdict.Passed {
+				t.Fatalf("cancellation case failed: %+v", result)
+			}
+		}
+		if result.Name == "production-rich-deny/deny-only" || result.Name == "production-rich-deny/accept-deny-conflict" {
+			richDenyCases++
+			if !result.Verdict.Passed || !result.Correctness.ExpectedValues {
+				t.Fatalf("rich-deny case failed: %+v", result)
+			}
+		}
 		if result.Name == "production-workflow/crlf/workers-16" && result.Verdict.Passed {
 			continue
 		}
@@ -60,10 +140,40 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 			if result.ColdStart.InputBytes == 0 || result.ColdStart.OutputBytes == 0 {
 				t.Fatalf("workflow stage metrics = %+v", result.ColdStart)
 			}
-			return
 		}
 	}
-	t.Fatal("workers-16 workflow case is missing")
+	if richDenyCases != 2 {
+		t.Fatalf("rich-deny case count = %d, want 2", richDenyCases)
+	}
+	if cancellationCases != 15 {
+		t.Fatalf("cancellation case count = %d, want 15", cancellationCases)
+	}
+	if regressionCases != 1 {
+		t.Fatalf("regression case count = %d, want 1", regressionCases)
+	}
+}
+
+func TestRunCommandComparesPortableReports(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	report := perfharness.Report{Cases: []perfharness.CaseResult{{Name: "case", Verdict: perfharness.Verdict{Passed: true}}}}
+	left, err := harness.WriteReports(context.Background(), filepath.Join(t.TempDir(), "left"), report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := harness.WriteReports(context.Background(), filepath.Join(t.TempDir(), "right"), report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runCommand([]string{"-compare-left", left.JSON, "-compare-right", right.JSON}, &stdout, &stderr); code != 0 {
+		t.Fatalf("compare exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "semantic parity passed") {
+		t.Fatalf("compare output = %q", stdout.String())
+	}
 }
 
 func TestRunCommandFailsWhenItCannotWriteStatus(t *testing.T) {

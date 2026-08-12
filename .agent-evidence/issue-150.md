@@ -9,6 +9,135 @@
 
 ## Red and green log
 
+### Executed rich-deny production paths
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunRichDenySmokeUsesProductionPathsWithoutProbes -count=1
+```
+
+Observed red result:
+
+```text
+harness.RunRichDenySmoke undefined
+undefined: perfharness.RichDenySpec
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+```
+
+Green command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunRichDenySmokeUsesProductionPathsWithoutProbes -count=1
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.004s
+```
+
+### Executed threshold and parity gates
+
+Red commands:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations -count=1
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestApplyGrowthThresholdBlocksNonlinearMedianGrowth -count=1
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestApplyWorkerParityBlocksTaskOrderDifference -count=1
+```
+
+Observed red reasons:
+
+```text
+undefined: applyAbsoluteThresholds
+undefined: applyGrowthThreshold
+unknown field Semantic in struct literal of type perfharness.CaseResult
+undefined: applyWorkerParity
+```
+
+Green command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run 'TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations|TestApplyGrowthThresholdBlocksNonlinearMedianGrowth|TestApplyWorkerParityBlocksTaskOrderDifference' -count=1
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 0.003s
+```
+
+### Executed production cancellation matrix
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunCancellationSmokeInjectsEveryProductionStage -count=1
+```
+
+Observed red result:
+
+```text
+harness.RunCancellationSmoke undefined
+undefined: perfharness.CancellationSpec
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness [build failed]
+```
+
+The first race run found a shared reporter counter race.
+
+```text
+WARNING: DATA RACE
+internal/perfharness.(*injectingReporter).Add()
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness
+```
+
+Green command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./pkg/scanapp ./internal/perfharness ./internal/perfharness/cmd/perf-harness -count=1 -timeout=60s
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 2.729s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.250s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 4.226s
+```
+
+### Production snapshot round trip and report parity
+
+Red commands:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestRunFixtureCaseSeparatesGenerationAndUsesProductionSnapshotRoundTrip -count=1
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestCompareReportsEnforcesPortableCaseParity -count=1
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandComparesPortableReports -count=1
+```
+
+Observed red reasons:
+
+```text
+fixture generation phase = <nil>
+harness.CompareReports undefined
+flag provided but not defined: -compare-left
+```
+
+Green commands:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run 'TestRunFixtureCaseSeparatesGenerationAndUsesProductionSnapshotRoundTrip|TestCompareReportsEnforcesPortableCaseParity' -count=1
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandComparesPortableReports -count=1
+```
+
+Observed green results:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.002s
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 0.003s
+```
+
 ### Deterministic record-heavy fixture
 
 Red command:

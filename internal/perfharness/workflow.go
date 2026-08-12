@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -28,14 +30,25 @@ type WorkflowSpec struct {
 
 // WorkflowResult records correctness data from the production workflow.
 type WorkflowResult struct {
-	ProbeCount        uint64      `json:"probe_count"`
-	ScanRows          uint64      `json:"scan_rows"`
-	OpenRows          uint64      `json:"open_rows"`
-	SnapshotCompleted bool        `json:"snapshot_completed"`
-	ScanDigest        string      `json:"scan_digest"`
-	OpenDigest        string      `json:"open_digest"`
-	FixtureGeneration Observation `json:"fixture_generation"`
-	Stage             Observation `json:"stage"`
+	ProbeCount        uint64           `json:"probe_count"`
+	ReachabilityCount uint64           `json:"reachability_count"`
+	PrePingCompleted  bool             `json:"pre_ping_completed"`
+	ScanRows          uint64           `json:"scan_rows"`
+	OpenRows          uint64           `json:"open_rows"`
+	SnapshotCompleted bool             `json:"snapshot_completed"`
+	ScanDigest        string           `json:"scan_digest"`
+	OpenDigest        string           `json:"open_digest"`
+	FixtureGeneration Observation      `json:"fixture_generation"`
+	Stage             Observation      `json:"stage"`
+	Semantic          SemanticArtifact `json:"semantic"`
+}
+
+// RichDenySpec defines one bounded denied-work production run.
+type RichDenySpec struct {
+	OutputDir string `json:"output_dir"`
+	Items     uint64 `json:"items"`
+	Workers   int    `json:"workers"`
+	Shape     string `json:"shape"`
 }
 
 // RunProductionSmoke runs production parsing, bucket, resume, scan, and writer paths.
@@ -46,6 +59,130 @@ func (Suite) RunProductionSmoke(ctx context.Context, spec WorkflowSpec) (Workflo
 		return fakeOpenConn{}, nil
 	}
 	return runProductionWorkflow(ctx, spec, 443, dial, &probes)
+}
+
+// RunRichDenySmoke runs rich parsing, bucket generation, resume, and writers.
+func (Suite) RunRichDenySmoke(ctx context.Context, spec RichDenySpec) (WorkflowResult, error) {
+	if spec.Items == 0 {
+		return WorkflowResult{}, fmt.Errorf("rich-deny items must be positive")
+	}
+	if spec.Shape != "deny-only" && spec.Shape != "accept-deny-conflict" {
+		return WorkflowResult{}, fmt.Errorf("unsupported rich-deny shape %q", spec.Shape)
+	}
+	if err := os.MkdirAll(spec.OutputDir, 0o755); err != nil {
+		return WorkflowResult{}, fmt.Errorf("create rich-deny directory: %w", err)
+	}
+	suite := Suite{}
+	var probes atomic.Uint64
+	var reachability atomic.Uint64
+	var manifest Manifest
+	fixtureGeneration, err := suite.Measure(ctx, 0, spec.Items, func(runCtx context.Context) (uint64, error) {
+		generated, generateErr := suite.Generate(runCtx, FixtureSpec{
+			Family: FamilyRichDeny,
+			Shape:  spec.Shape,
+			Scale:  Scale{InputRecords: spec.Items},
+			Seed:   DefaultGeneratorSeed,
+		}, filepath.Join(spec.OutputDir, "fixture"))
+		if generateErr != nil {
+			return 0, fmt.Errorf("generate rich-deny input: %w", generateErr)
+		}
+		manifest = generated
+		return manifest.ActualBytes, nil
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	snapshotPath := filepath.Join(spec.OutputDir, "buckets.json")
+	prePingDir := filepath.Join(spec.OutputDir, "pre-ping")
+	if err := os.Mkdir(prePingDir, 0o755); err != nil {
+		return WorkflowResult{}, fmt.Errorf("create rich-deny pre-ping directory: %w", err)
+	}
+	prePingConfig, err := config.NewPrePing(config.PrePingValues{
+		CIDRFile:         manifest.ArtifactPath,
+		CIDRIPCol:        "src_ip",
+		CIDRIPCidrCol:    "src_network_segment",
+		Output:           filepath.Join(prePingDir, "results.csv"),
+		Workers:          spec.Workers,
+		PingTimeout:      time.Second,
+		ProgressInterval: int(spec.Items) + 1,
+	})
+	if err != nil {
+		return WorkflowResult{}, fmt.Errorf("create rich-deny pre-ping configuration: %w", err)
+	}
+	bucketConfig, err := config.NewGenerateBuckets(config.GenerateBucketsValues{
+		CIDRFile:         manifest.ArtifactPath,
+		CIDRIPCol:        "src_ip",
+		CIDRIPCidrCol:    "src_network_segment",
+		SnapshotOutput:   snapshotPath,
+		Workers:          spec.Workers,
+		ProgressInterval: int(spec.Items) + 1,
+	})
+	if err != nil {
+		return WorkflowResult{}, fmt.Errorf("create rich-deny bucket configuration: %w", err)
+	}
+	scanConfig, err := config.NewScan(config.ScanValues{
+		CIDRFile:       manifest.ArtifactPath,
+		CIDRIPCol:      "src_ip",
+		CIDRIPCidrCol:  "src_network_segment",
+		ResumeInput:    snapshotPath,
+		Output:         filepath.Join(spec.OutputDir, "results.csv"),
+		Workers:        spec.Workers,
+		DialTimeout:    time.Second,
+		BucketRate:     ratelimit.MaxRate,
+		BucketCapacity: ratelimit.MaxCapacity,
+		LogLevel:       "error",
+		Format:         "json",
+		Quiet:          true,
+		Pressure:       config.PressureDisabled(),
+	})
+	if err != nil {
+		return WorkflowResult{}, fmt.Errorf("create rich-deny scan configuration: %w", err)
+	}
+	var scanPath string
+	var openPath string
+	prePingCompleted := false
+	stage, err := suite.Measure(ctx, manifest.ActualBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
+		if runErr := scanapp.RunPrePing(runCtx, prePingConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			ReachabilityChecker: countingReachability{count: &reachability},
+		}); runErr != nil {
+			return 0, fmt.Errorf("run rich-deny pre-ping workflow: %w", runErr)
+		}
+		prePingCompleted = true
+		if runErr := scanapp.GenerateBuckets(runCtx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); runErr != nil {
+			return 0, fmt.Errorf("run rich-deny bucket workflow: %w", runErr)
+		}
+		dial := func(context.Context, string, string) (net.Conn, error) {
+			probes.Add(1)
+			return fakeOpenConn{}, nil
+		}
+		if runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			Dial:                dial,
+			DisableKeyboard:     true,
+			ReachabilityChecker: countingReachability{count: &reachability},
+		}); runErr != nil {
+			return 0, fmt.Errorf("run rich-deny scan workflow: %w", runErr)
+		}
+		var pathErr error
+		scanPath, openPath, pathErr = workflowOutputPaths(spec.OutputDir)
+		if pathErr != nil {
+			return 0, pathErr
+		}
+		scanBytes, sizeErr := fileSize(scanPath)
+		if sizeErr != nil {
+			return 0, sizeErr
+		}
+		openBytes, sizeErr := fileSize(openPath)
+		if sizeErr != nil {
+			return 0, sizeErr
+		}
+		return scanBytes + openBytes, nil
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	result, err := workflowResultFromFiles(probes.Load(), reachability.Load(), true, fixtureGeneration, stage, scanPath, openPath, nil)
+	result.PrePingCompleted = prePingCompleted
+	return result, err
 }
 
 // RunNativeLoopbackSmoke runs the production workflow against one local listener.
@@ -146,6 +283,7 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 	}
 	var scanPath string
 	var openPath string
+	taskOrder := make([]string, 0, spec.Items)
 	stage, err := suite.Measure(ctx, fixtureGeneration.OutputBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.GenerateBuckets(runCtx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); runErr != nil {
 			return 0, fmt.Errorf("run production bucket workflow: %w", runErr)
@@ -153,6 +291,9 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 		if runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			Dial:            dial,
 			DisableKeyboard: true,
+			TaskObserver: func(ip string, taskPort int) {
+				taskOrder = append(taskOrder, net.JoinHostPort(ip, strconv.Itoa(taskPort))+"/tcp")
+			},
 		}); runErr != nil {
 			return 0, fmt.Errorf("run production scan workflow: %w", runErr)
 		}
@@ -174,32 +315,7 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 	if err != nil {
 		return WorkflowResult{}, err
 	}
-	scanRows, err := countCSVRows(scanPath)
-	if err != nil {
-		return WorkflowResult{}, err
-	}
-	openRows, err := countCSVRows(openPath)
-	if err != nil {
-		return WorkflowResult{}, err
-	}
-	scanDigest, err := fileDigest(scanPath)
-	if err != nil {
-		return WorkflowResult{}, err
-	}
-	openDigest, err := fileDigest(openPath)
-	if err != nil {
-		return WorkflowResult{}, err
-	}
-	return WorkflowResult{
-		ProbeCount:        probes.Load(),
-		ScanRows:          scanRows,
-		OpenRows:          openRows,
-		SnapshotCompleted: scanRows == spec.Items,
-		ScanDigest:        scanDigest,
-		OpenDigest:        openDigest,
-		FixtureGeneration: fixtureGeneration,
-		Stage:             stage,
-	}, nil
+	return workflowResultFromFiles(probes.Load(), 0, true, fixtureGeneration, stage, scanPath, openPath, taskOrder)
 }
 
 func fileSize(path string) (uint64, error) {
@@ -260,6 +376,91 @@ func fileDigest(path string) (string, error) {
 		return "", fmt.Errorf("hash artifact: %w", err)
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+func workflowResultFromFiles(probes, reachability uint64, completed bool, fixtureGeneration, stage Observation, scanPath, openPath string, taskOrder []string) (WorkflowResult, error) {
+	scanRows, err := countCSVRows(scanPath)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	openRows, err := countCSVRows(openPath)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	scanDigest, err := fileDigest(scanPath)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	openDigest, err := fileDigest(openPath)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	normalizedDigest, err := normalizedCSVDigest(scanPath)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	return WorkflowResult{
+		ProbeCount:        probes,
+		ReachabilityCount: reachability,
+		ScanRows:          scanRows,
+		OpenRows:          openRows,
+		SnapshotCompleted: completed,
+		ScanDigest:        scanDigest,
+		OpenDigest:        openDigest,
+		FixtureGeneration: fixtureGeneration,
+		Stage:             stage,
+		Semantic: SemanticArtifact{
+			Root:         filepath.Dir(scanPath),
+			Path:         filepath.Join(filepath.Dir(scanPath), "scan-results.csv"),
+			TaskOrder:    append([]string(nil), taskOrder...),
+			RowCount:     scanRows,
+			Status:       "completed",
+			Cursor:       scanRows,
+			OutputDigest: normalizedDigest,
+		},
+	}, nil
+}
+
+func normalizedCSVDigest(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open workflow CSV for normalization: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	rows, err := csv.NewReader(file).ReadAll()
+	if err != nil {
+		return "", fmt.Errorf("read workflow CSV for normalization: %w", err)
+	}
+	if len(rows) == 0 {
+		return "", fmt.Errorf("workflow CSV has no header")
+	}
+	durationColumn := -1
+	for index, name := range rows[0] {
+		if name == "response_time_ms" {
+			durationColumn = index
+			break
+		}
+	}
+	normalized := make([]string, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		copyRow := append([]string(nil), row...)
+		if durationColumn >= 0 && durationColumn < len(copyRow) {
+			copyRow[durationColumn] = "<duration>"
+		}
+		normalized = append(normalized, strings.Join(copyRow, "\x00"))
+	}
+	sort.Strings(normalized)
+	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+type countingReachability struct {
+	count *atomic.Uint64
+}
+
+func (checker countingReachability) Check(context.Context, string, time.Duration) scanapp.ReachabilityResult {
+	checker.count.Add(1)
+	return scanapp.ReachabilityResult{}
 }
 
 type fakeOpenConn struct{}

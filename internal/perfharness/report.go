@@ -54,14 +54,16 @@ type PhaseResult struct {
 
 // CaseResult records six observations and the evaluated summaries.
 type CaseResult struct {
-	Name              string        `json:"name"`
-	Manifest          *Manifest     `json:"manifest,omitempty"`
-	FixtureGeneration *PhaseResult  `json:"fixture_generation,omitempty"`
-	Runs              []Observation `json:"runs"`
-	ColdStart         Observation   `json:"cold_start"`
-	SteadyMedian      Observation   `json:"steady_state_median"`
-	Correctness       Correctness   `json:"correctness"`
-	Verdict           Verdict       `json:"verdict"`
+	Name              string                `json:"name"`
+	Manifest          *Manifest             `json:"manifest,omitempty"`
+	FixtureGeneration *PhaseResult          `json:"fixture_generation,omitempty"`
+	Runs              []Observation         `json:"runs"`
+	ColdStart         Observation           `json:"cold_start"`
+	SteadyMedian      Observation           `json:"steady_state_median"`
+	Correctness       Correctness           `json:"correctness"`
+	Verdict           Verdict               `json:"verdict"`
+	Semantic          *SemanticArtifact     `json:"semantic,omitempty"`
+	Regression        *RegressionComparison `json:"regression,omitempty"`
 }
 
 // Report is the portable evidence document for one matrix run.

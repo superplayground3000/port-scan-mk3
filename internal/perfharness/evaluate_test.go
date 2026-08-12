@@ -1,6 +1,7 @@
 package perfharness_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -35,5 +36,34 @@ func TestEvaluateAppliesAbsoluteGrowthRegressionAndWorkerBudgets(t *testing.T) {
 		if !verdict.HasFailure(rule) {
 			t.Errorf("missing failure for %q: %+v", rule, verdict.Failures)
 		}
+	}
+}
+
+func TestRunRegressionBenchmarkExecutesSixRunsAndEvaluatesBaseline(t *testing.T) {
+	t.Parallel()
+
+	var harness perfharness.Harness = perfharness.New()
+	result, err := harness.RunRegressionBenchmark(context.Background(), perfharness.RegressionBenchmarkSpec{
+		TargetBytes:   4_096,
+		BeforeNSPerOp: 1e12,
+		BeforeBPerOp:  1e12,
+	})
+	if err != nil {
+		t.Fatalf("RunRegressionBenchmark: %v", err)
+	}
+	if len(result.Runs) != 6 || !result.Verdict.Passed {
+		t.Fatalf("regression result = %+v", result)
+	}
+
+	blocked, err := harness.RunRegressionBenchmark(context.Background(), perfharness.RegressionBenchmarkSpec{
+		TargetBytes:   4_096,
+		BeforeNSPerOp: 1,
+		BeforeBPerOp:  1,
+	})
+	if err != nil {
+		t.Fatalf("RunRegressionBenchmark blocked case: %v", err)
+	}
+	if blocked.Verdict.Passed || !blocked.Verdict.HasFailure("regression-ns-per-op") || !blocked.Verdict.HasFailure("regression-bytes-per-op") {
+		t.Fatalf("blocked regression result = %+v", blocked)
 	}
 }
