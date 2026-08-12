@@ -4,12 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/internal/perfharness"
 )
 
-func TestRunOutputCaseMeasuresBothWritersAndRemovesTemporaryOutputs(t *testing.T) {
+func TestRunOutputCaseMeasuresBothWritersAndKeepsOnlyFirstOutputs(t *testing.T) {
 	for _, interval := range []int{0, 1, 1000} {
 		outputDir := filepath.Join(t.TempDir(), "output case")
 		result, err := perfharness.New().RunOutputCase(context.Background(), perfharness.OutputSpec{
@@ -30,8 +31,13 @@ func TestRunOutputCaseMeasuresBothWritersAndRemovesTemporaryOutputs(t *testing.T
 		if err != nil {
 			t.Fatalf("interval=%d ReadDir() error = %v", interval, err)
 		}
-		if len(entries) != 0 {
-			t.Fatalf("interval=%d retained temporary outputs: %v", interval, entries)
+		if len(entries) != 2 {
+			t.Fatalf("interval=%d retained entries=%v, want first scan and open outputs", interval, entries)
+		}
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), "-0.csv") {
+				t.Fatalf("interval=%d retained later observation %s", interval, entry.Name())
+			}
 		}
 	}
 }

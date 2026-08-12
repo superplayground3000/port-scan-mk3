@@ -44,7 +44,10 @@ func (suite Suite) RunOutputCase(ctx context.Context, spec OutputSpec) (CaseResu
 			return CaseResult{}, fmt.Errorf("write output observation %d: %w", run+1, err)
 		}
 		validationErr := validateOutputPair(scanPath, openPath, spec.Results)
-		removeErr := removeOutputPair(scanPath, openPath)
+		var removeErr error
+		if run > 0 {
+			removeErr = removeOutputPair(scanPath, openPath)
+		}
 		if validationErr != nil {
 			return CaseResult{}, fmt.Errorf("validate output observation %d: %w", run+1, validationErr)
 		}
