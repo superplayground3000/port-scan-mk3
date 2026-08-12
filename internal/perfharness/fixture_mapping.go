@@ -12,7 +12,12 @@ func fixtureCaseMappings(fixtures []FixtureSpec) []FixtureCaseMapping {
 		case FamilyCandidateHeavy:
 			mapping.CaseNames = []string{"candidate-heavy/pre-ping"}
 		case FamilyTaskHeavy:
-			mapping.CaseNames = []string{"task-heavy/bucket-generation"}
+			mapping.CaseNames = []string{
+				"task-heavy/bucket-generation",
+				"scan-orchestration/workers-1",
+				"scan-orchestration/workers-16",
+				"scan-orchestration/workers-256",
+			}
 		case FamilyOutputHeavy:
 			for _, flush := range []int{1, 1000, 0} {
 				mapping.CaseNames = append(mapping.CaseNames, fmt.Sprintf("output-heavy/results-%d/flush-%d", fixture.Scale.ExpectedOutputs, flush))

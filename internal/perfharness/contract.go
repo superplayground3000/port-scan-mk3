@@ -170,6 +170,7 @@ func DefaultContract() Contract {
 			{NamePrefix: "snapshot-save", Budget: AbsoluteBudget{MaxWallTime: 2 * time.Minute, MaxCommittedBytes: 6_000_000_000}},
 			{NamePrefix: "output-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 4_000_000_000}},
 			{NamePrefix: "resume-heavy", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
+			{NamePrefix: "scan-orchestration", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 4_000_000_000}},
 			{NamePrefix: "production-workflow", Budget: AbsoluteBudget{MaxWallTime: 45 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
 			{NamePrefix: "production-rich-deny", Budget: AbsoluteBudget{MaxWallTime: 15 * time.Minute, MaxCommittedBytes: 24_000_000_000}},
 			{NamePrefix: "native-loopback", Budget: AbsoluteBudget{MaxWallTime: 45 * time.Minute, MaxCommittedBytes: 24_000_000_000}},

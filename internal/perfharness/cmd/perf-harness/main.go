@@ -224,7 +224,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 
 	workflowItems := profileItemCount(profile, smokeItems)
 	for _, workers := range contract.FakeWorkers {
-		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-workers-"+strconv.Itoa(workers)), workflowItems, workers, "")
+		result, err := runOrchestrationCase(context.Background(), harness, filepath.Join(casesDir, "orchestration-workers-"+strconv.Itoa(workers)), workflowItems, workers)
 		if err != nil {
 			if writeErr := writeStatus(stderr, "run workflow workers=%d: %v\n", workers, err); writeErr != nil {
 				return 1
@@ -236,6 +236,17 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	completeResult, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-complete-workers-16"), workflowItems, 16, "")
+	if err != nil {
+		if writeErr := writeStatus(stderr, "run complete workflow: %v\n", err); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
+	results = append(results, completeResult)
+	if err := writeStatus(stdout, "case passed: %s\n", completeResult.Name); err != nil {
+		return 1
+	}
 	if workflowItems >= 10 {
 		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-growth-1x-workers-16"), workflowItems/10, 16, "")
 		if err != nil {
@@ -244,7 +255,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			}
 			return 1
 		}
-		result.Name = "production-workflow/growth-1x/workers-16"
+		result.Name = "production-workflow/complete/growth-1x/workers-16"
 		results = append(results, result)
 		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
 			return 1
@@ -392,7 +403,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	if !applyWorkerParity(results, harness, contract.FakeWorkers) {
 		matrixPassed = false
 	}
-	if workflowItems >= 10 && !applyGrowthThreshold(results, harness, "production-workflow/growth-1x/workers-16", "production-workflow/workers-16") {
+	if workflowItems >= 10 && !applyGrowthThreshold(results, harness, "production-workflow/complete/growth-1x/workers-16", "production-workflow/complete/workers-16") {
 		matrixPassed = false
 	}
 	if workflowItems >= contract.SmokeItems {
@@ -598,8 +609,8 @@ func applyOutputThresholds(results []perfharness.CaseResult, harness perfharness
 }
 
 func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfharness.Harness) bool {
-	workers16 := findCase(results, "production-workflow/workers-16")
-	workers256 := findCase(results, "production-workflow/workers-256")
+	workers16 := findCase(results, "scan-orchestration/workers-16")
+	workers256 := findCase(results, "scan-orchestration/workers-256")
 	if workers16 == nil || workers256 == nil {
 		return false
 	}
@@ -666,13 +677,13 @@ func applyWorkerParity(results []perfharness.CaseResult, harness perfharness.Har
 	if len(workers) == 0 {
 		return false
 	}
-	baseline := findCase(results, "production-workflow/workers-"+strconv.Itoa(workers[0]))
+	baseline := findCase(results, "scan-orchestration/workers-"+strconv.Itoa(workers[0]))
 	if baseline == nil || baseline.Semantic == nil {
 		return false
 	}
 	passed := true
 	for _, workerCount := range workers[1:] {
-		candidate := findCase(results, "production-workflow/workers-"+strconv.Itoa(workerCount))
+		candidate := findCase(results, "scan-orchestration/workers-"+strconv.Itoa(workerCount))
 		if candidate == nil || candidate.Semantic == nil {
 			passed = false
 			continue
@@ -834,6 +845,20 @@ func fixtureRouteFor(spec perfharness.FixtureSpec) (fixtureRoute, error) {
 }
 
 func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, lineEnding string) (perfharness.CaseResult, error) {
+	name := fmt.Sprintf("production-workflow/complete/workers-%d", workers)
+	if lineEnding == "CRLF" {
+		name = fmt.Sprintf("production-workflow/complete/crlf/workers-%d", workers)
+	}
+	return runRepeatedWorkflowCase(ctx, harness, outputDir, items, workers, lineEnding, name, harness.RunProductionSmoke)
+}
+
+func runOrchestrationCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int) (perfharness.CaseResult, error) {
+	return runRepeatedWorkflowCase(ctx, harness, outputDir, items, workers, "", fmt.Sprintf("scan-orchestration/workers-%d", workers), harness.RunOrchestrationSmoke)
+}
+
+type workflowRunner func(context.Context, perfharness.WorkflowSpec) (perfharness.WorkflowResult, error)
+
+func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, lineEnding, name string, runWorkflow workflowRunner) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create workflow case directory: %w", err)
 	}
@@ -843,7 +868,7 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 	var semantic perfharness.SemanticArtifact
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
-		workflow, err := harness.RunProductionSmoke(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: items, Workers: workers, LineEnding: lineEnding})
+		workflow, err := runWorkflow(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: items, Workers: workers, LineEnding: lineEnding})
 		if err != nil {
 			return perfharness.CaseResult{}, err
 		}
@@ -861,10 +886,6 @@ func runWorkflowCase(ctx context.Context, harness perfharness.Harness, outputDir
 		if err := removeCompletedCaseRun(outputDir, run); err != nil {
 			return perfharness.CaseResult{}, err
 		}
-	}
-	name := fmt.Sprintf("production-workflow/workers-%d", workers)
-	if lineEnding == "CRLF" {
-		name = fmt.Sprintf("production-workflow/crlf/workers-%d", workers)
 	}
 	result, err := perfharness.SummarizeCase(name, observations)
 	if err != nil {

@@ -24,6 +24,7 @@ type Harness interface {
 	CompareReports(Report, Report) []string
 	WriteReports(context.Context, string, Report) (ReportPaths, error)
 	RunProductionSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
+	RunOrchestrationSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunRichDenySmoke(context.Context, RichDenySpec) (WorkflowResult, error)
 	RunCancellationSmoke(context.Context, CancellationSpec) (CancellationResult, error)
 	RunRegressionBenchmark(context.Context, RegressionBenchmarkSpec) (CaseResult, error)

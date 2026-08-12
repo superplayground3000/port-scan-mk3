@@ -287,6 +287,27 @@ func TestCandidateAndTaskStagesUseTheirApprovedBudgets(t *testing.T) {
 	}
 }
 
+func TestCompleteWorkflowAndWorkerOrchestrationUseSeparateBudgets(t *testing.T) {
+	t.Parallel()
+
+	contract := perfharness.DefaultContract()
+	checks := []struct {
+		name   string
+		wall   time.Duration
+		memory uint64
+	}{
+		{name: "production-workflow/complete/workers-16", wall: 45 * time.Minute, memory: 24_000_000_000},
+		{name: "scan-orchestration/workers-1", wall: 15 * time.Minute, memory: 4_000_000_000},
+		{name: "scan-orchestration/workers-256", wall: 15 * time.Minute, memory: 4_000_000_000},
+	}
+	for _, check := range checks {
+		budget, ok := absoluteBudgetFor(check.name, contract.AbsoluteBudgets)
+		if !ok || budget.MaxWallTime != check.wall || budget.MaxCommittedBytes != check.memory {
+			t.Fatalf("budget for %s = %+v, found=%t", check.name, budget, ok)
+		}
+	}
+}
+
 func TestApplyOutputThresholdsBlocksGrowthAndFlushSpeedViolations(t *testing.T) {
 	results := []perfharness.CaseResult{
 		outputThresholdCase(100_000, 1, 4*time.Second, 100),
@@ -332,8 +353,8 @@ func TestApplyWorkerParityBlocksTaskOrderDifference(t *testing.T) {
 	t.Parallel()
 
 	results := []perfharness.CaseResult{
-		{Name: "production-workflow/workers-1", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"a", "b"}}, Verdict: perfharness.Verdict{Passed: true}},
-		{Name: "production-workflow/workers-16", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"b", "a"}}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "scan-orchestration/workers-1", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"a", "b"}}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "scan-orchestration/workers-16", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"b", "a"}}, Verdict: perfharness.Verdict{Passed: true}},
 	}
 
 	if applyWorkerParity(results, perfharness.New(), []int{1, 16}) {
@@ -451,10 +472,10 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 				t.Fatalf("rich-deny case failed: %+v", result)
 			}
 		}
-		if result.Name == "production-workflow/crlf/workers-16" && result.Verdict.Passed {
+		if result.Name == "production-workflow/complete/crlf/workers-16" && result.Verdict.Passed {
 			continue
 		}
-		if result.Name == "production-workflow/workers-16" {
+		if result.Name == "production-workflow/complete/workers-16" {
 			if result.FixtureGeneration == nil || len(result.FixtureGeneration.Runs) != 6 {
 				t.Fatalf("workflow fixture-generation metrics = %+v", result.FixtureGeneration)
 			}
@@ -575,13 +596,13 @@ func TestApplyWorkerMemoryThresholdBlocksMoreThanTwentyFivePercentGrowth(t *test
 
 	results := []perfharness.CaseResult{
 		{
-			Name:         "production-workflow/workers-16",
+			Name:         "scan-orchestration/workers-16",
 			ColdStart:    perfharness.Observation{PeakCommittedBytes: 100},
 			SteadyMedian: perfharness.Observation{PeakCommittedBytes: 100},
 			Verdict:      perfharness.Verdict{Passed: true},
 		},
 		{
-			Name:         "production-workflow/workers-256",
+			Name:         "scan-orchestration/workers-256",
 			ColdStart:    perfharness.Observation{PeakCommittedBytes: 126},
 			SteadyMedian: perfharness.Observation{PeakCommittedBytes: 126},
 			Verdict:      perfharness.Verdict{Passed: true},
