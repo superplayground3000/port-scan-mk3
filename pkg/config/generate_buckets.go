@@ -22,6 +22,7 @@ type GenerateBucketsValues struct {
 type generateBucketsState struct {
 	values    GenerateBucketsValues
 	expansion TargetExpansionValues
+	resources ResourceLimitValues
 }
 
 // GenerateBucketsConfig is an opaque configuration for the bucket workflow.
@@ -43,7 +44,17 @@ func NewGenerateBuckets(values GenerateBucketsValues) (GenerateBucketsConfig, er
 	if err := validateWorkers(values.Workers); err != nil {
 		return GenerateBucketsConfig{}, fmt.Errorf("validate workers: %w", err)
 	}
-	return GenerateBucketsConfig{state: &generateBucketsState{values: values, expansion: defaultTargetExpansionValues()}}, nil
+	return GenerateBucketsConfig{state: &generateBucketsState{values: values, expansion: defaultTargetExpansionValues(), resources: defaultResourceLimitValues()}}, nil
+}
+
+// NewGenerateBucketsWithResourceLimits verifies values and keeps explicit limits.
+func NewGenerateBucketsWithResourceLimits(values GenerateBucketsValues, limits ResourceLimitValues) (GenerateBucketsConfig, error) {
+	cfg, err := NewGenerateBuckets(values)
+	if err != nil {
+		return GenerateBucketsConfig{}, err
+	}
+	cfg.state.resources = limits
+	return cfg, nil
 }
 
 // ParseGenerateBuckets parses and verifies the bucket command arguments.
@@ -52,8 +63,12 @@ func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
 	common := commonCLIValues{}
 	values := GenerateBucketsValues{}
 	expansionFlags := targetExpansionFlagValues{}
+	resourceFlags := defaultResourceLimitFlagValues()
 	registerCommonFlags(fs, &common)
 	registerTargetExpansionFlags(fs, &expansionFlags)
+	registerCIDRLimitFlags(fs, &resourceFlags)
+	registerPortLimitFlags(fs, &resourceFlags)
+	registerSnapshotLimitFlags(fs, &resourceFlags)
 	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&values.ProgressInterval, "progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path")
@@ -70,6 +85,10 @@ func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
 	if err != nil {
 		return GenerateBucketsConfig{}, err
 	}
+	resources, err := resourceFlags.resolve()
+	if err != nil {
+		return GenerateBucketsConfig{}, fmt.Errorf("validate resource limits: %w", err)
+	}
 	values.CIDRFile = common.cidrFile
 	values.CIDRIPCol = common.cidrIPCol
 	values.CIDRIPCidrCol = common.cidrIPCidrCol
@@ -78,7 +97,16 @@ func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
 		return GenerateBucketsConfig{}, fmt.Errorf("validate generate-buckets arguments: %w", err)
 	}
 	cfg.state.expansion = expansion
+	cfg.state.resources = resources
 	return cfg, nil
+}
+
+// ResolveResourceLimits returns the verified input and snapshot limits.
+func (c GenerateBucketsConfig) ResolveResourceLimits() (ResourceLimitValues, error) {
+	if c.state == nil {
+		return ResourceLimitValues{}, ErrUninitializedConfiguration
+	}
+	return c.state.resources, nil
 }
 
 // Resolve returns the values for the bucket workflow.

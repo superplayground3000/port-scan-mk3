@@ -123,6 +123,16 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | `ip` / `ip_cidr` | All commands. Case-sensitive column mapping. |
 | `-target-count-limit` | `10000000` | All commands. Maximum candidate addresses. `0` disables this limit. |
 | `-target-memory-limit-gb` | `16` | All commands. Target expansion budget in decimal GB. `0` disables this limit. |
+| `-cidr-input-size-limit-gb` | `1` | All commands. Maximum CIDR input size in decimal GB. |
+| `-cidr-input-record-limit` | `10000000` | All commands. Maximum CIDR data records. |
+| `-port-input-size-limit-mb` | `1` | `validate`, `generate-buckets`, and `scan`. Maximum port input size in decimal MB. |
+| `-port-input-record-limit` | `65535` | `validate`, `generate-buckets`, and `scan`. Maximum nonblank port records. |
+| `-snapshot-size-limit-gb` | `2` | `generate-buckets` and `scan`. Maximum snapshot load and save size in decimal GB. |
+| `-snapshot-chunk-limit` | `10000000` | `generate-buckets` and `scan`. Maximum snapshot chunks. |
+| `-snapshot-port-entry-limit` | `10000000` | `generate-buckets` and `scan`. Maximum port entries across all chunks. |
+| `-snapshot-unreachable-ip-limit` | `10000000` | `generate-buckets` and `scan`. Maximum unreachable IPs. |
+| `-pressure-response-size-limit-mb` | `1` | `scan` only. Maximum size of each pressure response in decimal MB. |
+| `-pressure-response-entry-limit` | `10000` | `scan` only. Maximum entries in each OAuth data array. |
 | `-pre-scan-ping-timeout` | `100ms` | `pre-ping` only. Ping reply-wait timeout (must be > 0). Removed from `scan`. |
 | `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `pre-ping` output) whose `ip` column is subtracted. |
 | `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
@@ -223,6 +233,30 @@ Available memory, address space, and operating-system policy then limit the comm
 The `pkg/task` expansion-limits module owns counting, estimation, overflow checks, and limit errors.
 Configuration parsers adapt CLI values to this module.
 Workflows supply authorized rows and do not copy the limit rules.
+
+### Data Resource Limits
+
+Each parser or decoder owns its data policy.
+Workflow configuration supplies verified values to that module.
+
+File adapters use metadata for an early size rejection.
+Bounded readers also reject the first byte more than the limit.
+
+The CIDR record count excludes the header and blank records.
+The port record count includes duplicate nonblank records.
+
+Snapshot loading and saving use the same effective limits.
+A failed replacement keeps the previous snapshot unchanged.
+A failed new save leaves no snapshot file.
+
+Pressure adapters apply the byte limit to each HTTP response.
+They use `Content-Length` for an early rejection and enforce the stream limit.
+The OAuth data decoder processes entries incrementally.
+
+A positive flag value replaces its default.
+A value of `0` disables only that limit.
+
+CAUTION: A disabled limit can exhaust memory or terminate the process.
 
 ## Output Formats
 

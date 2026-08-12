@@ -29,11 +29,42 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
+
+const (
+	// DefaultSnapshotSizeLimitBytes is the default serialized snapshot size.
+	DefaultSnapshotSizeLimitBytes uint64 = 2_000_000_000
+	// DefaultSnapshotChunkLimit is the default number of chunks in a snapshot.
+	DefaultSnapshotChunkLimit uint64 = 10_000_000
+	// DefaultSnapshotPortEntryLimit is the default port-entry count across chunks.
+	DefaultSnapshotPortEntryLimit uint64 = 10_000_000
+	// DefaultSnapshotUnreachableIPLimit is the default unreachable-IP count.
+	DefaultSnapshotUnreachableIPLimit uint64 = 10_000_000
+)
+
+// SnapshotLimits controls serialized bytes and decoded object counts.
+// A zero value disables only that limit.
+type SnapshotLimits struct {
+	MaxBytes          uint64
+	MaxChunks         uint64
+	MaxPortEntries    uint64
+	MaxUnreachableIPs uint64
+}
+
+// DefaultSnapshotLimits returns the default snapshot limits.
+func DefaultSnapshotLimits() SnapshotLimits {
+	return SnapshotLimits{
+		MaxBytes:          DefaultSnapshotSizeLimitBytes,
+		MaxChunks:         DefaultSnapshotChunkLimit,
+		MaxPortEntries:    DefaultSnapshotPortEntryLimit,
+		MaxUnreachableIPs: DefaultSnapshotUnreachableIPLimit,
+	}
+}
 
 // PreScanPingState stores the pre-scan ping metadata persisted in resume state.
 type PreScanPingState struct {
@@ -114,7 +145,16 @@ var fileOps = defaultSnapshotFileOps()
 
 // SaveSnapshot writes resume state as the current JSON envelope.
 func SaveSnapshot(path string, snap Snapshot) error {
+	return SaveSnapshotWithLimits(path, snap, DefaultSnapshotLimits())
+}
+
+// SaveSnapshotWithLimits writes a snapshot when its bytes and object counts fit.
+// A limit failure occurs before a temporary file is created.
+func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) error {
 	_, previousStatErr := os.Stat(path)
+	if err := validateSnapshotLimits(path, snap, limits); err != nil {
+		return err
+	}
 	env := snapshotEnvelope{
 		Chunks:           &snap.Chunks,
 		RichDenyExcluded: snap.RichDenyExcluded,
@@ -140,6 +180,9 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return err
+	}
+	if limits.MaxBytes > 0 && uint64(len(data)) > limits.MaxBytes {
+		return snapshotLimitError(path, "serialized bytes", uint64(len(data)), limits.MaxBytes, "-snapshot-size-limit-gb")
 	}
 	if err := writeFileViaTempRename(path, data, snapshotFileMode); err != nil {
 		switch {
@@ -236,9 +279,35 @@ func destinationMode(path string, fallback os.FileMode) os.FileMode {
 // LoadSnapshot reads the resume state from the current envelope or from the
 // legacy JSON array of chunks.
 func LoadSnapshot(path string) (Snapshot, error) {
-	data, err := os.ReadFile(path)
+	return LoadSnapshotWithLimits(path, DefaultSnapshotLimits())
+}
+
+// LoadSnapshotWithLimits reads a snapshot with byte and decoded-object limits.
+func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error) {
+	if limits.MaxBytes > 0 {
+		info, err := os.Stat(path)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if info.Size() >= 0 && uint64(info.Size()) > limits.MaxBytes {
+			return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(info.Size()), limits.MaxBytes, "-snapshot-size-limit-gb")
+		}
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	defer func() { _ = f.Close() }()
+	var reader io.Reader = f
+	if limits.MaxBytes > 0 && limits.MaxBytes < math.MaxInt64 {
+		reader = io.LimitReader(f, int64(limits.MaxBytes)+1)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if limits.MaxBytes > 0 && uint64(len(data)) > limits.MaxBytes {
+		return Snapshot{}, snapshotLimitError(path, "input bytes", uint64(len(data)), limits.MaxBytes, "-snapshot-size-limit-gb")
 	}
 
 	trimmed := bytes.TrimSpace(data)
@@ -252,7 +321,11 @@ func LoadSnapshot(path string) (Snapshot, error) {
 		if err := decodeStrictJSON(trimmed, &chunks); err != nil {
 			return Snapshot{}, err
 		}
-		return Snapshot{Chunks: chunks}, nil
+		snap := Snapshot{Chunks: chunks}
+		if err := validateSnapshotLimits(path, snap, limits); err != nil {
+			return Snapshot{}, err
+		}
+		return snap, nil
 	case '{':
 		var env snapshotEnvelope
 		if err := decodeStrictJSON(trimmed, &env); err != nil {
@@ -286,10 +359,40 @@ func LoadSnapshot(path string) (Snapshot, error) {
 			out := *env.Output
 			snap.Output = &out
 		}
+		if err := validateSnapshotLimits(path, snap, limits); err != nil {
+			return Snapshot{}, err
+		}
 		return snap, nil
 	default:
 		return Snapshot{}, fmt.Errorf("invalid resume snapshot root token %q", trimmed[0])
 	}
+}
+
+func validateSnapshotLimits(path string, snap Snapshot, limits SnapshotLimits) error {
+	chunkCount := uint64(len(snap.Chunks))
+	if limits.MaxChunks > 0 && chunkCount > limits.MaxChunks {
+		return snapshotLimitError(path, "chunks", chunkCount, limits.MaxChunks, "-snapshot-chunk-limit")
+	}
+	var portCount uint64
+	for _, chunk := range snap.Chunks {
+		entryCount := uint64(len(chunk.Ports))
+		if portCount > math.MaxUint64-entryCount {
+			return fmt.Errorf("snapshot %s port entries overflow the supported count; use -snapshot-port-entry-limit only for representable counts", path)
+		}
+		portCount += entryCount
+		if limits.MaxPortEntries > 0 && portCount > limits.MaxPortEntries {
+			return snapshotLimitError(path, "port entries", portCount, limits.MaxPortEntries, "-snapshot-port-entry-limit")
+		}
+	}
+	unreachableCount := uint64(len(snap.PreScanPing.UnreachableIPv4U32))
+	if limits.MaxUnreachableIPs > 0 && unreachableCount > limits.MaxUnreachableIPs {
+		return snapshotLimitError(path, "unreachable IPs", unreachableCount, limits.MaxUnreachableIPs, "-snapshot-unreachable-ip-limit")
+	}
+	return nil
+}
+
+func snapshotLimitError(path, objectType string, count, limit uint64, flagName string) error {
+	return fmt.Errorf("snapshot %s object type %s has known count %d above limit %d; use %s to override it", path, objectType, count, limit, flagName)
 }
 
 func hasPreScanPingState(state PreScanPingState) bool {

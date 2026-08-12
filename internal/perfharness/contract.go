@@ -90,7 +90,9 @@ type Contract struct {
 // DefaultContract returns the complete approved performance matrix.
 func DefaultContract() Contract {
 	fixtures := []FixtureSpec{
-		{Family: FamilyRecordHeavy, Scale: Scale{InputRecords: FullItemCount}, Seed: DefaultGeneratorSeed},
+		{Family: FamilyRecordHeavy, Shape: "one-megabyte", Scale: Scale{InputRecords: 10_000, TargetBytes: 1_000_000}, Seed: DefaultGeneratorSeed},
+		{Family: FamilyRecordHeavy, Shape: "ten-megabytes", Scale: Scale{InputRecords: 100_000, TargetBytes: 10_000_000}, Seed: DefaultGeneratorSeed},
+		{Family: FamilyRecordHeavy, Shape: "one-hundred-megabytes", Scale: Scale{InputRecords: 1_000_000, TargetBytes: 100_000_000}, Seed: DefaultGeneratorSeed},
 		{Family: FamilyRecordHeavy, Shape: "one-gigabyte", Scale: Scale{InputRecords: FullItemCount, TargetBytes: 1_000_000_000}, Seed: DefaultGeneratorSeed},
 		{Family: FamilyCandidateHeavy, Scale: Scale{CandidateAddresses: FullItemCount}, Seed: DefaultGeneratorSeed},
 		{Family: FamilyPortHeavy, Scale: Scale{ProbeTasks: 65_535}, Seed: DefaultGeneratorSeed},

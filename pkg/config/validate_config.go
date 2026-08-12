@@ -28,6 +28,7 @@ type ValidateValues struct {
 type validateState struct {
 	values    ValidateValues
 	expansion TargetExpansionValues
+	resources ResourceLimitValues
 }
 
 type validateCompatibilityValues struct {
@@ -61,7 +62,17 @@ func NewValidate(values ValidateValues) (ValidateConfig, error) {
 	if values.Format != "human" && values.Format != "json" {
 		return ValidateConfig{}, errors.New("-format must be human or json")
 	}
-	return ValidateConfig{state: &validateState{values: values, expansion: defaultTargetExpansionValues()}}, nil
+	return ValidateConfig{state: &validateState{values: values, expansion: defaultTargetExpansionValues(), resources: defaultResourceLimitValues()}}, nil
+}
+
+// NewValidateWithResourceLimits verifies values and keeps explicit input limits.
+func NewValidateWithResourceLimits(values ValidateValues, limits ResourceLimitValues) (ValidateConfig, error) {
+	cfg, err := NewValidate(values)
+	if err != nil {
+		return ValidateConfig{}, err
+	}
+	cfg.state.resources = limits
+	return cfg, nil
 }
 
 // ParseValidate parses arguments and returns an opaque validate configuration.
@@ -74,8 +85,11 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	values := ValidateValues{}
 	compatibility := validateCompatibilityValues{}
 	expansionFlags := targetExpansionFlagValues{}
+	resourceFlags := defaultResourceLimitFlagValues()
 	registerCommonFlags(fs, &common)
 	registerTargetExpansionFlags(fs, &expansionFlags)
+	registerCIDRLimitFlags(fs, &resourceFlags)
+	registerPortLimitFlags(fs, &resourceFlags)
 	fs.IntVar(&compatibility.workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&compatibility.bucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
 	fs.IntVar(&compatibility.bucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
@@ -112,6 +126,10 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	if err := compatibility.validate(); err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate compatibility flags: %w", err)
 	}
+	resources, err := resourceFlags.resolve()
+	if err != nil {
+		return ValidateConfig{}, fmt.Errorf("validate resource limits: %w", err)
+	}
 	values.CIDRFile = common.cidrFile
 	values.CIDRIPCol = common.cidrIPCol
 	values.CIDRIPCidrCol = common.cidrIPCidrCol
@@ -121,7 +139,16 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 		return ValidateConfig{}, fmt.Errorf("validate arguments: %w", err)
 	}
 	cfg.state.expansion = expansion
+	cfg.state.resources = resources
 	return cfg, nil
+}
+
+// ResolveResourceLimits returns the verified input limits.
+func (c ValidateConfig) ResolveResourceLimits() (ResourceLimitValues, error) {
+	if c.state == nil {
+		return ResourceLimitValues{}, ErrUninitializedConfiguration
+	}
+	return c.state.resources, nil
 }
 
 func (v validateCompatibilityValues) validate() error {

@@ -225,6 +225,19 @@ func writeRichCSV(ctx context.Context, output io.Writer, spec FixtureSpec) error
 	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("write rich fixture header: %w", err)
 	}
+	serviceLabel := "service"
+	if spec.Scale.InputRecords > 0 && spec.Scale.TargetBytes > 0 {
+		bytesPerRecord := spec.Scale.TargetBytes / spec.Scale.InputRecords
+		const estimatedFixedRichRecordBytes = uint64(130)
+		if bytesPerRecord > estimatedFixedRichRecordBytes {
+			padding := bytesPerRecord - estimatedFixedRichRecordBytes
+			maxInt := uint64(^uint(0) >> 1)
+			if padding > maxInt {
+				return fmt.Errorf("rich fixture padding exceeds the addressable integer range")
+			}
+			serviceLabel += strings.Repeat("x", int(padding))
+		}
+	}
 	for index := uint64(0); index < spec.Scale.InputRecords; index++ {
 		if index%4_096 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -253,7 +266,7 @@ func writeRichCSV(ctx context.Context, output io.Writer, spec FixtureSpec) error
 			reason = "PRECHECK_ALLOW_ALL"
 			destinationSegment = destination + "/32"
 		}
-		row := []string{"127.0.0.1", "127.0.0.0/8", destination, destinationSegment, "service", "tcp", "443", decision, fmt.Sprintf("policy-%d", index%16), reason}
+		row := []string{"127.0.0.1", "127.0.0.0/8", destination, destinationSegment, serviceLabel, "tcp", "443", decision, fmt.Sprintf("policy-%d", index%16), reason}
 		if err := writer.Write(row); err != nil {
 			return fmt.Errorf("write rich fixture record: %w", err)
 		}

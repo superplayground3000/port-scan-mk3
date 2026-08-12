@@ -19,6 +19,8 @@ type inputConfiguration struct {
 	cidrIPCidrCol    string
 	portFile         string
 	allowMissingPort bool
+	cidrLimits       input.CIDRLimits
+	portLimits       input.PortLimits
 }
 
 func loadRunInputs(cfg inputConfiguration, deps runDependencies) (runInputs, error) {
@@ -30,7 +32,9 @@ func loadRunInputsContext(ctx context.Context, cfg inputConfiguration, deps runD
 		cidrRecords []input.CIDRRecord
 		err         error
 	)
-	if deps.loadCIDRRecordsContext != nil {
+	if deps.loadCIDRRecordsWithLimitsContext != nil {
+		cidrRecords, err = deps.loadCIDRRecordsWithLimitsContext(ctx, cfg.cidrFile, cfg.cidrIPCol, cfg.cidrIPCidrCol, cfg.cidrLimits)
+	} else if deps.loadCIDRRecordsContext != nil {
 		cidrRecords, err = deps.loadCIDRRecordsContext(ctx, cfg.cidrFile, cfg.cidrIPCol, cfg.cidrIPCidrCol)
 	} else {
 		if err := ctx.Err(); err != nil {
@@ -57,7 +61,9 @@ func loadRunInputsContext(ctx context.Context, cfg inputConfiguration, deps runD
 		return runInputs{}, fmt.Errorf("-port-file is required when cidr input is not rich mode")
 	}
 	var portSpecs []input.PortSpec
-	if deps.loadPortSpecsContext != nil {
+	if deps.loadPortSpecsWithLimitsContext != nil {
+		portSpecs, err = deps.loadPortSpecsWithLimitsContext(ctx, cfg.portFile, cfg.portLimits)
+	} else if deps.loadPortSpecsContext != nil {
 		portSpecs, err = deps.loadPortSpecsContext(ctx, cfg.portFile)
 	} else {
 		if err := ctx.Err(); err != nil {
@@ -87,6 +93,17 @@ func loadPrePingInputs(cidrFile, cidrIPCol, cidrIPCidrCol string, deps runDepend
 		return runInputs{}, err
 	}
 	return runInputs{cidrRecords: cidrRecords, portSpecs: nil}, nil
+}
+
+func loadPrePingInputsContext(ctx context.Context, cidrFile, cidrIPCol, cidrIPCidrCol string, limits input.CIDRLimits, deps runDependencies) (runInputs, error) {
+	if deps.loadCIDRRecordsWithLimitsContext != nil {
+		cidrRecords, err := deps.loadCIDRRecordsWithLimitsContext(ctx, cidrFile, cidrIPCol, cidrIPCidrCol, limits)
+		if err != nil {
+			return runInputs{}, err
+		}
+		return runInputs{cidrRecords: cidrRecords}, nil
+	}
+	return loadPrePingInputs(cidrFile, cidrIPCol, cidrIPCidrCol, deps)
 }
 
 func readCIDRFile(path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error) {

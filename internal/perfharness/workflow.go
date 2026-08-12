@@ -60,6 +60,16 @@ type RichSpec struct {
 	Family    Family `json:"family"`
 }
 
+// RichOversizeSpec defines one oversized rich-input correctness case.
+type RichOversizeSpec struct {
+	OutputDir   string `json:"output_dir"`
+	Items       uint64 `json:"items"`
+	Workers     int    `json:"workers"`
+	TargetBytes uint64 `json:"target_bytes"`
+	LimitBytes  uint64 `json:"limit_bytes"`
+	Case        string `json:"case"`
+}
+
 // ResumeSpec defines one bounded production resume-rebuild run.
 type ResumeSpec struct {
 	OutputDir        string `json:"output_dir"`
@@ -198,7 +208,62 @@ func (Suite) RunRichSmoke(ctx context.Context, spec RichSpec) (WorkflowResult, e
 	})
 }
 
+// RunRichOversizeCase proves default rejection and positive-override completion.
+func (suite Suite) RunRichOversizeCase(ctx context.Context, spec RichOversizeSpec) (CaseResult, error) {
+	if spec.Items == 0 || spec.TargetBytes <= spec.LimitBytes || spec.LimitBytes == 0 {
+		return CaseResult{}, fmt.Errorf("rich oversize case requires items and target bytes above a positive limit")
+	}
+	if spec.Case != "default-reject" && spec.Case != "override-complete" {
+		return CaseResult{}, fmt.Errorf("unsupported rich oversize case %q", spec.Case)
+	}
+	observations := make([]Observation, 0, 6)
+	for run := 0; run < 6; run++ {
+		runDir := filepath.Join(spec.OutputDir, fmt.Sprintf("run-%d", run))
+		observation, err := suite.Measure(ctx, spec.TargetBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
+			limits := config.DefaultResourceLimitValues()
+			limits.CIDR.MaxBytes = spec.LimitBytes
+			if spec.Case == "override-complete" {
+				limits.CIDR.MaxBytes = spec.TargetBytes * 2
+			}
+			result, runErr := runRichProductionWithLimits(runCtx, runDir, spec.Items, spec.Workers, FixtureSpec{
+				Family: FamilyRichHotKey,
+				Scale:  Scale{InputRecords: spec.Items, TargetBytes: spec.TargetBytes},
+				Seed:   DefaultGeneratorSeed,
+			}, &limits)
+			if spec.Case == "default-reject" {
+				if runErr == nil || !strings.Contains(runErr.Error(), "-cidr-input-size-limit-gb") {
+					return 0, fmt.Errorf("default rich input limit did not reject the oversized fixture: %v", runErr)
+				}
+				return 0, nil
+			}
+			if runErr != nil {
+				return 0, runErr
+			}
+			if !result.SnapshotCompleted || result.ProbeCount == 0 || result.ScanRows != result.ProbeCount {
+				return 0, fmt.Errorf("override workflow result is incomplete: %+v", result)
+			}
+			return result.Stage.OutputBytes, nil
+		})
+		if err != nil {
+			return CaseResult{}, fmt.Errorf("run rich oversize %s observation %d: %w", spec.Case, run+1, err)
+		}
+		observations = append(observations, observation)
+	}
+	result, err := SummarizeCase("rich-oversize/"+spec.Case, observations)
+	if err != nil {
+		return CaseResult{}, err
+	}
+	result.Correctness = Correctness{ExpectedValues: true, Detail: "oversized rich input matched the configured limit policy"}
+	result.Verdict = Verdict{Passed: true}
+	result.Semantic = &SemanticArtifact{Status: "passed"}
+	return result, nil
+}
+
 func runRichProduction(ctx context.Context, outputDir string, items uint64, workers int, fixture FixtureSpec) (WorkflowResult, error) {
+	return runRichProductionWithLimits(ctx, outputDir, items, workers, fixture, nil)
+}
+
+func runRichProductionWithLimits(ctx context.Context, outputDir string, items uint64, workers int, fixture FixtureSpec, resourceLimits *config.ResourceLimitValues) (WorkflowResult, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich workflow directory: %w", err)
 	}
@@ -231,6 +296,13 @@ func runRichProduction(ctx context.Context, outputDir string, items uint64, work
 		PingTimeout:      time.Second,
 		ProgressInterval: int(items) + 1,
 	})
+	if err == nil && resourceLimits != nil {
+		prePingConfig, err = config.NewPrePingWithResourceLimits(config.PrePingValues{
+			CIDRFile: manifest.ArtifactPath, CIDRIPCol: "src_ip", CIDRIPCidrCol: "src_network_segment",
+			Output: filepath.Join(prePingDir, "results.csv"), Workers: workers, PingTimeout: time.Second,
+			ProgressInterval: int(items) + 1,
+		}, *resourceLimits)
+	}
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny pre-ping configuration: %w", err)
 	}
@@ -242,6 +314,12 @@ func runRichProduction(ctx context.Context, outputDir string, items uint64, work
 		Workers:          workers,
 		ProgressInterval: int(items) + 1,
 	})
+	if err == nil && resourceLimits != nil {
+		bucketConfig, err = config.NewGenerateBucketsWithResourceLimits(config.GenerateBucketsValues{
+			CIDRFile: manifest.ArtifactPath, CIDRIPCol: "src_ip", CIDRIPCidrCol: "src_network_segment",
+			SnapshotOutput: snapshotPath, Workers: workers, ProgressInterval: int(items) + 1,
+		}, *resourceLimits)
+	}
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny bucket configuration: %w", err)
 	}
@@ -261,6 +339,14 @@ func runRichProduction(ctx context.Context, outputDir string, items uint64, work
 		Quiet:              true,
 		Pressure:           config.PressureDisabled(),
 	})
+	if err == nil && resourceLimits != nil {
+		scanConfig, err = config.NewScanWithResourceLimits(config.ScanValues{
+			CIDRFile: manifest.ArtifactPath, CIDRIPCol: "src_ip", CIDRIPCidrCol: "src_network_segment",
+			ResumeInput: snapshotPath, Output: filepath.Join(outputDir, "results.csv"), OutputFlushResults: 1000,
+			Workers: workers, DialTimeout: time.Second, BucketRate: ratelimit.MaxRate, BucketCapacity: ratelimit.MaxCapacity,
+			LogLevel: "error", Format: "json", Quiet: true, Pressure: config.PressureDisabled(),
+		}, *resourceLimits)
+	}
 	if err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich-deny scan configuration: %w", err)
 	}

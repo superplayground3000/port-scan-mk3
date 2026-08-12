@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
@@ -26,7 +27,9 @@ type Harness interface {
 	RunResumeSmoke(context.Context, ResumeSpec) (WorkflowResult, error)
 	RunFailureSmoke(context.Context, FailureSpec) (FailureResult, error)
 	RunRichSmoke(context.Context, RichSpec) (WorkflowResult, error)
+	RunRichOversizeCase(context.Context, RichOversizeSpec) (CaseResult, error)
 	RunTargetLimitCase(context.Context, TargetLimitSpec) (CaseResult, error)
+	RunResourceLimitCase(context.Context, ResourceLimitSpec) (CaseResult, error)
 	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
 	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
 	RunOutputCase(context.Context, OutputSpec) (CaseResult, error)
@@ -105,18 +108,26 @@ func runFixtureProductionStage(ctx context.Context, suite Suite, spec FixtureSpe
 	if err := suite.Validate(manifest); err != nil {
 		return 0, err
 	}
+	if spec.Family == FamilyRecordHeavy {
+		rows, err := input.LoadCIDRsFileWithColumnsContext(ctx, manifest.ArtifactPath, "ip", "ip_cidr", input.CIDRLimits{})
+		if err != nil {
+			return 0, fmt.Errorf("load production CIDR fixture: %w", err)
+		}
+		return uint64(len(rows)), nil
+	}
 	if spec.Family != FamilySnapshotHeavy && spec.Family != FamilyResumeHeavy {
 		return 0, nil
 	}
-	snapshot, err := state.LoadSnapshot(manifest.ArtifactPath)
+	disabledLimits := state.SnapshotLimits{}
+	snapshot, err := state.LoadSnapshotWithLimits(manifest.ArtifactPath, disabledLimits)
 	if err != nil {
 		return 0, fmt.Errorf("load production snapshot fixture: %w", err)
 	}
 	roundtripPath := filepath.Join(filepath.Dir(manifest.ArtifactPath), "roundtrip.json")
-	if err := state.SaveSnapshot(roundtripPath, snapshot); err != nil {
+	if err := state.SaveSnapshotWithLimits(roundtripPath, snapshot, disabledLimits); err != nil {
 		return 0, fmt.Errorf("save production snapshot fixture: %w", err)
 	}
-	if _, err := state.LoadSnapshot(roundtripPath); err != nil {
+	if _, err := state.LoadSnapshotWithLimits(roundtripPath, disabledLimits); err != nil {
 		return 0, fmt.Errorf("reload production snapshot fixture: %w", err)
 	}
 	info, err := os.Stat(roundtripPath)

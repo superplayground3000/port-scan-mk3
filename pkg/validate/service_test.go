@@ -193,3 +193,27 @@ func TestInputs_TargetCountOverrideAndBypass(t *testing.T) {
 		t.Fatalf("Inputs(bypass) = %+v, want valid", result)
 	}
 }
+
+func TestInputs_AppliesCIDRAndPortRecordLimits(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cidrPath := filepath.Join(dir, "cidr.csv")
+	portPath := filepath.Join(dir, "ports.csv")
+	if err := os.WriteFile(cidrPath, []byte("ip,ip_cidr\n192.0.2.1,192.0.2.0/24\n192.0.2.2,192.0.2.0/24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portPath, []byte("80/tcp\n443/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, flagName := range []string{"-cidr-input-record-limit", "-port-input-record-limit"} {
+		cfg, err := config.ParseValidate([]string{"-cidr-file", cidrPath, "-port-file", portPath, flagName, "1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := Inputs(cfg)
+		if result.Valid || !strings.Contains(result.Detail, flagName) {
+			t.Fatalf("Inputs(%s) = %+v, want limit failure", flagName, result)
+		}
+	}
+}

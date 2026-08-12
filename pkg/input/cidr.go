@@ -71,7 +71,7 @@ import (
 //	defer f.Close()
 //	records, err := input.LoadCIDRs(f)
 func LoadCIDRs(r io.Reader) ([]CIDRRecord, error) {
-	return LoadCIDRsWithColumns(r, "ip", "ip_cidr")
+	return LoadCIDRsWithColumnsContextAndLimits(context.Background(), r, "ip", "ip_cidr", DefaultCIDRLimits(""))
 }
 
 // LoadCIDRsWithColumns loads CIDR records from a CSV reader. The caller gives the
@@ -98,15 +98,26 @@ func LoadCIDRs(r io.Reader) ([]CIDRRecord, error) {
 //
 //	records, err := input.LoadCIDRsWithColumns(os.Stdin, "ip", "ip_cidr")
 func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
-	return LoadCIDRsWithColumnsContext(context.Background(), r, ipCol, ipCidrCol)
+	return LoadCIDRsWithColumnsContextAndLimits(context.Background(), r, ipCol, ipCidrCol, DefaultCIDRLimits(""))
 }
 
 // LoadCIDRsWithColumnsContext loads CIDR records and stops at a row transition
 // when ctx is canceled. The function reads the context before each CSV row,
 // parse step, and validation step.
 func LoadCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
+	return LoadCIDRsWithColumnsContextAndLimits(ctx, r, ipCol, ipCidrCol, DefaultCIDRLimits(""))
+}
+
+// LoadCIDRsWithColumnsContextAndLimits loads CIDR records with byte and data-record limits.
+// A zero limit disables only that limit.
+func LoadCIDRsWithColumnsContextAndLimits(ctx context.Context, r io.Reader, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
+	limited := limitInputReader(r, limits.Path, "CIDR", "-cidr-input-size-limit-gb", limits.MaxBytes)
+	return parseCIDRsWithColumnsContext(ctx, limited, ipCol, ipCidrCol, limits)
+}
+
+func parseCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
 	cr := csv.NewReader(r)
-	rows, err := readCSVRowsContext(ctx, cr)
+	rows, err := readCSVRowsContext(ctx, cr, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +199,7 @@ func LoadCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidr
 	return out, nil
 }
 
-func readCSVRowsContext(ctx context.Context, reader *csv.Reader) ([][]string, error) {
+func readCSVRowsContext(ctx context.Context, reader *csv.Reader, limits CIDRLimits) ([][]string, error) {
 	rows := make([][]string, 0)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -200,6 +211,9 @@ func readCSVRowsContext(ctx context.Context, reader *csv.Reader) ([][]string, er
 		}
 		if err != nil {
 			return nil, err
+		}
+		if len(rows) > 0 && limits.MaxRecords > 0 && uint64(len(rows)) > limits.MaxRecords {
+			return nil, fmt.Errorf("CIDR input %s record %d makes count %d exceed limit %d; use -cidr-input-record-limit to override it", displayPath(limits.Path), len(rows)+1, len(rows), limits.MaxRecords)
 		}
 		rows = append(rows, row)
 	}

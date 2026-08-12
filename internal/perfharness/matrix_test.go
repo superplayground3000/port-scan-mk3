@@ -59,3 +59,20 @@ func TestRunFixtureCaseSeparatesGenerationAndUsesProductionSnapshotRoundTrip(t *
 		t.Fatalf("retained production round trip: %v", err)
 	}
 }
+
+func TestRunFixtureCaseUsesProductionCIDRLoader(t *testing.T) {
+	t.Parallel()
+
+	result, err := perfharness.New().RunFixtureCase(context.Background(), filepath.Join(t.TempDir(), "cidr case"), perfharness.FixtureSpec{
+		Family: perfharness.FamilyRecordHeavy,
+		Shape:  "one-megabyte",
+		Scale:  perfharness.Scale{InputRecords: 10, TargetBytes: 1_000},
+		Seed:   perfharness.DefaultGeneratorSeed,
+	})
+	if err != nil {
+		t.Fatalf("RunFixtureCase: %v", err)
+	}
+	if result.SteadyMedian.OutputBytes != 10 {
+		t.Fatalf("production CIDR rows = %d, want 10", result.SteadyMedian.OutputBytes)
+	}
+}

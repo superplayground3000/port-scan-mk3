@@ -40,3 +40,21 @@ func TestRunTargetLimitCaseExecutesEveryRequiredBypassKind(t *testing.T) {
 		}
 	}
 }
+
+func TestRunResourceLimitCaseExecutesEveryNonTargetFlagAndBypassKind(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	flags := perfharness.DefaultContract().Limits[2:]
+	for _, limit := range flags {
+		for _, bypass := range limit.Cases {
+			result, err := harness.RunResourceLimitCase(context.Background(), perfharness.ResourceLimitSpec{Flag: limit.Flag, Case: bypass})
+			if err != nil {
+				t.Fatalf("flag=%s case=%s: %v", limit.Flag, bypass.Kind, err)
+			}
+			if !result.Verdict.Passed || !result.Correctness.ExpectedValues || len(result.Runs) != 6 {
+				t.Fatalf("flag=%s case=%s result=%+v", limit.Flag, bypass.Kind, result)
+			}
+		}
+	}
+}

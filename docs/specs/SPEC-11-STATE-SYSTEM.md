@@ -53,6 +53,8 @@ and `timeout_ms`.
 
 ```go
 func SaveSnapshot(path string, snapshot Snapshot) error
+func SaveSnapshotWithLimits(path string, snapshot Snapshot, limits SnapshotLimits) error
+func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error)
 ```
 
 The save operation creates a temporary file in the destination directory. It
@@ -129,3 +131,12 @@ If an unmarked snapshot has rich deny input, `scan` rejects it before TCP dispat
 | `pkg/scanapp/scan_runtime.go` | Snapshot load and lifecycle order |
 | `pkg/scanapp/resume_manager.go` | Rewind and save decision |
 | `pkg/scanapp/output_path_upgrade.go` | Legacy relative output paths |
+
+## 10. Resource limits
+
+The default byte limit is `2000000000` bytes.
+The default limits for chunks, port entries, and unreachable IPs are each `10000000`.
+
+Loading and saving use the same effective values.
+A zero field disables only that limit.
+The snapshot does not store these values.

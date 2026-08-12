@@ -53,6 +53,15 @@ services:
     networks:
       e2e-net: {}
 
+  pressure-api-oversize:
+    build:
+      context: ..
+      dockerfile: e2e/mock-pressure-api/Dockerfile
+    environment:
+      MODE: oversize
+    networks:
+      e2e-net: {}
+
   pressure-api-auth:
     build:
       context: ..

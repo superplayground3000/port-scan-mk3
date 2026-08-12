@@ -117,6 +117,27 @@ A legacy snapshot uses the defaults.
 CAUTION: Set both flags to `0` only when the host has sufficient memory.
 With this setting, no hidden target limit protects the process from resource exhaustion.
 
+### Input, snapshot, and pressure limits
+
+The CIDR input defaults are `1` decimal GB and `10000000` data records.
+Use `-cidr-input-size-limit-gb` and `-cidr-input-record-limit` to change them.
+
+The port input defaults are `1` decimal MB and `65535` nonblank records.
+Use `-port-input-size-limit-mb` and `-port-input-record-limit` to change them.
+
+The snapshot defaults are `2` decimal GB and `10000000` items for each object type.
+The object types are chunks, port entries, and unreachable IPs.
+Use the four `-snapshot-*-limit` flags to change these values.
+
+Each pressure response defaults to `1` decimal MB.
+Each OAuth data array defaults to `10000` entries.
+Use `-pressure-response-size-limit-mb` and `-pressure-response-entry-limit` to change them.
+
+A positive value replaces its default. A negative value is an error.
+Set one flag to `0` to disable only that limit.
+
+CAUTION: A disabled limit can exhaust memory or terminate the process.
+
 ## Input Formats
 
 ### Basic Mode: CIDR CSV

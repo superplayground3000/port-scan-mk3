@@ -16,6 +16,7 @@ import (
 type scanRuntimeInput struct {
 	values                   config.ScanValues
 	targetExpansion          config.TargetExpansionValues
+	resourceLimits           config.ResourceLimitValues
 	pressure                 config.PressureValues
 	stdout                   io.Writer
 	stderr                   io.Writer
@@ -72,12 +73,14 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		cidrIPCidrCol:    cfg.CIDRIPCidrCol,
 		portFile:         cfg.PortFile,
 		allowMissingPort: true,
+		cidrLimits:       r.input.resourceLimits.CIDR,
+		portLimits:       r.input.resourceLimits.Port,
 	}, r.adapters.deps)
 	if err != nil {
 		return err
 	}
 
-	snapshot, err := state.LoadSnapshot(cfg.ResumeInput)
+	snapshot, err := state.LoadSnapshotWithLimits(cfg.ResumeInput, r.input.resourceLimits.Snapshot)
 	if err != nil {
 		return err
 	}
@@ -308,7 +311,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
 	snapshotStartedAt := time.Now()
-	rewoundChunks, snapshotErr := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, dispatchErr, runErr)
+	rewoundChunks, snapshotErr := persistResumeSnapshotWithLimits(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, r.input.resourceLimits.Snapshot, dispatchErr, runErr)
 	logger.eventf("snapshot_save_complete", "", 0, "snapshot_save_complete", errorCause(snapshotErr), map[string]any{
 		"duration_ms":    time.Since(snapshotStartedAt).Milliseconds(),
 		"rewound_chunks": rewoundChunks,

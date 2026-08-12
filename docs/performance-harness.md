@@ -71,9 +71,13 @@ profile uses 10,000, 100,000, 1,000,000, and 10,000,000 results.
 Each scale uses flush intervals `1`, `1000`, and `0`. Each output case runs
 five times and removes its temporary CSV files after measurement.
 
-The matrix executes six cases for each target expansion limit.
+The matrix executes six cases for each target expansion and data resource limit.
 These cases cover the exact default, default plus one, a positive override,
 `0`, a negative value, and overflow. The estimator does not allocate targets.
+
+The CIDR loader uses 1 MB, 10 MB, 100 MB, and 1 GB fixtures.
+The snapshot loader and saver use the same four sizes.
+The full matrix checks default rejection and positive-override completion for rich input larger than 1 GB.
 
 The production fake-probe cases use 1, 16, and 256 workers.
 The native loopback cases use 1 and 32 workers.

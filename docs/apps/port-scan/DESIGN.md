@@ -423,3 +423,15 @@ Quality gates:
 - `go test ./...` must pass
 - `bash scripts/coverage_gate.sh` must pass with >= 85% coverage
 - `bash e2e/run_e2e.sh` must pass for scan pipeline changes
+
+## Resource-limit ownership
+
+The configuration passes `input.CIDRLimits` and `input.PortLimits` to the file adapters.
+The input module owns byte and record counting.
+This seam keeps the workflow free of parser policy.
+
+`state.SnapshotLimits` owns snapshot byte and object counts.
+The state module checks a replacement before it creates the temporary file.
+
+`pressure.ResponseLimits` owns HTTP byte limits and OAuth entry counts.
+The pressure module decodes OAuth data arrays one entry at a time.

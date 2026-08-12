@@ -5,8 +5,8 @@
 package validate
 
 import (
+	"context"
 	"fmt"
-	"os"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
@@ -20,6 +20,10 @@ type Configuration interface {
 
 type targetExpansionConfiguration interface {
 	ResolveTargetExpansion() (config.TargetExpansionValues, error)
+}
+
+type resourceLimitConfiguration interface {
+	ResolveResourceLimits() (config.ResourceLimitValues, error)
 }
 
 // Result is the outcome of input validation. Valid is true when all inputs are
@@ -65,13 +69,18 @@ func Inputs(cfg Configuration) Result {
 	if err != nil {
 		return Result{Valid: false, Detail: fmt.Sprintf("resolve validate configuration: %v", err)}
 	}
-	cidrFile, err := os.Open(values.CIDRFile)
-	if err != nil {
-		return Result{Valid: false, Detail: fmt.Sprintf("failed to open cidr file: %v", err)}
+	resourceLimits := config.ResourceLimitValues{
+		CIDR: input.DefaultCIDRLimits(values.CIDRFile),
+		Port: input.DefaultPortLimits(values.PortFile),
 	}
-	defer cidrFile.Close()
-
-	cidrRecords, err := input.LoadCIDRsWithColumns(cidrFile, values.CIDRIPCol, values.CIDRIPCidrCol)
+	if resolver, ok := cfg.(resourceLimitConfiguration); ok {
+		resolved, resolveErr := resolver.ResolveResourceLimits()
+		if resolveErr != nil {
+			return Result{Valid: false, Detail: fmt.Sprintf("resolve resource limits: %v", resolveErr)}
+		}
+		resourceLimits = resolved
+	}
+	cidrRecords, err := input.LoadCIDRsFileWithColumnsContext(context.Background(), values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, resourceLimits.CIDR)
 	if err != nil {
 		return Result{Valid: false, Detail: err.Error()}
 	}
@@ -95,13 +104,7 @@ func Inputs(cfg Configuration) Result {
 		return Result{Valid: false, Detail: "-port-file is required when cidr input is not rich mode"}
 	}
 
-	portFile, err := os.Open(values.PortFile)
-	if err != nil {
-		return Result{Valid: false, Detail: fmt.Sprintf("failed to open port file: %v", err)}
-	}
-	defer portFile.Close()
-
-	if _, err := input.LoadPorts(portFile); err != nil {
+	if _, err := input.LoadPortsFileContext(context.Background(), values.PortFile, resourceLimits.Port); err != nil {
 		return Result{Valid: false, Detail: err.Error()}
 	}
 

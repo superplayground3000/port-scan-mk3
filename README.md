@@ -185,6 +185,25 @@ Rich deny rows contribute zero candidates. With default limits, an IPv4 `/9` is 
 A legacy snapshot uses the new defaults.
 
 CAUTION: If both flags are `0`, the command has no target expansion limit.
+
+## Input, Snapshot, and Pressure Limits
+
+`port-scan` applies independent limits to files and HTTP responses.
+
+| Data | Default byte limit | Default item limit | Commands |
+|---|---:|---:|---|
+| CIDR CSV | `1` decimal GB | `10000000` records | All commands |
+| Port file | `1` decimal MB | `65535` records | `validate`, `generate-buckets`, `scan` |
+| Snapshot | `2` decimal GB | `10000000` chunks, ports, and unreachable IPs | `generate-buckets`, `scan` |
+| Pressure response | `1` decimal MB | `10000` OAuth data entries | `scan` |
+
+The related flags end in `-limit-gb`, `-limit-mb`, or `-limit`.
+A positive value replaces its default. A negative value is an error.
+
+Set one flag to `0` to disable only that limit.
+The command does not apply a hidden replacement limit.
+
+CAUTION: A disabled limit can exhaust memory or terminate the process.
 The operating system can terminate the process when the available memory is not sufficient.
 
 `generate-buckets` marks snapshots that exclude rich deny rows. If an unmarked snapshot has rich deny input, `scan` stops before TCP dispatch.

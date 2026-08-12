@@ -83,6 +83,10 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	if err != nil {
 		return err
 	}
+	resourceLimits, err := resolveResourceLimits(configuration)
+	if err != nil {
+		return err
+	}
 	pressureValues, err := values.Pressure.Resolve()
 	if err != nil {
 		return fmt.Errorf("resolve pressure policy: %w", err)
@@ -90,7 +94,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 
 	pressureSource := opts.PressureSource
 	if pressureSource == nil && pressureValues.Kind != config.PressureKindDisabled {
-		pressureSource, err = newPressureSource(values.Pressure)
+		pressureSource, err = newPressureSource(values.Pressure, resourceLimits.Pressure)
 		if err != nil {
 			return fmt.Errorf("create pressure source: %w", err)
 		}
@@ -111,6 +115,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	runtime := newScanRuntime(scanRuntimeInput{
 		values:                   values,
 		targetExpansion:          targetExpansion,
+		resourceLimits:           resourceLimits,
 		pressure:                 pressureValues,
 		stdout:                   stdout,
 		stderr:                   stderr,

@@ -194,3 +194,25 @@ func TestRunRichSmokeUsesProductionPathsForEveryAcceptedFamily(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRichOversizeCaseRejectsDefaultAndCompletesWithPositiveOverride(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	for _, caseName := range []string{"default-reject", "override-complete"} {
+		result, err := harness.RunRichOversizeCase(context.Background(), perfharness.RichOversizeSpec{
+			OutputDir:   filepath.Join(t.TempDir(), caseName),
+			Items:       10,
+			Workers:     2,
+			TargetBytes: 200_000,
+			LimitBytes:  100_000,
+			Case:        caseName,
+		})
+		if err != nil {
+			t.Fatalf("case=%s: %v", caseName, err)
+		}
+		if !result.Verdict.Passed || !result.Correctness.ExpectedValues {
+			t.Fatalf("case=%s result=%+v", caseName, result)
+		}
+	}
+}

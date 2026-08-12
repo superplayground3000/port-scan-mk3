@@ -63,14 +63,20 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	if err != nil {
 		return err
 	}
+	resourceLimits, err := resolveResourceLimits(configuration)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(values.SnapshotOutput) == "" {
 		return fmt.Errorf("generate-buckets requires -buckets-out")
 	}
-	inputs, err := loadRunInputs(inputConfiguration{
+	inputs, err := loadRunInputsContext(ctx, inputConfiguration{
 		cidrFile:      values.CIDRFile,
 		cidrIPCol:     values.CIDRIPCol,
 		cidrIPCidrCol: values.CIDRIPCidrCol,
 		portFile:      values.PortFile,
+		cidrLimits:    resourceLimits.CIDR,
+		portLimits:    resourceLimits.Port,
 	}, defaultRunDependencies())
 	if err != nil {
 		return fmt.Errorf("generate-buckets: load inputs: %w", err)
@@ -143,7 +149,7 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 			UnreachableIPv4U32: blocklist,
 		},
 	}
-	if err := state.SaveSnapshot(values.SnapshotOutput, snap); err != nil {
+	if err := state.SaveSnapshotWithLimits(values.SnapshotOutput, snap, resourceLimits.Snapshot); err != nil {
 		return fmt.Errorf("generate-buckets: write snapshot %s: %w", values.SnapshotOutput, err)
 	}
 	return nil

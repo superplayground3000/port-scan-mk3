@@ -31,14 +31,23 @@ import (
 //	specs, err := input.LoadPorts(f)
 //	fmt.Println("Loaded", len(specs), "port specs")
 func LoadPorts(r io.Reader) ([]PortSpec, error) {
-	return LoadPortsContext(context.Background(), r)
+	return LoadPortsContextWithLimits(context.Background(), r, DefaultPortLimits(""))
 }
 
 // LoadPortsContext loads port rows and stops at a row transition when ctx is
 // canceled.
 func LoadPortsContext(ctx context.Context, r io.Reader) ([]PortSpec, error) {
-	scanner := bufio.NewScanner(r)
+	return LoadPortsContextWithLimits(ctx, r, DefaultPortLimits(""))
+}
+
+// LoadPortsContextWithLimits loads port rows with byte and nonblank-record limits.
+// A zero limit disables only that limit.
+func LoadPortsContextWithLimits(ctx context.Context, r io.Reader, limits PortLimits) ([]PortSpec, error) {
+	limited := limitInputReader(r, limits.Path, "port", "-port-input-size-limit-mb", limits.MaxBytes)
+	scanner := bufio.NewScanner(limited)
 	out := make([]PortSpec, 0)
+	lineNumber := 0
+	recordCount := uint64(0)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -46,9 +55,14 @@ func LoadPortsContext(ctx context.Context, r io.Reader) ([]PortSpec, error) {
 		if !scanner.Scan() {
 			break
 		}
+		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
+		}
+		recordCount++
+		if limits.MaxRecords > 0 && recordCount > limits.MaxRecords {
+			return nil, fmt.Errorf("port input %s record %d makes count %d exceed limit %d; use -port-input-record-limit to override it", displayPath(limits.Path), lineNumber, recordCount, limits.MaxRecords)
 		}
 		parts := strings.Split(line, "/")
 		if len(parts) != 2 || strings.ToLower(parts[1]) != "tcp" {

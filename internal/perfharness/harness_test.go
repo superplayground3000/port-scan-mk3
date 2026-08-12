@@ -182,14 +182,16 @@ func TestContractListsEveryRequiredScaleCase(t *testing.T) {
 			wantFamilies[spec.Family] = true
 		}
 	}
-	var hasOneGBRecordFixture bool
+	recordScales := make(map[uint64]bool)
 	for _, spec := range contract.FullFixtures {
-		if spec.Family == perfharness.FamilyRecordHeavy && spec.Scale.TargetBytes == 1_000_000_000 {
-			hasOneGBRecordFixture = true
+		if spec.Family == perfharness.FamilyRecordHeavy && spec.Scale.TargetBytes > 0 {
+			recordScales[spec.Scale.TargetBytes] = true
 		}
 	}
-	if !hasOneGBRecordFixture {
-		t.Error("the record-heavy family lacks a 1 GB fixture")
+	for _, size := range []uint64{1_000_000, 10_000_000, 100_000_000, 1_000_000_000} {
+		if !recordScales[size] {
+			t.Errorf("the record-heavy family lacks the %d-byte CIDR load fixture", size)
+		}
 	}
 	for family, found := range wantFamilies {
 		if !found {

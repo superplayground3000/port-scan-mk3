@@ -13,20 +13,24 @@ type runPlan struct {
 }
 
 type runDependencies struct {
-	loadCIDRRecords        func(path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error)
-	loadCIDRRecordsContext func(context.Context, string, string, string) ([]input.CIDRRecord, error)
-	loadPortSpecs          func(path string) ([]input.PortSpec, error)
-	loadPortSpecsContext   func(context.Context, string) ([]input.PortSpec, error)
-	resolveOutputPaths     func(output string, now time.Time) (batchOutputPaths, error)
+	loadCIDRRecords                  func(path, ipCol, ipCidrCol string) ([]input.CIDRRecord, error)
+	loadCIDRRecordsContext           func(context.Context, string, string, string) ([]input.CIDRRecord, error)
+	loadPortSpecs                    func(path string) ([]input.PortSpec, error)
+	loadPortSpecsContext             func(context.Context, string) ([]input.PortSpec, error)
+	loadCIDRRecordsWithLimitsContext func(context.Context, string, string, string, input.CIDRLimits) ([]input.CIDRRecord, error)
+	loadPortSpecsWithLimitsContext   func(context.Context, string, input.PortLimits) ([]input.PortSpec, error)
+	resolveOutputPaths               func(output string, now time.Time) (batchOutputPaths, error)
 }
 
 func defaultRunDependencies() runDependencies {
 	return runDependencies{
-		loadCIDRRecords:        readCIDRFile,
-		loadCIDRRecordsContext: readCIDRFileContext,
-		loadPortSpecs:          readPortFile,
-		loadPortSpecsContext:   readPortFileContext,
-		resolveOutputPaths:     resolveBatchOutputPaths,
+		loadCIDRRecords:                  readCIDRFile,
+		loadCIDRRecordsContext:           readCIDRFileContext,
+		loadPortSpecs:                    readPortFile,
+		loadPortSpecsContext:             readPortFileContext,
+		loadCIDRRecordsWithLimitsContext: input.LoadCIDRsFileWithColumnsContext,
+		loadPortSpecsWithLimitsContext:   input.LoadPortsFileContext,
+		resolveOutputPaths:               resolveBatchOutputPaths,
 	}
 }
 

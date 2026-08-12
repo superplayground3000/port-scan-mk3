@@ -33,13 +33,17 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 	if err != nil {
 		return err
 	}
+	resourceLimits, err := resolveResourceLimits(configuration)
+	if err != nil {
+		return err
+	}
 	deps := defaultRunDependencies()
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	inputs, err := loadPrePingInputs(values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, deps)
+	inputs, err := loadPrePingInputsContext(ctx, values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, resourceLimits.CIDR, deps)
 	if err != nil {
 		return err
 	}

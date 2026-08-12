@@ -160,15 +160,20 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	for _, limits := range contract.Limits {
-		if limits.Flag != "-target-count-limit" && limits.Flag != "-target-memory-limit-gb" {
-			continue
-		}
 		for _, bypass := range limits.Cases {
-			result, err := harness.RunTargetLimitCase(context.Background(), perfharness.TargetLimitSpec{
-				OutputDir: filepath.Join(casesDir, "limit-"+strings.TrimPrefix(limits.Flag, "-")+"-"+string(bypass.Kind)),
-				Flag:      limits.Flag,
-				Case:      bypass,
-			})
+			var (
+				result perfharness.CaseResult
+				err    error
+			)
+			if limits.Flag == "-target-count-limit" || limits.Flag == "-target-memory-limit-gb" {
+				result, err = harness.RunTargetLimitCase(context.Background(), perfharness.TargetLimitSpec{
+					OutputDir: filepath.Join(casesDir, "limit-"+strings.TrimPrefix(limits.Flag, "-")+"-"+string(bypass.Kind)),
+					Flag:      limits.Flag,
+					Case:      bypass,
+				})
+			} else {
+				result, err = harness.RunResourceLimitCase(context.Background(), perfharness.ResourceLimitSpec{Flag: limits.Flag, Case: bypass})
+			}
 			if err != nil {
 				if writeErr := writeStatus(stderr, "run limit %s %s: %v\n", limits.Flag, bypass.Kind, err); writeErr != nil {
 					return 1
@@ -295,6 +300,28 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	if profile == "full" {
+		for _, caseName := range contract.RichOversizeCases {
+			result, err := harness.RunRichOversizeCase(context.Background(), perfharness.RichOversizeSpec{
+				OutputDir:   filepath.Join(casesDir, "rich-oversize-"+caseName),
+				Items:       perfharness.FullItemCount,
+				Workers:     16,
+				TargetBytes: 1_000_000_001,
+				LimitBytes:  1_000_000_000,
+				Case:        caseName,
+			})
+			if err != nil {
+				if writeErr := writeStatus(stderr, "run rich oversize case=%s: %v\n", caseName, err); writeErr != nil {
+					return 1
+				}
+				return 1
+			}
+			results = append(results, result)
+			if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+				return 1
+			}
+		}
+	}
 	crlfResult, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-crlf-workers-16"), workflowItems, 16, "CRLF")
 	if err != nil {
 		if writeErr := writeStatus(stderr, "run CRLF workflow: %v\n", err); writeErr != nil {
@@ -332,6 +359,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if !applyOutputThresholds(results, harness, outputScales) {
+		matrixPassed = false
+	}
+	if !applyInputAndSnapshotGrowthThresholds(results, harness) {
 		matrixPassed = false
 	}
 
@@ -372,6 +402,35 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, harness perfharness.Harness) bool {
+	sequences := [][]string{
+		{
+			"record-heavy/one-megabyte",
+			"record-heavy/ten-megabytes",
+			"record-heavy/one-hundred-megabytes",
+			"record-heavy/one-gigabyte",
+		},
+		{
+			"snapshot-heavy/chunk-heavy",
+			"snapshot-heavy/port-heavy",
+			"snapshot-heavy/unreachable-heavy",
+			"snapshot-heavy/mixed",
+		},
+	}
+	passed := true
+	for _, sequence := range sequences {
+		for index := 1; index < len(sequence); index++ {
+			if findCase(results, sequence[index-1]) == nil || findCase(results, sequence[index]) == nil {
+				continue
+			}
+			if !applyGrowthThreshold(results, harness, sequence[index-1], sequence[index]) {
+				passed = false
+			}
+		}
+	}
+	return passed
 }
 
 func outputSpecs(profile string, smokeItems uint64) []perfharness.OutputSpec {

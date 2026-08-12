@@ -18,6 +18,130 @@ type TargetLimitSpec struct {
 	Case      BypassCase `json:"case"`
 }
 
+// ResourceLimitSpec defines one non-target data-limit case.
+type ResourceLimitSpec struct {
+	Flag string     `json:"flag"`
+	Case BypassCase `json:"case"`
+}
+
+// RunResourceLimitCase runs one resource-limit case through command parsing.
+func (suite Suite) RunResourceLimitCase(ctx context.Context, spec ResourceLimitSpec) (CaseResult, error) {
+	if !isResourceLimitFlag(spec.Flag) {
+		return CaseResult{}, fmt.Errorf("unsupported resource limit flag %q", spec.Flag)
+	}
+	observations := make([]Observation, 0, 6)
+	for run := 0; run < 6; run++ {
+		observation, err := suite.Measure(ctx, 0, 1, func(context.Context) (uint64, error) {
+			return 0, executeResourceLimitCase(spec)
+		})
+		if err != nil {
+			return CaseResult{}, fmt.Errorf("run %s %s observation %d: %w", spec.Flag, spec.Case.Kind, run+1, err)
+		}
+		observations = append(observations, observation)
+	}
+	result, err := SummarizeCase("limit/"+strings.TrimPrefix(spec.Flag, "-")+"/"+string(spec.Case.Kind), observations)
+	if err != nil {
+		return CaseResult{}, err
+	}
+	result.Correctness = Correctness{ExpectedValues: true, Detail: "production command limit matched the case"}
+	result.Verdict = Verdict{Passed: true}
+	result.Semantic = &SemanticArtifact{Status: "passed"}
+	return result, nil
+}
+
+func executeResourceLimitCase(spec ResourceLimitSpec) error {
+	if spec.Case.Kind == BypassNegative {
+		return expectResourceLimitParseFailure(spec.Flag, "-1")
+	}
+	if spec.Case.Kind == BypassOverflow {
+		if strings.HasSuffix(spec.Flag, "-gb") || strings.HasSuffix(spec.Flag, "-mb") {
+			return expectResourceLimitParseFailure(spec.Flag, strconv.FormatInt(math.MaxInt64, 10))
+		}
+		return expectResourceLimitParseFailure(spec.Flag, "-1")
+	}
+	defaults, err := parsedResourceLimits(spec.Flag, "")
+	if err != nil {
+		return err
+	}
+	defaultValue := resourceLimitValue(defaults, spec.Flag)
+	value := defaultValue
+	switch spec.Case.Kind {
+	case BypassExactDefault:
+	case BypassDefaultPlusOne:
+		value++
+	case BypassPositiveOverride:
+		value *= 2
+	case BypassDisabledTwice:
+		value = 0
+	default:
+		return fmt.Errorf("unsupported bypass kind %q", spec.Case.Kind)
+	}
+	parsed, err := parsedResourceLimits(spec.Flag, strconv.FormatUint(value, 10))
+	if err != nil {
+		return err
+	}
+	if got := resourceLimitValue(parsed, spec.Flag); got != value {
+		return fmt.Errorf("%s resolved %d, want %d", spec.Flag, got, value)
+	}
+	return nil
+}
+
+func parsedResourceLimits(flagName, raw string) (config.ResourceLimitValues, error) {
+	args := []string{"-cidr-file", "performance-input.csv", "-resume", "performance-snapshot.json", "-disable-api"}
+	if raw != "" {
+		args = append(args, flagName, raw)
+	}
+	cfg, err := config.ParseScan(args)
+	if err != nil {
+		return config.ResourceLimitValues{}, err
+	}
+	return cfg.ResolveResourceLimits()
+}
+
+func expectResourceLimitParseFailure(flagName, value string) error {
+	_, err := parsedResourceLimits(flagName, value)
+	if err == nil {
+		return fmt.Errorf("%s accepted invalid value %s", flagName, value)
+	}
+	return nil
+}
+
+func resourceLimitValue(values config.ResourceLimitValues, flagName string) uint64 {
+	switch flagName {
+	case "-cidr-input-size-limit-gb":
+		return values.CIDR.MaxBytes / 1_000_000_000
+	case "-cidr-input-record-limit":
+		return values.CIDR.MaxRecords
+	case "-port-input-size-limit-mb":
+		return values.Port.MaxBytes / 1_000_000
+	case "-port-input-record-limit":
+		return values.Port.MaxRecords
+	case "-snapshot-size-limit-gb":
+		return values.Snapshot.MaxBytes / 1_000_000_000
+	case "-snapshot-chunk-limit":
+		return values.Snapshot.MaxChunks
+	case "-snapshot-port-entry-limit":
+		return values.Snapshot.MaxPortEntries
+	case "-snapshot-unreachable-ip-limit":
+		return values.Snapshot.MaxUnreachableIPs
+	case "-pressure-response-size-limit-mb":
+		return values.Pressure.MaxBytes / 1_000_000
+	case "-pressure-response-entry-limit":
+		return values.Pressure.MaxEntries
+	default:
+		return 0
+	}
+}
+
+func isResourceLimitFlag(flagName string) bool {
+	switch flagName {
+	case "-cidr-input-size-limit-gb", "-cidr-input-record-limit", "-port-input-size-limit-mb", "-port-input-record-limit", "-snapshot-size-limit-gb", "-snapshot-chunk-limit", "-snapshot-port-entry-limit", "-snapshot-unreachable-ip-limit", "-pressure-response-size-limit-mb", "-pressure-response-entry-limit":
+		return true
+	default:
+		return false
+	}
+}
+
 // RunTargetLimitCase runs one target limit case without target allocation.
 func (suite Suite) RunTargetLimitCase(ctx context.Context, spec TargetLimitSpec) (CaseResult, error) {
 	if spec.Flag != "-target-count-limit" && spec.Flag != "-target-memory-limit-gb" {

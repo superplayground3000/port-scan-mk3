@@ -56,6 +56,11 @@ cat > "$INPUT_DIR/ports.csv" <<'EOF'
 8080/tcp
 EOF
 
+cat > "$INPUT_DIR/ports_oversize.csv" <<'EOF'
+8080/tcp
+8081/tcp
+EOF
+
 # Ten distinct targets for the interrupt-and-resume scenario. Most have no
 # listener (they time out), which is irrelevant — a row is written for every
 # probe regardless of state. Ten paced probes give a wide enough window to
@@ -80,7 +85,8 @@ docker compose -f "$COMPOSE_FILE" up -d --build \
   mock-target-closed \
   pressure-api-ok \
   pressure-api-5xx \
-  pressure-api-timeout
+  pressure-api-timeout \
+  pressure-api-oversize
 docker compose -f "$COMPOSE_FILE" build scanner
 trap 'docker compose -f "$COMPOSE_FILE" down -v --remove-orphans' EXIT
 
@@ -102,6 +108,32 @@ fi
 run_pre_ping()         { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner pre-ping "$@"; }
 run_generate_buckets() { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner generate-buckets "$@"; }
 run_scan()             { docker compose -f "$COMPOSE_FILE" run --rm -w /out scanner scan "$@"; }
+
+# A port limit failure must happen before snapshot creation.
+set +e
+RESOURCE_LIMIT_LOG="$(run_generate_buckets \
+  -cidr-file /inputs/cidr_normal.csv \
+  -port-file /inputs/ports_oversize.csv \
+  -cidr-ip-col source_ip \
+  -cidr-ip-cidr-col source_cidr \
+  -port-input-record-limit 1 \
+  -buckets-out /out/buckets_resource_reject.json \
+  -log-level error 2>&1)"
+RESOURCE_LIMIT_CODE=$?
+set -e
+if [[ "$RESOURCE_LIMIT_CODE" -eq 0 ]]; then
+  echo "e2e assertion failed: oversized port input exited 0" >&2
+  exit 1
+fi
+if [[ -f "$OUT_DIR/buckets_resource_reject.json" ]]; then
+  echo "e2e assertion failed: oversized port input created a snapshot" >&2
+  exit 1
+fi
+if [[ "$RESOURCE_LIMIT_LOG" != *"-port-input-record-limit"* ]]; then
+  echo "e2e assertion failed: port limit error did not identify its override flag" >&2
+  echo "$RESOURCE_LIMIT_LOG" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Step 1 — pre-ping: ping the two mock targets, write unreachable_results-<ts>.csv.
@@ -401,6 +433,7 @@ run_expected_failure() {
 
 run_expected_failure "api_5xx" "http://pressure-api-5xx:8080/api/pressure" "200ms" "pressure-api-5xx"
 run_expected_failure "api_timeout" "http://pressure-api-timeout:8080/api/pressure" "200ms" "pressure-api-timeout"
+run_expected_failure "api_oversize" "http://pressure-api-oversize:8080/api/pressure" "200ms" "pressure-api-oversize"
 run_expected_failure "api_conn_fail" "http://127.0.0.1:9/api/pressure" "200ms" ""
 
 # ---------------------------------------------------------------------------

@@ -226,7 +226,19 @@ records, err := input.LoadCIDRsWithColumns(file, "SourceIP", "Network")
 CLI workflows get these column names from their workflow-specific
 configuration values.
 
-## 6. Adding New Input Formats
+## 6. Resource Limits
+
+`CIDRLimits` controls complete input bytes and data-record counts.
+The defaults are `1000000000` bytes and `10000000` records.
+
+`PortLimits` controls complete input bytes and nonblank-record counts.
+The defaults are `1000000` bytes and `65535` records.
+
+The file adapters reject known oversized files before parsing.
+The reader interfaces also stop after `limit + 1` bytes.
+A zero field disables only that limit.
+
+## 7. Adding New Input Formats
 
 ### Step 1: Add detection logic in cidr.go
 
@@ -263,7 +275,7 @@ default:
 }
 ```
 
-## 7. Implementation Files Reference
+## 8. Implementation Files Reference
 
 | File | Responsibility |
 |------|----------------|
@@ -276,7 +288,7 @@ default:
 | `pkg/input/validation_errors.go` | Error codes |
 | `pkg/input/ports.go` | Port file parsing |
 
-## 8. Integration Points
+## 9. Integration Points
 
 - **Config**: Column names from `PrePingValues`, `GenerateBucketsValues`,
   `ScanValues`, or `ValidateValues`
