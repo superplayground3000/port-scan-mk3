@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 )
 
-// Harness is the single interface for the private performance module.
+// Harness is the approved boundary for one complete performance evidence run.
+// The matrix runner owns this private interface. Production packages do not use it.
 type Harness interface {
 	Generate(context.Context, FixtureSpec, string) (Manifest, error)
 	Validate(Manifest) error

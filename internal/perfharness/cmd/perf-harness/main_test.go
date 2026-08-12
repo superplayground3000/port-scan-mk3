@@ -10,6 +10,12 @@ import (
 	"github.com/xuxiping/port-scan-mk3/internal/perfharness"
 )
 
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, os.ErrClosed
+}
+
 func TestRunCommandWritesSmokeReports(t *testing.T) {
 	t.Parallel()
 
@@ -55,4 +61,19 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 		}
 	}
 	t.Fatal("workers-16 workflow case is missing")
+}
+
+func TestRunCommandFailsWhenItCannotWriteStatus(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	exitCode := runCommand([]string{
+		"-profile", "smoke",
+		"-output", filepath.Join(t.TempDir(), "report"),
+		"-smoke-items", "1",
+		"-smoke-snapshot-bytes", "1024",
+	}, failingWriter{}, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1 for status output failure", exitCode)
+	}
 }

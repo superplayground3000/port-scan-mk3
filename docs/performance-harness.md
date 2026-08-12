@@ -7,6 +7,8 @@ The harness does not certify the scale targets of issue 151.
 
 The private `internal/perfharness` module owns one interface named `Harness`.
 This interface covers fixture generation, metrics, evaluation, normalization, and reports.
+The issue 150 contract requires this single evidence-run boundary.
+Production packages do not use this interface.
 
 The module calls the production `scanapp.GenerateBuckets` and `scanapp.Run` functions.
 The fake-probe adapter uses the existing `scanapp.RunOptions.Dial` seam.

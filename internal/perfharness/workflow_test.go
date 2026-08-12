@@ -2,6 +2,7 @@ package perfharness_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -31,6 +32,23 @@ func TestRunProductionSmokeUsesTheProductionWorkflowWithFakeProbes(t *testing.T)
 	}
 	if result.Stage.InputBytes == 0 || result.Stage.OutputBytes == 0 {
 		t.Fatalf("workflow byte metrics = %+v", result.Stage)
+	}
+}
+
+func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
+	t.Parallel()
+
+	outputDir := filepath.Join(t.TempDir(), "must not exist")
+	_, err := perfharness.New().RunProductionSmoke(context.Background(), perfharness.WorkflowSpec{
+		OutputDir: outputDir,
+		Items:     0,
+		Workers:   1,
+	})
+	if err == nil {
+		t.Fatal("RunProductionSmoke accepted zero items")
+	}
+	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("RunProductionSmoke performed I/O before validation: %v", statErr)
 	}
 }
 

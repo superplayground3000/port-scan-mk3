@@ -210,6 +210,48 @@ The three longest prose lines in `docs/performance-harness.md` contain 14 words 
 No changed prose contains a contraction, a semicolon, a banned modal, or a complex perfect tense.
 All procedural conditions come before their commands. No unwanted term from the check concept remains.
 
+### Status writer failure
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandFailsWhenItCannotWriteStatus -count=1
+```
+
+Observed red reason:
+
+```text
+exit code = 0, want 1 for status output failure
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 0.432s
+```
+
+Green command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestRunCommandFailsWhenItCannotWriteStatus -count=1
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 0.003s
+```
+
+### Independent Standards review round one
+
+The reviewer blocked the first commit for these items:
+
+- CLI and workflow failure tests were missing.
+- CLI status writer errors were ignored.
+- Worker profiles repeated the matrix contract.
+
+The change now includes a red-first status writer failure test and a zero-item workflow failure test.
+The command checks each status write and reads both worker profiles from the matrix contract.
+
+The reviewer also called the required single `Harness` interface a prohibited god interface.
+Issue 150 explicitly requires one private interface for these evidence operations.
+The interface remains one deep evidence-run boundary, and production packages do not use it.
+
 ### Full repository gate
 
 Command:

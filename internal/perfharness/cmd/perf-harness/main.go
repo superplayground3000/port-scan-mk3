@@ -56,28 +56,39 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if outputDir == "" {
-		fmt.Fprintln(stderr, "-output is required")
+		if writeErr := writeStatus(stderr, "-output is required\n"); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	if profile != "full" && profile != "smoke" {
-		fmt.Fprintln(stderr, "-profile must be full or smoke")
+		if writeErr := writeStatus(stderr, "-profile must be full or smoke\n"); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	label := perfharness.EvidenceLabel(evidenceLabel)
 	if label != perfharness.EvidenceHardwareQualified && label != perfharness.EvidenceMinimumCertified {
-		fmt.Fprintln(stderr, "-evidence-label must be hardware-qualified or minimum-profile certified")
+		if writeErr := writeStatus(stderr, "-evidence-label must be hardware-qualified or minimum-profile certified\n"); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
-		fmt.Fprintf(stderr, "create matrix directory: %v\n", err)
+		if writeErr := writeStatus(stderr, "create matrix directory: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	harness := perfharness.New()
-	specs := fixtureSpecs(profile, smokeItems, smokeSnapshotBytes)
+	contract := perfharness.DefaultContract()
+	specs := fixtureSpecs(profile, smokeItems, smokeSnapshotBytes, contract)
 	casesDir := filepath.Join(outputDir, "cases")
 	if err := os.Mkdir(casesDir, 0o755); err != nil {
-		fmt.Fprintf(stderr, "create cases directory: %v\n", err)
+		if writeErr := writeStatus(stderr, "create cases directory: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	results := make([]perfharness.CaseResult, 0, len(specs)+5)
@@ -85,36 +96,48 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		caseDir := filepath.Join(casesDir, fmt.Sprintf("%02d-%s", index, spec.Family))
 		result, err := harness.RunFixtureCase(context.Background(), caseDir, spec)
 		if err != nil {
-			fmt.Fprintf(stderr, "run fixture %s: %v\n", spec.Family, err)
+			if writeErr := writeStatus(stderr, "run fixture %s: %v\n", spec.Family, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		results = append(results, result)
-		fmt.Fprintf(stdout, "case passed: %s\n", result.Name)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
 	}
 
 	workflowItems := smokeItems
-	for _, workers := range []int{1, 16, 256} {
+	for _, workers := range contract.FakeWorkers {
 		result, err := runWorkflowCase(context.Background(), harness, filepath.Join(casesDir, "workflow-workers-"+strconv.Itoa(workers)), workflowItems, workers)
 		if err != nil {
-			fmt.Fprintf(stderr, "run workflow workers=%d: %v\n", workers, err)
+			if writeErr := writeStatus(stderr, "run workflow workers=%d: %v\n", workers, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		results = append(results, result)
-		fmt.Fprintf(stdout, "case passed: %s\n", result.Name)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
 	}
-	for _, workers := range []int{1, 32} {
+	for _, workers := range contract.LoopbackWorkers {
 		result, err := runLoopbackCase(context.Background(), harness, filepath.Join(casesDir, "loopback-workers-"+strconv.Itoa(workers)), workers)
 		if err != nil {
-			fmt.Fprintf(stderr, "run loopback workers=%d: %v\n", workers, err)
+			if writeErr := writeStatus(stderr, "run loopback workers=%d: %v\n", workers, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		results = append(results, result)
-		fmt.Fprintf(stdout, "case passed: %s\n", result.Name)
+		if err := writeStatus(stdout, "case passed: %s\n", result.Name); err != nil {
+			return 1
+		}
 	}
 
 	report := perfharness.Report{
 		SchemaVersion: perfharness.SchemaVersion,
-		Contract:      perfharness.DefaultContract(),
+		Contract:      contract,
 		Platform:      runtime.GOOS + "/" + runtime.GOARCH,
 		Hardware: perfharness.HardwareProfile{
 			EvidenceLabel: label,
@@ -134,16 +157,25 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	paths, err := harness.WriteReports(context.Background(), filepath.Join(outputDir, "report"), report)
 	if err != nil {
-		fmt.Fprintf(stderr, "write reports: %v\n", err)
+		if writeErr := writeStatus(stderr, "write reports: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "performance matrix passed: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown)
+	if err := writeStatus(stdout, "performance matrix passed: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown); err != nil {
+		return 1
+	}
 	return 0
 }
 
-func fixtureSpecs(profile string, items, snapshotBytes uint64) []perfharness.FixtureSpec {
+func writeStatus(output io.Writer, format string, values ...any) error {
+	_, err := fmt.Fprintf(output, format, values...)
+	return err
+}
+
+func fixtureSpecs(profile string, items, snapshotBytes uint64, contract perfharness.Contract) []perfharness.FixtureSpec {
 	if profile == "full" {
-		return perfharness.DefaultContract().FullFixtures
+		return contract.FullFixtures
 	}
 	return []perfharness.FixtureSpec{
 		{Family: perfharness.FamilyRecordHeavy, Scale: perfharness.Scale{InputRecords: items}, Seed: perfharness.DefaultGeneratorSeed},
