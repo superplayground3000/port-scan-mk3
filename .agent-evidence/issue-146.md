@@ -174,3 +174,11 @@ The same branch command ran six more times after this fix.
 
 The fixed port result is below the `10%` time, byte, and allocation thresholds.
 The pressure path is faster and allocates less memory because it decodes one named field.
+
+### Full verification correction
+
+The first `make verify` run passed formatting, vet, builds, release reproducibility, and all race tests.
+The coverage gate then rejected total statement coverage of `84.6%`.
+
+Focused file-adapter tests now cover exact metadata limits, early oversized-file rejection, and missing-file errors.
+The next standalone coverage gate passed at `85.0%` without a threshold change.

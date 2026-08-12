@@ -2,6 +2,8 @@ package input_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,6 +35,51 @@ func TestLoadCIDRsWithLimitsEnforcesBytesAndDataRecords(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "record 3") || !strings.Contains(err.Error(), "count 2") || !strings.Contains(err.Error(), "-cidr-input-record-limit") {
 		t.Fatalf("record limit error = %v, want record, count, limit, and override flag", err)
+	}
+}
+
+func TestLimitedFileLoadersUseMetadataAndKeepExactFilesReadable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cidrPath := filepath.Join(dir, "targets.csv")
+	cidrData := []byte("ip,ip_cidr\n192.0.2.1,192.0.2.0/24\n")
+	if err := os.WriteFile(cidrPath, cidrData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := input.LoadCIDRsFileWithColumnsContext(context.Background(), cidrPath, "ip", "ip_cidr", input.CIDRLimits{
+		MaxBytes: uint64(len(cidrData)), MaxRecords: 1,
+	})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("exact CIDR file = (%d, %v), want (1, nil)", len(rows), err)
+	}
+	_, err = input.LoadCIDRsFileWithColumnsContext(context.Background(), cidrPath, "ip", "ip_cidr", input.CIDRLimits{MaxBytes: uint64(len(cidrData) - 1)})
+	if err == nil || !strings.Contains(err.Error(), cidrPath) || !strings.Contains(err.Error(), "size") {
+		t.Fatalf("oversized CIDR file error = %v", err)
+	}
+
+	portPath := filepath.Join(dir, "ports.csv")
+	portData := []byte("80/tcp\n")
+	if err := os.WriteFile(portPath, portData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ports, err := input.LoadPortsFileContext(context.Background(), portPath, input.PortLimits{
+		MaxBytes: uint64(len(portData)), MaxRecords: 1,
+	})
+	if err != nil || len(ports) != 1 {
+		t.Fatalf("exact port file = (%d, %v), want (1, nil)", len(ports), err)
+	}
+	_, err = input.LoadPortsFileContext(context.Background(), portPath, input.PortLimits{MaxBytes: uint64(len(portData) - 1)})
+	if err == nil || !strings.Contains(err.Error(), portPath) || !strings.Contains(err.Error(), "size") {
+		t.Fatalf("oversized port file error = %v", err)
+	}
+
+	missing := filepath.Join(dir, "missing.csv")
+	if _, err := input.LoadCIDRsFileWithColumnsContext(context.Background(), missing, "ip", "ip_cidr", input.CIDRLimits{MaxBytes: 1}); !os.IsNotExist(err) {
+		t.Fatalf("missing CIDR file error = %v", err)
+	}
+	if _, err := input.LoadPortsFileContext(context.Background(), missing, input.PortLimits{MaxBytes: 1}); !os.IsNotExist(err) {
+		t.Fatalf("missing port file error = %v", err)
 	}
 }
 
