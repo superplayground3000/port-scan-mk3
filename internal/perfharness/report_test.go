@@ -86,7 +86,7 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 			t.Fatalf("Markdown report lacks %q:\n%s", evidence, markdown)
 		}
 	}
-	for _, evidence := range []string{"Cancellation evidence", "input-records at 100000", "Probe starts after stop"} {
+	for _, evidence := range []string{"Cancellation evidence", "input-records at 100000", "Probe starts after stop", "Maximum finalization"} {
 		if !strings.Contains(string(markdown), evidence) {
 			t.Fatalf("Markdown report lacks cancellation evidence %q:\n%s", evidence, markdown)
 		}

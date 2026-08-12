@@ -195,17 +195,19 @@ func markdownReport(report Report) string {
 	fmt.Fprintln(&text)
 	fmt.Fprintln(&text, "## Cancellation evidence")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "| Case | Runs | Progress | Maximum stop | Probe starts after stop | Recovery |")
-	fmt.Fprintln(&text, "|---|---:|---|---:|---:|---|")
+	fmt.Fprintln(&text, "| Case | Runs | Progress | Maximum stop | Maximum finalization | Probe starts after stop | Recovery |")
+	fmt.Fprintln(&text, "|---|---:|---|---:|---:|---:|---|")
 	for _, result := range report.Cases {
 		if result.Cancellation == nil {
 			continue
 		}
 		var maximumStop time.Duration
+		var maximumFinalization time.Duration
 		var startsAfterStop uint64
 		recovery := "n/a"
 		for _, run := range result.Cancellation.Runs {
 			maximumStop = max(maximumStop, run.StopDuration)
+			maximumFinalization = max(maximumFinalization, run.FinalizationDuration)
 			startsAfterStop += run.ProbeStartsAfterCancel
 			if run.Recovery != nil {
 				if run.Recovery.RecoveryCompleted {
@@ -220,7 +222,7 @@ func markdownReport(report Report) string {
 			run := result.Cancellation.Runs[0]
 			progress = fmt.Sprintf("%s at %d", run.ProgressUnit, run.InjectionThreshold)
 		}
-		fmt.Fprintf(&text, "| %s | %d | %s | %s | %d | %s |\n", result.Name, len(result.Cancellation.Runs), progress, maximumStop, startsAfterStop, recovery)
+		fmt.Fprintf(&text, "| %s | %d | %s | %s | %s | %d | %s |\n", result.Name, len(result.Cancellation.Runs), progress, maximumStop, maximumFinalization, startsAfterStop, recovery)
 	}
 	return text.String()
 }

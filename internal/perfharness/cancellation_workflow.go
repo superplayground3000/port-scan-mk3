@@ -62,6 +62,7 @@ type CancellationResult struct {
 	Percent                int                      `json:"percent"`
 	Injected               bool                     `json:"injected"`
 	StopDuration           time.Duration            `json:"stop_duration_ns"`
+	FinalizationDuration   time.Duration            `json:"finalization_duration_ns"`
 	Resumable              bool                     `json:"resumable"`
 	Preparation            Observation              `json:"preparation"`
 	StageObservation       Observation              `json:"stage_observation"`
@@ -172,7 +173,10 @@ func (Suite) RunCancellationSmoke(ctx context.Context, spec CancellationSpec) (C
 		result.CompletedAtInjection = result.InjectionThreshold
 	}
 	if result.Injected {
-		result.StopDuration = time.Since(trigger.at)
+		result.FinalizationDuration = time.Since(trigger.at)
+		if result.StopDuration == 0 {
+			result.StopDuration = result.FinalizationDuration
+		}
 	}
 	if spec.Stage == CancellationResumeRebuild || spec.Stage == CancellationResultOutput {
 		snapshot, loadErr := state.LoadSnapshotWithLimits(filepath.Join(spec.OutputDir, "buckets.json"), cancellationSnapshotLimits())
@@ -287,6 +291,9 @@ func runScanCancellation(ctx context.Context, spec CancellationSpec, injector *C
 		ProbeTelemetryObserver: func(telemetry scanapp.ProbeTelemetry) {
 			result.ProbeStarts = telemetry.TotalStarted
 			result.ProbeStartsAfterCancel = telemetry.StartsAfterStop
+			if trigger.fired() {
+				result.StopDuration = time.Since(trigger.at)
+			}
 		},
 	}
 	if spec.Stage == CancellationResumeRebuild {
