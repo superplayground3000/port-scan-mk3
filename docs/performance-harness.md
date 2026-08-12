@@ -106,7 +106,9 @@ The portable observation has these metrics:
 - Peak committed memory.
 - Swap or pagefile bytes and I/O.
 
-On Windows, the I/O counters include process file I/O and paging I/O.
+Linux and Windows do not expose per-process paging byte counters through these adapters.
+The paging byte fields are `0` when the OS does not supply these counters.
+The raw matrix evidence records available page faults and swap counts.
 
 The report records the CPU, core counts, power mode, RAM, filesystem, and disk.
 It also records free space, Go version, commit, constraints, and evidence label.

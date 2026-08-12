@@ -11,8 +11,6 @@ import (
 var (
 	psapiDLL             = syscall.NewLazyDLL("psapi.dll")
 	getProcessMemoryInfo = psapiDLL.NewProc("GetProcessMemoryInfo")
-	kernel32DLL          = syscall.NewLazyDLL("kernel32.dll")
-	getProcessIOCounters = kernel32DLL.NewProc("GetProcessIoCounters")
 )
 
 type processMemoryCountersEx struct {
@@ -29,15 +27,6 @@ type processMemoryCountersEx struct {
 	privateUsage               uintptr
 }
 
-type processIOCounters struct {
-	readOperationCount  uint64
-	writeOperationCount uint64
-	otherOperationCount uint64
-	readTransferCount   uint64
-	writeTransferCount  uint64
-	otherTransferCount  uint64
-}
-
 func sampleProcessMetrics() (processMetrics, error) {
 	handle, err := syscall.GetCurrentProcess()
 	if err != nil {
@@ -52,19 +41,9 @@ func sampleProcessMetrics() (processMetrics, error) {
 	if result == 0 {
 		return processMetrics{}, fmt.Errorf("read Windows process memory: %w", callErr)
 	}
-	ioCounters := processIOCounters{}
-	result, _, callErr = getProcessIOCounters.Call(
-		uintptr(handle),
-		uintptr(unsafe.Pointer(&ioCounters)),
-	)
-	if result == 0 {
-		return processMetrics{}, fmt.Errorf("read Windows process I/O counters: %w", callErr)
-	}
 	return processMetrics{
-		windowsWorkingSet: uint64(memory.workingSetSize),
+		windowsWorkingSet: uint64(memory.peakWorkingSetSize),
 		committed:         uint64(memory.privateUsage),
-		swapOrPagefile:    uint64(memory.pagefileUsage),
-		pagingRead:        ioCounters.readTransferCount,
-		pagingWrite:       ioCounters.writeTransferCount,
+		swapOrPagefile:    uint64(memory.peakPagefileUsage),
 	}, nil
 }

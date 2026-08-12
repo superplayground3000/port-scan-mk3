@@ -13,10 +13,16 @@ type MeasuredAction func(context.Context) (outputBytes uint64, err error)
 
 // Measure records wall time, throughput, and Go runtime metrics for one action.
 func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action MeasuredAction) (Observation, error) {
+	return measure(ctx, inputBytes, units, action, sampleProcessMetrics)
+}
+
+type processMetricSampler func() (processMetrics, error)
+
+func measure(ctx context.Context, inputBytes, units uint64, action MeasuredAction, sampler processMetricSampler) (Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err
 	}
-	processBefore, err := sampleProcessMetrics()
+	processBefore, err := sampler()
 	if err != nil {
 		return Observation{}, err
 	}
@@ -26,6 +32,7 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 	peak.Store(before.HeapInuse)
 	processPeak := newProcessPeaks(processBefore)
 	stop := make(chan struct{})
+	sampleErrors := make(chan error, 1)
 	var wait sync.WaitGroup
 	wait.Add(1)
 	go func() {
@@ -40,8 +47,13 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 				var sample runtime.MemStats
 				runtime.ReadMemStats(&sample)
 				storeMaximum(&peak, sample.HeapInuse)
-				if processSample, sampleErr := sampleProcessMetrics(); sampleErr == nil {
+				if processSample, sampleErr := sampler(); sampleErr == nil {
 					processPeak.store(processSample)
+				} else {
+					select {
+					case sampleErrors <- sampleErr:
+					default:
+					}
 				}
 			}
 		}
@@ -54,9 +66,16 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	storeMaximum(&peak, after.HeapInuse)
-	processAfter, processErr := sampleProcessMetrics()
+	processAfter, processErr := sampler()
 	if processErr != nil && err == nil {
 		err = processErr
+	}
+	select {
+	case sampleErr := <-sampleErrors:
+		if err == nil {
+			err = sampleErr
+		}
+	default:
 	}
 	processPeak.store(processAfter)
 	observation := Observation{

@@ -135,12 +135,14 @@ case passed: production-workflow/workers-16
 case passed: production-workflow/workers-256
 case passed: native-loopback/workers-1
 case passed: native-loopback/workers-32
-performance matrix passed: JSON=performance-out/run-20260812T074119Z-1723340/report/performance-report.json Markdown=performance-out/run-20260812T074119Z-1723340/report/performance-report.md
-Performance matrix artifacts: performance-out/run-20260812T074119Z-1723340
+performance matrix passed: JSON=performance-out/run-20260812T080206Z-1907639/report/performance-report.json Markdown=performance-out/run-20260812T080206Z-1907639/report/performance-report.md
+Performance matrix artifacts: performance-out/run-20260812T080206Z-1907639
 ```
 
-The complete matrix used 9.9 GB and 3:58.48 of wall time.
-The maximum RSS was 224,476 KB. It used zero swaps and nine major page faults.
+The final complete matrix used 9.9 GB and 4:00.73 of wall time.
+The maximum RSS was 218,808 KB. It used zero swaps and three major page faults.
+All 24 case observations contain nonzero Linux peak RSS and committed memory.
+The runner applied the cold and steady worker-memory threshold.
 
 Hardware evidence:
 
@@ -281,9 +283,22 @@ ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.003s
 Windows output: PE32+ executable for MS Windows, x86-64
 ```
 
-The Linux adapter samples `/proc/self/status` and `/proc/self/io` for each action.
-The Windows adapter uses `GetProcessMemoryInfo` and `GetProcessIoCounters` for each action.
+The Linux adapter reads `VmHWM` and `VmSwap` from `/proc/self/status` for each action.
+The Windows adapter uses the peak fields from `GetProcessMemoryInfo` for each action.
 The scripts keep the raw whole-process evidence in addition to these case metrics.
+
+Neither adapter maps generic file I/O to paging I/O.
+The paging byte fields are zero when the OS does not expose per-process paging byte counters.
+
+The first final-matrix attempt stopped at the free-space preflight:
+
+```text
+insufficient free space: have 49586282496 bytes, require 50000000000 bytes
+```
+
+The previous generated matrix directory was the exact cause of the space shortage.
+After its evidence was recorded, safe cleanup removed only that exact ignored directory.
+The second attempt passed and produced the final artifact path above.
 
 The bounded native Linux smoke passed with nonzero RSS and committed-memory fields for all seven cases.
 The worker-memory evaluator compared the cold and steady 16-worker and 256-worker observations.

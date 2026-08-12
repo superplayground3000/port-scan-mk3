@@ -14,16 +14,12 @@ func sampleProcessMetrics() (processMetrics, error) {
 	if err != nil {
 		return processMetrics{}, fmt.Errorf("read Linux process status: %w", err)
 	}
-	ioCounters, err := os.ReadFile("/proc/self/io")
-	if err != nil {
-		return processMetrics{}, fmt.Errorf("read Linux process I/O counters: %w", err)
-	}
+	rss := procValueBytes(status, "VmHWM:")
+	swap := procValueBytes(status, "VmSwap:")
 	return processMetrics{
-		linuxRSS:       procValueBytes(status, "VmRSS:"),
-		committed:      procValueBytes(status, "VmSize:"),
-		swapOrPagefile: procValueBytes(status, "VmSwap:"),
-		pagingRead:     procCounter(ioCounters, "read_bytes:"),
-		pagingWrite:    procCounter(ioCounters, "write_bytes:"),
+		linuxRSS:       rss,
+		committed:      rss + swap,
+		swapOrPagefile: swap,
 	}, nil
 }
 
