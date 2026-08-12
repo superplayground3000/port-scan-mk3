@@ -413,10 +413,10 @@ func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, har
 			"record-heavy/one-gigabyte",
 		},
 		{
-			"snapshot-heavy/chunk-heavy",
-			"snapshot-heavy/port-heavy",
-			"snapshot-heavy/unreachable-heavy",
-			"snapshot-heavy/mixed",
+			"snapshot-heavy/mixed/one-megabyte",
+			"snapshot-heavy/mixed/ten-megabytes",
+			"snapshot-heavy/mixed/one-hundred-megabytes",
+			"snapshot-heavy/mixed/one-gigabyte",
 		},
 	}
 	passed := true

@@ -223,3 +223,12 @@ coverage gate passed: 85.0%
 === RESULT ===
 All selected quality gates passed.
 ```
+
+### Snapshot growth evaluator correction
+
+The complete matrix exposed a growth comparison between `chunk-heavy` at 1 MB and `port-heavy` at 10 MB.
+These are different object shapes and cannot form one growth chain.
+
+Command: `go test ./internal/perfharness/cmd/perf-harness -run '^TestApplyInputAndSnapshotGrowthThresholdsChecksEveryTenfoldStep$' -count=1`
+
+Result: failed because the evaluator marked `snapshot-heavy/port-heavy` instead of the same-shape `snapshot-heavy/mixed/ten-megabytes` case.

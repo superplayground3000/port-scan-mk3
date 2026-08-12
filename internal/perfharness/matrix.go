@@ -76,10 +76,7 @@ func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec Fi
 			return CaseResult{}, err
 		}
 	}
-	name := string(spec.Family)
-	if spec.Shape != "" {
-		name += "/" + spec.Shape
-	}
+	name := fixtureCaseName(spec)
 	result, err := SummarizeCase(name, observations)
 	if err != nil {
 		return CaseResult{}, err
@@ -99,6 +96,26 @@ func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec Fi
 	}
 	result.Verdict = Verdict{Passed: true}
 	return result, nil
+}
+
+func fixtureCaseName(spec FixtureSpec) string {
+	name := string(spec.Family)
+	if spec.Shape != "" {
+		name += "/" + spec.Shape
+	}
+	if spec.Family != FamilySnapshotHeavy || spec.Shape != "mixed" {
+		return name
+	}
+	labels := map[uint64]string{
+		1_000_000:     "one-megabyte",
+		10_000_000:    "ten-megabytes",
+		100_000_000:   "one-hundred-megabytes",
+		1_000_000_000: "one-gigabyte",
+	}
+	if label := labels[spec.Scale.TargetBytes]; label != "" {
+		return name + "/" + label
+	}
+	return name
 }
 
 func runFixtureProductionStage(ctx context.Context, suite Suite, spec FixtureSpec, manifest Manifest) (uint64, error) {

@@ -96,12 +96,17 @@ func TestApplyInputAndSnapshotGrowthThresholdsChecksEveryTenfoldStep(t *testing.
 		{Name: "record-heavy/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 13 * time.Second, GoAllocatedBytes: 1_000}, Verdict: perfharness.Verdict{Passed: true}},
 		{Name: "snapshot-heavy/chunk-heavy", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
 		{Name: "snapshot-heavy/port-heavy", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-heavy/mixed/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
+		{Name: "snapshot-heavy/mixed/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
 	}
 	if applyInputAndSnapshotGrowthThresholds(results, perfharness.New()) {
 		t.Fatal("scale thresholds accepted nonlinear CIDR time and snapshot allocation growth")
 	}
-	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[3].Verdict.HasFailure("growth-allocated-bytes") {
+	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[5].Verdict.HasFailure("growth-allocated-bytes") {
 		t.Fatalf("growth verdicts = %+v", results)
+	}
+	if results[3].Verdict.HasFailure("growth-allocated-bytes") {
+		t.Fatal("growth evaluator compared different snapshot shapes")
 	}
 }
 
