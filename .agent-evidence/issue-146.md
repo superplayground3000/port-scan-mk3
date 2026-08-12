@@ -182,3 +182,12 @@ The coverage gate then rejected total statement coverage of `84.6%`.
 
 Focused file-adapter tests now cover exact metadata limits, early oversized-file rejection, and missing-file errors.
 The next standalone coverage gate passed at `85.0%` without a threshold change.
+
+The final `make verify` run completed with:
+
+```text
+coverage gate passed: 85.0%
+
+=== RESULT ===
+All selected quality gates passed.
+```
