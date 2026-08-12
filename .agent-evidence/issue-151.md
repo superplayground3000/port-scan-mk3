@@ -505,3 +505,29 @@ ok  github.com/xuxiping/port-scan-mk3/pkg/state  1.017s
 ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  1.055s
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.026s
 ```
+
+## Pressure fatal recovery
+
+The first harness test found no pressure evidence.
+The old case retained only the fatal error text.
+
+The green case records three source failures and final probe telemetry.
+It loads the saved snapshot and records its cursor, remaining tasks, and rewind count.
+It also records both output row counts before recovery and the released file handles.
+
+The small run started one probe and saved cursor 1 with 19 remaining tasks.
+It started zero probes after the fatal stop.
+No chunk rewind was necessary because the first result was committed before the stop.
+
+The recovery used pressure disabled and the production scan path.
+It scanned all 19 remaining tasks.
+The recovery and reference task digests were equal.
+Both output files ended with 20 rows and final cursor 20.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/pkg/state  1.032s
+ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  2.925s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  2.552s
+```

@@ -192,3 +192,34 @@ func TestCompareReportsKeepsStableSnapshotFailureEvidence(t *testing.T) {
 		t.Fatalf("snapshot preservation difference = %v", differences)
 	}
 }
+
+func TestCompareReportsKeepsStablePressureFailureEvidence(t *testing.T) {
+	t.Parallel()
+
+	run := perfharness.FailureResult{
+		Scenario: "pressure-fatal-error", Observed: true, ErrorClass: "pressure-fatal",
+		Operation: "pressure-poll", TotalItems: 10,
+		Pressure: &perfharness.FailurePressureEvidence{
+			PressureFailures: 3, SavedCursor: 4, Remaining: 6, HandlesReleased: true,
+			RecoveryCompleted: true, RecoveryTaskCount: 6, RecoveryTaskDigest: "same",
+			ReferenceTaskDigest: "same", FinalCursor: 10,
+		},
+	}
+	left := perfharness.Report{Cases: []perfharness.CaseResult{{Name: "pressure", Failure: &perfharness.FailureCaseEvidence{
+		SchemaVersion: perfharness.FailureEvidenceSchemaVersion, Runs: []perfharness.FailureResult{run},
+	}}}}
+	right := left
+	right.Cases = append([]perfharness.CaseResult(nil), left.Cases...)
+	rightEvidence := *left.Cases[0].Failure
+	rightEvidence.Runs = append([]perfharness.FailureResult(nil), left.Cases[0].Failure.Runs...)
+	rightPressure := *left.Cases[0].Failure.Runs[0].Pressure
+	rightEvidence.Runs[0].Pressure = &rightPressure
+	right.Cases[0].Failure = &rightEvidence
+	if differences := perfharness.New().CompareReports(left, right); len(differences) != 0 {
+		t.Fatalf("equal pressure failure evidence differs: %v", differences)
+	}
+	right.Cases[0].Failure.Runs[0].Pressure.RecoveryCompleted = false
+	if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "pressure:failure") {
+		t.Fatalf("pressure recovery difference = %v", differences)
+	}
+}

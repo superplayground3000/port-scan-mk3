@@ -268,6 +268,39 @@ func TestRunFailureSmokePreservesTheOldSnapshotAfterFatalSaveFailure(t *testing.
 	}
 }
 
+func TestRunFailureSmokeRecoversEveryTaskAfterPressureFatal(t *testing.T) {
+	t.Parallel()
+
+	const items = 20
+	result, err := perfharness.New().RunFailureSmoke(context.Background(), perfharness.FailureSpec{
+		OutputDir: filepath.Join(t.TempDir(), "pressure fatal"),
+		Items:     items,
+		Workers:   4,
+		Scenario:  "pressure-fatal-error",
+	})
+	if err != nil {
+		t.Fatalf("RunFailureSmoke: %v", err)
+	}
+	if result.Operation != "pressure-poll" || result.ErrorClass != "pressure-fatal" || result.Pressure == nil {
+		t.Fatalf("pressure failure identity = %+v", result)
+	}
+	evidence := result.Pressure
+	if evidence.PressureFailures != 3 || evidence.ProbeStartsAfterFailure != 0 ||
+		!evidence.HandlesReleased {
+		t.Fatalf("pressure stop evidence = %+v", evidence)
+	}
+	if evidence.SavedCursor+evidence.Remaining != items || !evidence.RecoveryCompleted ||
+		evidence.RecoveryTaskCount != evidence.Remaining || evidence.RecoveryTaskDigest == "" ||
+		evidence.RecoveryTaskDigest != evidence.ReferenceTaskDigest ||
+		evidence.FinalScanRows != evidence.RowsBeforeRecovery+evidence.Remaining ||
+		evidence.FinalOpenRows != evidence.OpenRowsBeforeRecovery+evidence.Remaining || evidence.FinalCursor != items {
+		t.Fatalf("pressure recovery evidence = %+v", evidence)
+	}
+	if !result.Correct() {
+		t.Fatalf("FailureResult.Correct rejected pressure evidence: %+v", result)
+	}
+}
+
 func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
 	t.Parallel()
 

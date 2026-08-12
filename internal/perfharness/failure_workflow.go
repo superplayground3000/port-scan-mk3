@@ -40,6 +40,27 @@ type FailureResult struct {
 	StageObservation Observation              `json:"stage_observation"`
 	Output           *FailureOutputEvidence   `json:"output,omitempty"`
 	Snapshot         *FailureSnapshotEvidence `json:"snapshot,omitempty"`
+	Pressure         *FailurePressureEvidence `json:"pressure,omitempty"`
+}
+
+// FailurePressureEvidence records fatal pressure rewind and recovery correctness.
+type FailurePressureEvidence struct {
+	PressureFailures        uint64 `json:"pressure_failures"`
+	ProbeStarts             uint64 `json:"probe_starts"`
+	ProbeStartsAfterFailure uint64 `json:"probe_starts_after_failure"`
+	RewoundChunks           uint64 `json:"rewound_chunks"`
+	SavedCursor             uint64 `json:"saved_cursor"`
+	Remaining               uint64 `json:"remaining"`
+	RowsBeforeRecovery      uint64 `json:"rows_before_recovery"`
+	OpenRowsBeforeRecovery  uint64 `json:"open_rows_before_recovery"`
+	HandlesReleased         bool   `json:"handles_released"`
+	RecoveryCompleted       bool   `json:"recovery_completed"`
+	RecoveryTaskCount       uint64 `json:"recovery_task_count"`
+	RecoveryTaskDigest      string `json:"recovery_task_digest"`
+	ReferenceTaskDigest     string `json:"reference_task_digest"`
+	FinalScanRows           uint64 `json:"final_scan_rows"`
+	FinalOpenRows           uint64 `json:"final_open_rows"`
+	FinalCursor             uint64 `json:"final_cursor"`
 }
 
 // FailureSnapshotEvidence records atomic-save and precedence correctness.
@@ -67,6 +88,15 @@ func (result FailureResult) Correct() bool {
 			snapshot.PreviousDigest != "" && snapshot.PreviousDigest == snapshot.AfterDigest &&
 			snapshot.PreviousLoadable && snapshot.TempFilesRemoved && snapshot.HandleReleased &&
 			snapshot.ErrorPrecedence && snapshot.PressureFailures == 3
+	}
+	if result.Scenario == "pressure-fatal-error" {
+		pressure := result.Pressure
+		return pressure != nil && pressure.PressureFailures == 3 && pressure.ProbeStartsAfterFailure == 0 &&
+			pressure.SavedCursor+pressure.Remaining == result.TotalItems &&
+			pressure.HandlesReleased && pressure.RecoveryCompleted && pressure.RecoveryTaskCount == pressure.Remaining &&
+			pressure.RecoveryTaskDigest != "" && pressure.RecoveryTaskDigest == pressure.ReferenceTaskDigest &&
+			pressure.FinalScanRows == pressure.RowsBeforeRecovery+pressure.Remaining &&
+			pressure.FinalOpenRows == pressure.OpenRowsBeforeRecovery+pressure.Remaining && pressure.FinalCursor == result.TotalItems
 	}
 	if result.Scenario != "output-failure" {
 		return true
@@ -153,6 +183,11 @@ func (Suite) RunFailureSmoke(ctx context.Context, spec FailureSpec) (FailureResu
 		}
 	} else if result.Scenario == "snapshot-save-failure" {
 		result.Snapshot, err = completeSnapshotFailureEvidence(inputs, stageState)
+		if err != nil {
+			return FailureResult{}, err
+		}
+	} else if result.Scenario == "pressure-fatal-error" {
+		result.Pressure, err = completePressureFailureEvidence(ctx, spec, inputs, stageState)
 		if err != nil {
 			return FailureResult{}, err
 		}
@@ -262,23 +297,32 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 		if err != nil {
 			return FailureResult{}, err
 		}
-		scanConfig, err := config.NewScan(config.ScanValues{
+		scanConfig, err := config.NewScanWithResourceLimits(config.ScanValues{
 			CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
 			PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
 			Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: time.Millisecond,
 			BucketRate: 1, BucketCapacity: 1, OutputFlushResults: 1000, LogLevel: "error", Format: "json", Quiet: true,
 			Pressure: pressurePolicy,
-		})
+		}, cancellationScanResourceLimits())
 		if err != nil {
 			return FailureResult{}, err
 		}
+		stageState.scanConfig = scanConfig
+		var failures atomic.Uint64
 		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			DisableKeyboard: true,
-			PressureSource:  failingPressureSource{},
+			PressureSource:  failingPressureSource{failures: &failures},
 			Dial: func(context.Context, string, string) (net.Conn, error) {
 				return fakeOpenConn{}, nil
 			},
+			ProbeTelemetryObserver: func(telemetry scanapp.ProbeTelemetry) {
+				stageState.probeTelemetry = telemetry
+			},
+			SnapshotTelemetryObserver: func(telemetry scanapp.SnapshotTelemetry) {
+				stageState.snapshotTelemetry = telemetry
+			},
 		})
+		stageState.pressureFailures = failures.Load()
 		return expectedFailure(spec.Scenario, "pressure-poll", "pressure-fatal", runErr, "pressure api failed 3 times")
 	default:
 		return FailureResult{}, fmt.Errorf("unsupported failure scenario %q", spec.Scenario)
@@ -381,6 +425,88 @@ func completeSnapshotFailureEvidence(inputs failureInputs, stage failureStageSta
 		ErrorPrecedence:  stage.errorPrecedence,
 		PressureFailures: stage.pressureFailures,
 		RewoundChunks:    stage.snapshotTelemetry.RewoundChunks,
+	}, nil
+}
+
+func completePressureFailureEvidence(ctx context.Context, spec FailureSpec, inputs failureInputs, stage failureStageState) (*FailurePressureEvidence, error) {
+	snapshot, err := state.LoadSnapshotWithLimits(inputs.snapshotPath, cancellationSnapshotLimits())
+	if err != nil {
+		return nil, fmt.Errorf("load pressure-fatal snapshot: %w", err)
+	}
+	if snapshot.Output == nil {
+		return nil, fmt.Errorf("pressure-fatal snapshot has no output paths")
+	}
+	var savedCursor uint64
+	var remaining uint64
+	for _, chunk := range snapshot.Chunks {
+		savedCursor += uint64(chunk.NextIndex)
+		remaining += uint64(chunk.Remaining())
+	}
+	scanPath := snapshot.Output.ScanPath
+	openPath := snapshot.Output.OpenPath
+	scanRows, err := countCSVRows(scanPath)
+	if err != nil {
+		return nil, err
+	}
+	openRows, err := countCSVRows(openPath)
+	if err != nil {
+		return nil, err
+	}
+	handlesReleased := outputHandlesReleased(scanPath, openPath)
+	reference, err := failureCandidateTaskEvidence(snapshot, spec.Items)
+	if err != nil {
+		return nil, fmt.Errorf("build pressure-fatal task reference: %w", err)
+	}
+	recoveryConfig, err := config.NewScanWithResourceLimits(config.ScanValues{
+		CIDRFile: inputs.manifest.ArtifactPath, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+		PortFile: inputs.portPath, ResumeInput: inputs.snapshotPath, Output: filepath.Join(spec.OutputDir, "results.csv"),
+		Workers: spec.Workers, DialTimeout: time.Second, DispatchDelay: 0,
+		BucketRate: ratelimit.MaxRate, BucketCapacity: ratelimit.MaxCapacity, OutputFlushResults: 1000,
+		LogLevel: "error", Format: "json", Quiet: true, Pressure: config.PressureDisabled(),
+	}, cancellationScanResourceLimits())
+	if err != nil {
+		return nil, err
+	}
+	recoveryTasks := newOrderedTaskEvidence()
+	if remaining > 0 {
+		if err := scanapp.Run(ctx, recoveryConfig, io.Discard, io.Discard, scanapp.RunOptions{
+			DisableKeyboard: true,
+			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			TaskObserver: func(ip string, port int) {
+				recoveryTasks.Observe(net.JoinHostPort(ip, strconv.Itoa(port)) + "/tcp")
+			},
+		}); err != nil {
+			return nil, fmt.Errorf("recover pressure-fatal scan: %w", err)
+		}
+	}
+	recovered := recoveryTasks.Snapshot()
+	finalScanRows, err := countCSVRows(scanPath)
+	if err != nil {
+		return nil, err
+	}
+	finalOpenRows, err := countCSVRows(openPath)
+	if err != nil {
+		return nil, err
+	}
+	finalCursor := savedCursor + recovered.Count
+	return &FailurePressureEvidence{
+		PressureFailures:        stage.pressureFailures,
+		ProbeStarts:             stage.probeTelemetry.TotalStarted,
+		ProbeStartsAfterFailure: stage.probeTelemetry.StartsAfterStop,
+		RewoundChunks:           stage.snapshotTelemetry.RewoundChunks,
+		SavedCursor:             savedCursor,
+		Remaining:               remaining,
+		RowsBeforeRecovery:      scanRows,
+		OpenRowsBeforeRecovery:  openRows,
+		HandlesReleased:         handlesReleased,
+		RecoveryCompleted: savedCursor+remaining == spec.Items && recovered.Count == remaining && recovered.Digest == reference.Digest &&
+			finalScanRows == scanRows+remaining && finalOpenRows == openRows+remaining && finalCursor == spec.Items,
+		RecoveryTaskCount:   recovered.Count,
+		RecoveryTaskDigest:  recovered.Digest,
+		ReferenceTaskDigest: reference.Digest,
+		FinalScanRows:       finalScanRows,
+		FinalOpenRows:       finalOpenRows,
+		FinalCursor:         finalCursor,
 	}, nil
 }
 
