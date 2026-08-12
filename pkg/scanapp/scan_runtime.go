@@ -202,7 +202,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	}
 	targetsGenerated := 0
 	for _, rt := range plan.runtimes {
-		targetsGenerated += len(rt.targets)
+		targetsGenerated += rt.targetCount()
 	}
 	logger.eventf("bucket_parse_complete", "", 0, "bucket_parse_complete", LogEventNone, map[string]any{
 		"chunks_parsed":     incompleteChunks,

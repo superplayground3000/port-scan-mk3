@@ -64,29 +64,10 @@ func (basicGroupStrategy) targets(record input.CIDRRecord) ([]scanTarget, error)
 }
 
 func (basicGroupStrategy) targetsContext(ctx context.Context, record input.CIDRRecord) ([]scanTarget, error) {
-	cidr := record.CIDR
-	if cidr == "" && record.Net != nil {
-		cidr = record.Net.String()
-	}
-
-	selector := ""
-	switch {
-	case record.Selector != nil:
-		selector = record.Selector.String()
-	case strings.TrimSpace(record.IPRaw) != "":
-		selector = strings.TrimSpace(record.IPRaw)
-	case record.Net != nil:
-		selector = record.Net.String()
-	default:
-		return nil, fmt.Errorf("record for cidr %s missing selector", cidr)
-	}
-
-	ips, err := task.ExpandIPSelectorsContextWithLimits(ctx, []string{selector}, task.ExpansionLimits{})
+	cidr, ips, err := basicTargetIPsContext(ctx, record)
 	if err != nil {
-		return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
+		return nil, err
 	}
-	ips = task.FilterBoundaryBroadcast(ips, record.Net)
-
 	targets := make([]scanTarget, 0, len(ips))
 	for i, ip := range ips {
 		if i%4096 == 0 {
@@ -105,6 +86,32 @@ func (basicGroupStrategy) targetsContext(ctx context.Context, record input.CIDRR
 		})
 	}
 	return targets, nil
+}
+
+func basicTargetIPsContext(ctx context.Context, record input.CIDRRecord) (string, []string, error) {
+	cidr := record.CIDR
+	if cidr == "" && record.Net != nil {
+		cidr = record.Net.String()
+	}
+
+	selector := ""
+	switch {
+	case record.Selector != nil:
+		selector = record.Selector.String()
+	case strings.TrimSpace(record.IPRaw) != "":
+		selector = strings.TrimSpace(record.IPRaw)
+	case record.Net != nil:
+		selector = record.Net.String()
+	default:
+		return "", nil, fmt.Errorf("record for cidr %s missing selector", cidr)
+	}
+
+	ips, err := task.ExpandIPSelectorsContextWithLimits(ctx, []string{selector}, task.ExpansionLimits{})
+	if err != nil {
+		return "", nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
+	}
+	ips = task.FilterBoundaryBroadcast(ips, record.Net)
+	return cidr, ips, nil
 }
 
 func resolveBasicTargetsContext(ctx context.Context, records []input.CIDRRecord, fallback []input.PortSpec, reachable func(string) bool) (basicTargetResolution, error) {
@@ -225,8 +232,8 @@ func resolveBasicFallbackTargetsContext(ctx context.Context, records []input.CID
 	seenIPs := make(map[uint32]struct{})
 	for _, cidr := range cidrs {
 		group := cidrGroups[cidr]
-		targets := group.targets[:0]
-		for _, target := range group.targets {
+		targets := group.basicTargets[:0]
+		for _, target := range group.basicTargets {
 			if _, exists := seenIPs[target.ipU32]; exists {
 				continue
 			}
@@ -238,7 +245,7 @@ func resolveBasicFallbackTargetsContext(ctx context.Context, records []input.CID
 		}
 		group.cidr = cidr
 		group.ports = formatPortRows(fallbackPorts)
-		group.targets = targets
+		group.basicTargets = targets
 		group.totalCount = len(targets) * len(fallbackPorts)
 		groups[basicResolutionGroupKey(cidr, fallbackPorts)] = group
 	}
@@ -259,9 +266,19 @@ func buildBasicFallbackGroupsContext(ctx context.Context, records []input.CIDRRe
 		if err != nil {
 			return nil, err
 		}
-		targets, err := strategy.targetsContext(ctx, record)
+		_, ips, err := basicTargetIPsContext(ctx, record)
 		if err != nil {
 			return nil, err
+		}
+		meta := &targetMeta{fabName: record.FabName, cidrName: record.CIDRName}
+		targets := make([]basicScanTarget, 0, len(ips))
+		for ipIndex, ip := range ips {
+			if ipIndex%4096 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			targets = append(targets, basicScanTarget{ip: ip, ipU32: ipv4ToUint32(ip), meta: meta})
 		}
 		targets, err = filterBasicFallbackTargetsContext(ctx, targets, predicate)
 		if err != nil {
@@ -272,22 +289,22 @@ func buildBasicFallbackGroupsContext(ctx context.Context, records []input.CIDRRe
 		}
 		group, exists := groups[cidr]
 		if !exists {
-			group.targets = targets
+			group.basicTargets = targets
 		} else {
-			group.targets = append(group.targets, targets...)
+			group.basicTargets = append(group.basicTargets, targets...)
 		}
 		groups[cidr] = group
 	}
 	for cidr, group := range groups {
-		sort.Slice(group.targets, func(i, j int) bool {
-			return group.targets[i].ipU32 < group.targets[j].ipU32
+		sort.Slice(group.basicTargets, func(i, j int) bool {
+			return group.basicTargets[i].ipU32 < group.basicTargets[j].ipU32
 		})
 		groups[cidr] = group
 	}
 	return groups, nil
 }
 
-func filterBasicFallbackTargetsContext(ctx context.Context, targets []scanTarget, reachable func(string) bool) ([]scanTarget, error) {
+func filterBasicFallbackTargetsContext(ctx context.Context, targets []basicScanTarget, reachable func(string) bool) ([]basicScanTarget, error) {
 	kept := targets[:0]
 	for index := range targets {
 		if index%4096 == 0 {

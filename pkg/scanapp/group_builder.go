@@ -12,10 +12,32 @@ import (
 )
 
 type cidrGroup struct {
-	cidr       string
-	ports      []string
-	targets    []scanTarget
-	totalCount int
+	cidr         string
+	ports        []string
+	targets      []scanTarget
+	basicTargets []basicScanTarget
+	totalCount   int
+}
+
+func (group cidrGroup) targetCount() int {
+	return len(group.targets) + len(group.basicTargets)
+}
+
+func (group cidrGroup) validateTargetStorage() error {
+	if len(group.targets) > 0 && len(group.basicTargets) > 0 {
+		return fmt.Errorf("CIDR group has mixed target storage")
+	}
+	return nil
+}
+
+func (group cidrGroup) firstTargetMeta() targetMeta {
+	if len(group.targets) > 0 {
+		return group.targets[0].meta
+	}
+	if len(group.basicTargets) > 0 && group.basicTargets[0].meta != nil {
+		return *group.basicTargets[0].meta
+	}
+	return targetMeta{}
 }
 
 type groupBuildStrategy interface {

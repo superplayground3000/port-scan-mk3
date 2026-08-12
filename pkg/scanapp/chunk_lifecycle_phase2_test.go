@@ -102,12 +102,19 @@ func assertRuntimesEquivalent(t *testing.T, got, want []*chunkRuntime) {
 		if fmt.Sprintf("%v", g.ports) != fmt.Sprintf("%v", w.ports) {
 			t.Fatalf("runtime[%d] %s ports: got %v, want %v", i, w.ipCidr, g.ports, w.ports)
 		}
-		if len(g.targets) != len(w.targets) {
-			t.Fatalf("runtime[%d] %s target count: got %d, want %d", i, w.ipCidr, len(g.targets), len(w.targets))
+		if g.state.TotalCount != w.state.TotalCount {
+			t.Fatalf("runtime[%d] %s task count: got %d, want %d", i, w.ipCidr, g.state.TotalCount, w.state.TotalCount)
 		}
-		for j := range w.targets {
-			gt, wt := g.targets[j], w.targets[j]
-			if gt.ip != wt.ip || gt.ipU32 != wt.ipU32 || gt.port != wt.port || gt.ipCidr != wt.ipCidr || gt.meta != wt.meta {
+		for j := 0; j < w.state.TotalCount; j++ {
+			gt, gp, err := indexToChunkRuntimeTarget(g, j)
+			if err != nil {
+				t.Fatalf("runtime[%d] target[%d]: %v", i, j, err)
+			}
+			wt, wp, err := indexToChunkRuntimeTarget(w, j)
+			if err != nil {
+				t.Fatalf("reference runtime[%d] target[%d]: %v", i, j, err)
+			}
+			if gt.ip != wt.ip || gt.ipU32 != wt.ipU32 || gp != wp || gt.ipCidr != wt.ipCidr || gt.meta != wt.meta {
 				t.Fatalf("runtime[%d] %s target[%d]:\n got  %+v\n want %+v", i, w.ipCidr, j, gt, wt)
 			}
 		}

@@ -71,7 +71,7 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 			obs.OnGateReleased(ch.CIDR, i)
 			logger.eventf(LogEventGateReleased, ch.CIDR, 0, LogEventGateReleased, LogEventNone, nil)
 
-			target, port, err := indexToRuntimeTarget(rt.targets, rt.ports, i)
+			target, port, err := indexToChunkRuntimeTarget(rt, i)
 			if err != nil {
 				return err
 			}

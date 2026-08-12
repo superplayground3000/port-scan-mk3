@@ -45,10 +45,7 @@ func collectChunkStates(runtimes []*chunkRuntime) []task.Chunk {
 // basicChunkFromGroup builds a basic chunk from one resolved target group.
 // The resolution module supplies its ports and exact task count.
 func basicChunkFromGroup(g cidrGroup) task.Chunk {
-	cidrName := ""
-	if len(g.targets) > 0 {
-		cidrName = g.targets[0].meta.cidrName
-	}
+	cidrName := g.firstTargetMeta().cidrName
 	return task.Chunk{
 		CIDR:         g.cidr,
 		CIDRName:     cidrName,
@@ -204,6 +201,9 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 				return nil, fmt.Errorf("rebuild basic chunk targets: %w", err)
 			}
 		}
+		if err := group.validateTargetStorage(); err != nil {
+			return nil, err
+		}
 
 		portRows := ch.Ports
 		if len(portRows) == 0 {
@@ -226,7 +226,7 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 			return nil, err
 		}
 
-		expectedTotal := len(group.targets) * len(ports)
+		expectedTotal := group.targetCount() * len(ports)
 		if !richMode {
 			expectedTotal = group.totalCount
 		}
@@ -242,12 +242,13 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 			ch.Status = "pending"
 		}
 		rt := &chunkRuntime{
-			ipCidr:  ch.CIDR,
-			ports:   ports,
-			targets: group.targets,
-			state:   ch,
-			tracker: newChunkStateTracker(ch),
-			bkt:     ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity),
+			ipCidr:       ch.CIDR,
+			ports:        ports,
+			targets:      group.targets,
+			basicTargets: group.basicTargets,
+			state:        ch,
+			tracker:      newChunkStateTracker(ch),
+			bkt:          ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity),
 		}
 		runtimes = append(runtimes, rt)
 		// One progress tick per incomplete chunk actually expanded (Phase 5). The
