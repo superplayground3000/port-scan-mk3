@@ -43,6 +43,16 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 			ProbeStartsAfterCancel: 0,
 		}},
 	}
+	result.Failure = &perfharness.FailureCaseEvidence{
+		SchemaVersion: perfharness.FailureEvidenceSchemaVersion,
+		Runs: []perfharness.FailureResult{{
+			Scenario:   "output-failure",
+			Observed:   true,
+			ErrorClass: "output",
+			Operation:  "output-write",
+			TotalItems: perfharness.FullItemCount,
+		}},
+	}
 	report := perfharness.Report{
 		SchemaVersion: perfharness.SchemaVersion,
 		Contract:      perfharness.DefaultContract(),
@@ -89,6 +99,11 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 	for _, evidence := range []string{"Cancellation evidence", "input-records at 100000", "Probe starts after stop", "Maximum finalization"} {
 		if !strings.Contains(string(markdown), evidence) {
 			t.Fatalf("Markdown report lacks cancellation evidence %q:\n%s", evidence, markdown)
+		}
+	}
+	for _, evidence := range []string{"Failure evidence", "output-write", "output", "10000000"} {
+		if !strings.Contains(string(markdown), evidence) {
+			t.Fatalf("Markdown report lacks failure evidence %q:\n%s", evidence, markdown)
 		}
 	}
 }

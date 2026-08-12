@@ -171,6 +171,26 @@ func TestRunFailureSmokeExecutesProductionSnapshotAndPressureFailures(t *testing
 	}
 }
 
+func TestRunFailureSmokeSeparatesPreparationAndStageEvidence(t *testing.T) {
+	t.Parallel()
+
+	result, err := perfharness.New().RunFailureSmoke(context.Background(), perfharness.FailureSpec{
+		OutputDir: filepath.Join(t.TempDir(), "snapshot failure"),
+		Items:     10,
+		Workers:   2,
+		Scenario:  "snapshot-save-failure",
+	})
+	if err != nil {
+		t.Fatalf("RunFailureSmoke: %v", err)
+	}
+	if result.TotalItems != 10 || result.Operation == "" || result.ErrorClass == "" {
+		t.Fatalf("failure identity = %+v", result)
+	}
+	if result.Preparation.WallTime <= 0 || result.StageObservation.WallTime <= 0 {
+		t.Fatalf("failure phase metrics are not separate: %+v", result)
+	}
+}
+
 func TestRunProductionSmokeRejectsZeroItemsBeforeIO(t *testing.T) {
 	t.Parallel()
 

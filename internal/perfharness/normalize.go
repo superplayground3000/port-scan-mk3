@@ -52,6 +52,9 @@ func (suite Suite) CompareReports(left, right Report) []string {
 		if cancellationDifferences(leftCase.Cancellation, rightCase.Cancellation) {
 			differences = append(differences, name+":cancellation")
 		}
+		if failureDifferences(leftCase.Failure, rightCase.Failure) {
+			differences = append(differences, name+":failure")
+		}
 		switch {
 		case leftCase.Semantic == nil && rightCase.Semantic == nil:
 		case leftCase.Semantic == nil || rightCase.Semantic == nil:
@@ -63,6 +66,23 @@ func (suite Suite) CompareReports(left, right Report) []string {
 		}
 	}
 	return differences
+}
+
+func failureDifferences(left, right *FailureCaseEvidence) bool {
+	if left == nil || right == nil {
+		return left != right
+	}
+	if left.SchemaVersion != right.SchemaVersion || len(left.Runs) != len(right.Runs) {
+		return true
+	}
+	for index := range left.Runs {
+		a, b := left.Runs[index], right.Runs[index]
+		if a.Scenario != b.Scenario || a.Observed != b.Observed || a.ErrorClass != b.ErrorClass ||
+			a.Operation != b.Operation || a.TotalItems != b.TotalItems {
+			return true
+		}
+	}
+	return false
 }
 
 func cancellationDifferences(left, right *CancellationCaseEvidence) bool {

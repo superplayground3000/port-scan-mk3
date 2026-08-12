@@ -428,3 +428,22 @@ The retained diagnostics are in these directories:
 - `/media/hp/secondary/issue151-performance-548802b-diagnostics/cancel-rich-99-10m/`
 - `/media/hp/secondary/issue151-performance-548802b-diagnostics/cancel-bucket-99-10m/`
 - `/media/hp/secondary/issue151-performance-548802b-diagnostics/cancel-resume-99-10m/`
+
+## Failure evidence phase split
+
+The first failure-evidence tests did not compile.
+`FailureResult` had no phase, operation, error-class, or logical-item fields.
+`CaseResult` also had no versioned failure evidence.
+
+The harness now measures fixture preparation and the failure stage separately.
+The JSON report retains all six `FailureResult` values.
+The Markdown report shows the scenario, operation, error class, and logical item count.
+Cross-platform comparison ignores error text and metrics.
+It compares the stable failure fields.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.032s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness  1.029s
+```

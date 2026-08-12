@@ -54,10 +54,18 @@ type PhaseResult struct {
 
 const CancellationEvidenceSchemaVersion = "1"
 
+const FailureEvidenceSchemaVersion = "1"
+
 // CancellationCaseEvidence retains the six production cancellation results.
 type CancellationCaseEvidence struct {
 	SchemaVersion string               `json:"schema_version"`
 	Runs          []CancellationResult `json:"runs"`
+}
+
+// FailureCaseEvidence retains the six production failure results.
+type FailureCaseEvidence struct {
+	SchemaVersion string          `json:"schema_version"`
+	Runs          []FailureResult `json:"runs"`
 }
 
 // CaseResult records six observations and the evaluated summaries.
@@ -74,6 +82,7 @@ type CaseResult struct {
 	Semantic          *SemanticArtifact         `json:"semantic,omitempty"`
 	Regression        *RegressionComparison     `json:"regression,omitempty"`
 	Cancellation      *CancellationCaseEvidence `json:"cancellation,omitempty"`
+	Failure           *FailureCaseEvidence      `json:"failure,omitempty"`
 }
 
 // Report is the portable evidence document for one matrix run.
@@ -223,6 +232,18 @@ func markdownReport(report Report) string {
 			progress = fmt.Sprintf("%s at %d", run.ProgressUnit, run.InjectionThreshold)
 		}
 		fmt.Fprintf(&text, "| %s | %d | %s | %s | %s | %d | %s |\n", result.Name, len(result.Cancellation.Runs), progress, maximumStop, maximumFinalization, startsAfterStop, recovery)
+	}
+	fmt.Fprintln(&text)
+	fmt.Fprintln(&text, "## Failure evidence")
+	fmt.Fprintln(&text)
+	fmt.Fprintln(&text, "| Case | Runs | Scenario | Operation | Error class | Logical items |")
+	fmt.Fprintln(&text, "|---|---:|---|---|---|---:|")
+	for _, result := range report.Cases {
+		if result.Failure == nil || len(result.Failure.Runs) == 0 {
+			continue
+		}
+		run := result.Failure.Runs[0]
+		fmt.Fprintf(&text, "| %s | %d | %s | %s | %s | %d |\n", result.Name, len(result.Failure.Runs), run.Scenario, run.Operation, run.ErrorClass, run.TotalItems)
 	}
 	return text.String()
 }

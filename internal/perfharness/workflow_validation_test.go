@@ -68,7 +68,7 @@ func TestExpectedFailureRejectsMissingOrDifferentErrors(t *testing.T) {
 	t.Parallel()
 
 	for _, err := range []error{nil, errors.New("different failure")} {
-		if _, validationErr := expectedFailure("case", err, "expected failure"); validationErr == nil {
+		if _, validationErr := expectedFailure("case", "operation", "class", err, "expected failure"); validationErr == nil {
 			t.Fatalf("expectedFailure accepted %v", err)
 		}
 	}

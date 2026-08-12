@@ -1105,26 +1105,25 @@ func runResumeCase(ctx context.Context, harness perfharness.Harness, outputDir s
 
 func runFailureCase(ctx context.Context, harness perfharness.Harness, outputDir string, items uint64, workers int, scenario string) (perfharness.CaseResult, error) {
 	observations := make([]perfharness.Observation, 0, 6)
+	preparations := make([]perfharness.Observation, 0, 6)
+	evidence := make([]perfharness.FailureResult, 0, 6)
 	correct := true
 	for run := 0; run < 6; run++ {
-		var failure perfharness.FailureResult
-		observation, err := harness.Measure(ctx, 0, items, func(runCtx context.Context) (uint64, error) {
-			result, runErr := harness.RunFailureSmoke(runCtx, perfharness.FailureSpec{
-				OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
-				Items:     items,
-				Workers:   workers,
-				Scenario:  scenario,
-			})
-			failure = result
-			return 0, runErr
+		failure, err := harness.RunFailureSmoke(ctx, perfharness.FailureSpec{
+			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
+			Items:     items,
+			Workers:   workers,
+			Scenario:  scenario,
 		})
 		if err != nil {
 			return perfharness.CaseResult{}, err
 		}
-		if !failure.Observed || failure.ErrorText == "" {
+		if !failure.Observed || failure.ErrorText == "" || failure.ErrorClass == "" || failure.Operation == "" || failure.TotalItems != items {
 			correct = false
 		}
-		observations = append(observations, observation)
+		observations = append(observations, failure.StageObservation)
+		preparations = append(preparations, failure.Preparation)
+		evidence = append(evidence, failure)
 		if err := removeCompletedCaseRun(outputDir, run); err != nil {
 			return perfharness.CaseResult{}, err
 		}
@@ -1134,6 +1133,12 @@ func runFailureCase(ctx context.Context, harness perfharness.Harness, outputDir 
 		return perfharness.CaseResult{}, err
 	}
 	result.Correctness = perfharness.Correctness{Headers: true, RowCounts: true, SnapshotProgress: true, ExpectedValues: correct, Digests: true}
+	preparation, err := perfharness.SummarizePhase(result.Name+" preparation", preparations)
+	if err != nil {
+		return perfharness.CaseResult{}, err
+	}
+	result.FixtureGeneration = &preparation
+	result.Failure = &perfharness.FailureCaseEvidence{SchemaVersion: perfharness.FailureEvidenceSchemaVersion, Runs: evidence}
 	result.LogicalItems = items
 	result.Verdict = perfharness.Verdict{Passed: correct}
 	return result, nil

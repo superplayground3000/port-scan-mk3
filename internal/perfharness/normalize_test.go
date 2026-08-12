@@ -112,3 +112,36 @@ func TestCompareReportsKeepsStableCancellationEvidence(t *testing.T) {
 		t.Fatalf("stable cancellation difference = %v", differences)
 	}
 }
+
+func TestCompareReportsKeepsStableFailureEvidence(t *testing.T) {
+	t.Parallel()
+
+	left := perfharness.Report{Cases: []perfharness.CaseResult{{
+		Name: "production-failure/output-failure",
+		Failure: &perfharness.FailureCaseEvidence{
+			SchemaVersion: perfharness.FailureEvidenceSchemaVersion,
+			Runs: []perfharness.FailureResult{{
+				Scenario:   "output-failure",
+				Observed:   true,
+				ErrorText:  "linux text",
+				ErrorClass: "output",
+				Operation:  "output-write",
+				TotalItems: perfharness.FullItemCount,
+			}},
+		},
+	}}}
+	right := left
+	right.Cases = append([]perfharness.CaseResult(nil), left.Cases...)
+	rightEvidence := *left.Cases[0].Failure
+	rightEvidence.Runs = append([]perfharness.FailureResult(nil), left.Cases[0].Failure.Runs...)
+	rightEvidence.Runs[0].ErrorText = "windows text"
+	rightEvidence.Runs[0].StageObservation.WallTime = time.Second
+	right.Cases[0].Failure = &rightEvidence
+	if differences := perfharness.New().CompareReports(left, right); len(differences) != 0 {
+		t.Fatalf("volatile failure observations caused differences: %v", differences)
+	}
+	right.Cases[0].Failure.Runs[0].Operation = "output-open"
+	if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "production-failure/output-failure:failure") {
+		t.Fatalf("stable failure difference = %v", differences)
+	}
+}

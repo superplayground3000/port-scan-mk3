@@ -50,6 +50,26 @@ func TestRunCommandRejectsInvalidInvocation(t *testing.T) {
 	}
 }
 
+func TestRunFailureCaseRetainsSixRunEvidence(t *testing.T) {
+	t.Parallel()
+
+	result, err := runFailureCase(context.Background(), perfharness.New(), t.TempDir(), 2, 1, "snapshot-save-failure")
+	if err != nil {
+		t.Fatalf("runFailureCase: %v", err)
+	}
+	if result.Failure == nil || result.Failure.SchemaVersion != perfharness.FailureEvidenceSchemaVersion {
+		t.Fatalf("failure evidence = %+v", result.Failure)
+	}
+	if len(result.Failure.Runs) != 6 || result.FixtureGeneration == nil || len(result.FixtureGeneration.Runs) != 6 {
+		t.Fatalf("failure phase evidence = %+v", result)
+	}
+	for run, evidence := range result.Failure.Runs {
+		if evidence.TotalItems != 2 || evidence.Operation == "" || evidence.ErrorClass == "" {
+			t.Fatalf("run %d failure evidence = %+v", run, evidence)
+		}
+	}
+}
+
 func TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations(t *testing.T) {
 	t.Parallel()
 
