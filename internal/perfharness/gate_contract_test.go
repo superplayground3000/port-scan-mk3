@@ -29,6 +29,9 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	if !strings.Contains(linux, "TestScanInterruptContext_OnLinux_") {
 		t.Fatal("Linux adapter does not run automated SIGINT cases")
 	}
+	if !strings.Contains(linux, "matrix_status=$?") || !strings.Contains(linux, "exit \"$matrix_status\"") {
+		t.Fatal("Linux adapter does not preserve artifacts before it returns the matrix status")
+	}
 	for _, forbidden := range []string{"12.5", "11.0", "1.25", "rm -rf"} {
 		if strings.Contains(linux, forbidden) || strings.Contains(windows, forbidden) {
 			t.Errorf("an OS adapter contains threshold or destructive cleanup text %q", forbidden)
@@ -41,6 +44,11 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	}
 	if !strings.Contains(windows, "TestScanInterruptContext_OnWindows_") {
 		t.Fatal("Windows adapter does not run the bounded Ctrl+Break case")
+	}
+	windowsMove := strings.Index(windows, "Move-Item -LiteralPath $stdoutLog")
+	windowsExit := strings.Index(windows, "exit $exitCode")
+	if windowsMove < 0 || windowsExit < windowsMove {
+		t.Fatal("Windows adapter does not preserve artifacts before it returns the matrix status")
 	}
 	if strings.Count(workflow, "performance smoke") < 2 || !strings.Contains(workflow, "100000 items and 100 MB") {
 		t.Fatal("CI does not run bounded Linux and Windows performance smoke")

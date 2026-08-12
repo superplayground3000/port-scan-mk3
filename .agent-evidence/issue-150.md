@@ -1372,3 +1372,27 @@ The issue 150 evaluator must keep these failures visible.
 The old generated 9.9 GiB run was removed before the final full run.
 The generated `cases/` directories from two diagnostic full runs were also removed.
 Their JSON and Markdown reports remain in `performance-out/`.
+
+### Raw OS evidence after a failed matrix
+
+Red command and reason:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestPerformanceGateEntrypointsKeepOSAdaptersThin -count=1
+Linux adapter does not preserve artifacts before it returns the matrix status
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness
+```
+
+Green commands and result:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test -race ./internal/perfharness -run TestPerformanceGateEntrypointsKeepOSAdaptersThin -count=1
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 1.009s
+
+bash -n scripts/performance_gate.sh
+exit 0
+```
+
+The Linux and Windows adapters now save raw logs before they return the runner
+exit code. The Linux host does not have PowerShell. Windows CI must run the
+PowerShell adapter.

@@ -83,12 +83,7 @@ $process.WaitForExit()
 $process.Refresh()
 $peakWorkingSet = [Math]::Max($peakWorkingSet, [uint64]$process.PeakWorkingSet64)
 $peakPagedMemory = [Math]::Max($peakPagedMemory, [uint64]$process.PeakPagedMemorySize64)
-
-if ($process.ExitCode -ne 0) {
-    Get-Content -LiteralPath $stdoutLog
-    Get-Content -LiteralPath $stderrLog -ErrorAction SilentlyContinue | Write-Error
-    throw "performance harness failed with exit code $($process.ExitCode)"
-}
+$exitCode = $process.ExitCode
 
 $metrics = [ordered]@{
     schema_version = '1'
@@ -107,4 +102,9 @@ Move-Item -LiteralPath $stderrLog -Destination (Join-Path $OutputDir 'stderr.log
 Move-Item -LiteralPath $signalLog -Destination (Join-Path $OutputDir 'signal-cases.txt')
 Remove-Item -LiteralPath $harnessExe
 Remove-Item -LiteralPath $adapterDir
+if ($exitCode -ne 0) {
+    Get-Content -LiteralPath (Join-Path $OutputDir 'stdout.log')
+    Get-Content -LiteralPath (Join-Path $OutputDir 'stderr.log') -ErrorAction SilentlyContinue | Write-Error
+    exit $exitCode
+}
 Write-Host "Performance matrix artifacts: $OutputDir"

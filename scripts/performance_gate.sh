@@ -55,6 +55,7 @@ if [[ "${PERF_MINIMUM_PROFILE_CERTIFIED:-0}" == "1" ]]; then
   constraints="8 physical cores, 16 logical cores, 32 GB RAM, SSD, and 50 GB free space"
 fi
 
+set +e
 /usr/bin/time -v -o "$time_log" \
   go run ./internal/perfharness/cmd/perf-harness \
     -profile "$profile" \
@@ -70,8 +71,11 @@ fi
     -free-disk-bytes "$free_disk_bytes" \
     -constraints "$constraints" \
     -commit "$commit"
+matrix_status=$?
+set -e
 
 mv "$time_log" "$output_dir/matrix-os-metrics.txt"
 mv "$signal_log" "$output_dir/signal-cases.txt"
 rmdir "$adapter_tmp"
 echo "Performance matrix artifacts: $output_dir"
+exit "$matrix_status"

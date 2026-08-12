@@ -121,6 +121,8 @@ Each run writes these files:
 - A raw native interrupt-test log.
 - One retained fixture and manifest for each fixture case.
 
+The OS adapters save raw logs before they return a failed matrix status.
+
 The JSON schema version is `1`.
 Each fixture manifest records the seed, counts, bytes, digest, family, and shape.
 Artifact names are relative, so deterministic manifests do not contain host roots.
