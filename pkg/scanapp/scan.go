@@ -79,6 +79,10 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	if err != nil {
 		return fmt.Errorf("resolve scan configuration: %w", err)
 	}
+	targetExpansion, err := resolveTargetExpansion(configuration)
+	if err != nil {
+		return err
+	}
 	pressureValues, err := values.Pressure.Resolve()
 	if err != nil {
 		return fmt.Errorf("resolve pressure policy: %w", err)
@@ -106,6 +110,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 	logger := newLoggerWithQuiet(values.LogLevel, values.Format == "json", stderr, values.Quiet)
 	runtime := newScanRuntime(scanRuntimeInput{
 		values:                   values,
+		targetExpansion:          targetExpansion,
 		pressure:                 pressureValues,
 		stdout:                   stdout,
 		stderr:                   stderr,

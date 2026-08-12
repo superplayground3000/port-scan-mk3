@@ -52,6 +52,13 @@ type OutputState struct {
 	OpenPath string `json:"open_path"`
 }
 
+// TargetExpansionState records the effective limits and original candidate count.
+type TargetExpansionState struct {
+	CandidateCount uint64 `json:"candidate_count"`
+	CandidateLimit int64  `json:"candidate_limit"`
+	MemoryLimitGB  int64  `json:"memory_limit_gb"`
+}
+
 // Snapshot is the current resume envelope that the state package persists.
 type Snapshot struct {
 	Chunks      []task.Chunk     `json:"chunks"`
@@ -59,13 +66,16 @@ type Snapshot struct {
 	Output      *OutputState     `json:"output,omitempty"`
 	// RichDenyExcluded is true when the target builder excluded rich deny rows.
 	RichDenyExcluded bool `json:"rich_deny_excluded,omitempty"`
+	// TargetExpansion is nil for snapshots that predate expansion limits.
+	TargetExpansion *TargetExpansionState `json:"target_expansion,omitempty"`
 }
 
 type snapshotEnvelope struct {
-	Chunks           *[]task.Chunk        `json:"chunks"`
-	PreScanPing      *preScanPingEnvelope `json:"pre_scan_ping,omitempty"`
-	Output           *OutputState         `json:"output,omitempty"`
-	RichDenyExcluded bool                 `json:"rich_deny_excluded,omitempty"`
+	Chunks           *[]task.Chunk         `json:"chunks"`
+	PreScanPing      *preScanPingEnvelope  `json:"pre_scan_ping,omitempty"`
+	Output           *OutputState          `json:"output,omitempty"`
+	RichDenyExcluded bool                  `json:"rich_deny_excluded,omitempty"`
+	TargetExpansion  *TargetExpansionState `json:"target_expansion,omitempty"`
 }
 
 type preScanPingEnvelope struct {
@@ -121,6 +131,10 @@ func SaveSnapshot(path string, snap Snapshot) error {
 	if snap.Output != nil {
 		out := *snap.Output
 		env.Output = &out
+	}
+	if snap.TargetExpansion != nil {
+		expansion := *snap.TargetExpansion
+		env.TargetExpansion = &expansion
 	}
 
 	data, err := json.MarshalIndent(env, "", "  ")
@@ -250,6 +264,10 @@ func LoadSnapshot(path string) (Snapshot, error) {
 		snap := Snapshot{
 			Chunks:           *env.Chunks,
 			RichDenyExcluded: env.RichDenyExcluded,
+		}
+		if env.TargetExpansion != nil {
+			expansion := *env.TargetExpansion
+			snap.TargetExpansion = &expansion
 		}
 		if env.PreScanPing != nil {
 			if env.PreScanPing.Enabled == nil {

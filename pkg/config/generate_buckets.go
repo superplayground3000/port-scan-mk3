@@ -20,7 +20,8 @@ type GenerateBucketsValues struct {
 }
 
 type generateBucketsState struct {
-	values GenerateBucketsValues
+	values    GenerateBucketsValues
+	expansion TargetExpansionValues
 }
 
 // GenerateBucketsConfig is an opaque configuration for the bucket workflow.
@@ -42,7 +43,7 @@ func NewGenerateBuckets(values GenerateBucketsValues) (GenerateBucketsConfig, er
 	if err := validateWorkers(values.Workers); err != nil {
 		return GenerateBucketsConfig{}, fmt.Errorf("validate workers: %w", err)
 	}
-	return GenerateBucketsConfig{state: &generateBucketsState{values: values}}, nil
+	return GenerateBucketsConfig{state: &generateBucketsState{values: values, expansion: defaultTargetExpansionValues()}}, nil
 }
 
 // ParseGenerateBuckets parses and verifies the bucket command arguments.
@@ -50,7 +51,9 @@ func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
 	fs := flag.NewFlagSet("port-scan generate-buckets", flag.ContinueOnError)
 	common := commonCLIValues{}
 	values := GenerateBucketsValues{}
+	expansionFlags := targetExpansionFlagValues{}
 	registerCommonFlags(fs, &common)
+	registerTargetExpansionFlags(fs, &expansionFlags)
 	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&values.ProgressInterval, "progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path")
@@ -63,6 +66,10 @@ func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
 	if err := common.validate(); err != nil {
 		return GenerateBucketsConfig{}, fmt.Errorf("validate generate-buckets flags: %w", err)
 	}
+	expansion, err := resolveTargetExpansionFlags(fs, expansionFlags)
+	if err != nil {
+		return GenerateBucketsConfig{}, err
+	}
 	values.CIDRFile = common.cidrFile
 	values.CIDRIPCol = common.cidrIPCol
 	values.CIDRIPCidrCol = common.cidrIPCidrCol
@@ -70,6 +77,7 @@ func ParseGenerateBuckets(args []string) (GenerateBucketsConfig, error) {
 	if err != nil {
 		return GenerateBucketsConfig{}, fmt.Errorf("validate generate-buckets arguments: %w", err)
 	}
+	cfg.state.expansion = expansion
 	return cfg, nil
 }
 
@@ -79,4 +87,12 @@ func (c GenerateBucketsConfig) Resolve() (GenerateBucketsValues, error) {
 		return GenerateBucketsValues{}, ErrUninitializedConfiguration
 	}
 	return c.state.values, nil
+}
+
+// ResolveTargetExpansion returns the verified target expansion values.
+func (c GenerateBucketsConfig) ResolveTargetExpansion() (TargetExpansionValues, error) {
+	if c.state == nil {
+		return TargetExpansionValues{}, ErrUninitializedConfiguration
+	}
+	return c.state.expansion, nil
 }

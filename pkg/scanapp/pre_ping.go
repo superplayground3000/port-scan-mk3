@@ -8,6 +8,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
@@ -28,6 +29,10 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 	if err != nil {
 		return fmt.Errorf("resolve pre-ping configuration: %w", err)
 	}
+	expansion, err := resolveTargetExpansion(configuration)
+	if err != nil {
+		return err
+	}
 	deps := defaultRunDependencies()
 
 	if err := ctx.Err(); err != nil {
@@ -36,6 +41,9 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 
 	inputs, err := loadPrePingInputs(values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, deps)
 	if err != nil {
+		return err
+	}
+	if _, err := task.EstimateAuthorizedCIDRRecords(inputs.cidrRecords, expansion.Limits, nil); err != nil {
 		return err
 	}
 

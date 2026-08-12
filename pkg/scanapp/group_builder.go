@@ -120,7 +120,7 @@ func (basicGroupStrategy) targetsContext(ctx context.Context, rec input.CIDRReco
 		return nil, fmt.Errorf("record for cidr %s missing selector", cidr)
 	}
 
-	ips, err := task.ExpandIPSelectorsContext(ctx, []string{selector})
+	ips, err := task.ExpandIPSelectorsContextWithLimits(ctx, []string{selector}, task.ExpansionLimits{})
 	if err != nil {
 		return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
 	}
@@ -506,7 +506,7 @@ func richTargetIPsContext(ctx context.Context, rec input.CIDRRecord) ([]string, 
 		if err != nil {
 			return nil, err
 		}
-		ips, err := task.ExpandIPSelectorsContext(ctx, []string{cidr})
+		ips, err := task.ExpandIPSelectorsContextWithLimits(ctx, []string{cidr}, task.ExpansionLimits{})
 		if err != nil {
 			return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
 		}

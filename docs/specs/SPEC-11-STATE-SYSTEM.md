@@ -19,6 +19,7 @@ type Snapshot struct {
     PreScanPing       PreScanPingState
     Output            *OutputState
     RichDenyExcluded bool
+    TargetExpansion  *TargetExpansionState
 }
 ```
 
@@ -30,6 +31,9 @@ runtime then creates new timestamped paths.
 
 `RichDenyExcluded` records that bucket generation applied rich deny authorization. Legacy snapshots omit this optional JSON field.
 
+`TargetExpansion` stores the candidate count and the two effective expansion limits.
+A nil value identifies a legacy snapshot. The scan workflow uses default limits for this snapshot.
+
 ## 2. Snapshot loading
 
 ```go
@@ -38,7 +42,7 @@ func LoadSnapshot(path string) (Snapshot, error)
 
 `LoadSnapshot` accepts both supported formats:
 
-- The current object envelope with `chunks`, `pre_scan_ping`, and `output`.
+- The current object envelope with `chunks`, `pre_scan_ping`, `output`, and `target_expansion`.
 - The legacy top-level array of chunks.
 
 JSON decoding rejects unknown fields and trailing content. The current envelope
@@ -72,6 +76,10 @@ does not save after a clean, complete run.
 The runtime loads recorded output paths before it opens output files. It
 validates existing CSV headers and appends new rows to those files.
 
+The runtime verifies only candidates from incomplete chunks.
+If scan limit flags are absent, the runtime uses limits from `target_expansion`.
+Each explicit scan flag replaces its related stored limit.
+
 ## 5. Output-failure rewind
 
 Dispatch can advance before an output write completes. When a required writer
@@ -104,6 +112,7 @@ the scan workflow.
 - Keep current and legacy snapshot decoding.
 - Keep snapshots that omit `output` readable.
 - Keep snapshots that omit `rich_deny_excluded` readable.
+- Keep snapshots that omit `target_expansion` readable and apply the default limits.
 - Keep recovery for older chunks that omit `total_count`.
 - Resolve recorded relative output paths with the documented compatibility
   rule in `pkg/scanapp`.

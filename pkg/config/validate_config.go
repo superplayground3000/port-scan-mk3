@@ -26,7 +26,8 @@ type ValidateValues struct {
 }
 
 type validateState struct {
-	values ValidateValues
+	values    ValidateValues
+	expansion TargetExpansionValues
 }
 
 type validateCompatibilityValues struct {
@@ -60,7 +61,7 @@ func NewValidate(values ValidateValues) (ValidateConfig, error) {
 	if values.Format != "human" && values.Format != "json" {
 		return ValidateConfig{}, errors.New("-format must be human or json")
 	}
-	return ValidateConfig{state: &validateState{values: values}}, nil
+	return ValidateConfig{state: &validateState{values: values, expansion: defaultTargetExpansionValues()}}, nil
 }
 
 // ParseValidate parses arguments and returns an opaque validate configuration.
@@ -72,7 +73,9 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	common := commonCLIValues{}
 	values := ValidateValues{}
 	compatibility := validateCompatibilityValues{}
+	expansionFlags := targetExpansionFlagValues{}
 	registerCommonFlags(fs, &common)
+	registerTargetExpansionFlags(fs, &expansionFlags)
 	fs.IntVar(&compatibility.workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.IntVar(&compatibility.bucketRate, "bucket-rate", 100, fmt.Sprintf("bucket rate (1-%d)", ratelimit.MaxRate))
 	fs.IntVar(&compatibility.bucketCapacity, "bucket-capacity", 100, fmt.Sprintf("bucket capacity (1-%d)", ratelimit.MaxCapacity))
@@ -102,6 +105,10 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	if err := common.validate(); err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate common flags: %w", err)
 	}
+	expansion, err := resolveTargetExpansionFlags(fs, expansionFlags)
+	if err != nil {
+		return ValidateConfig{}, err
+	}
 	if err := compatibility.validate(); err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate compatibility flags: %w", err)
 	}
@@ -113,6 +120,7 @@ func ParseValidate(args []string) (ValidateConfig, error) {
 	if err != nil {
 		return ValidateConfig{}, fmt.Errorf("validate arguments: %w", err)
 	}
+	cfg.state.expansion = expansion
 	return cfg, nil
 }
 
@@ -164,4 +172,12 @@ func (c ValidateConfig) Resolve() (ValidateValues, error) {
 		return ValidateValues{}, ErrUninitializedConfiguration
 	}
 	return c.state.values, nil
+}
+
+// ResolveTargetExpansion returns the verified target expansion values.
+func (c ValidateConfig) ResolveTargetExpansion() (TargetExpansionValues, error) {
+	if c.state == nil {
+		return TargetExpansionValues{}, ErrUninitializedConfiguration
+	}
+	return c.state.expansion, nil
 }

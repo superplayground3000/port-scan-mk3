@@ -26,7 +26,8 @@ func (c *cancelExpansionContext) Err() error {
 func TestExpandIPSelectorsContext_ReadsCancellationWithin4096Addresses(t *testing.T) {
 	ctx := &cancelExpansionContext{after: 3}
 
-	_, err := ExpandIPSelectorsContext(ctx, []string{"10.0.0.0/8"})
+	// Disable the limits so that this test reaches the enumeration loop.
+	_, err := ExpandIPSelectorsContextWithLimits(ctx, []string{"10.0.0.0/8"}, ExpansionLimits{})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expand error = %v, want context.Canceled", err)

@@ -153,6 +153,26 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 - `scan`: pure TCP scan of a bucket snapshot (`-resume` required. It dispatches, probes, writes output, and persists resume state in place)
 - `validate`: parse and validate input files only
 
+## Target Expansion Limits
+
+All four commands verify the complete target expansion before network or output work.
+
+- `-target-count-limit` has a default value of `10000000` candidate addresses.
+- `-target-memory-limit-gb` has a default value of `16` decimal GB.
+- The memory estimate is `1000000000 + candidate count * 1500` bytes.
+- Set either flag to `0` to disable that limit.
+- A negative value is an error before the command reads an input file.
+
+The count includes each authorized input row before de-duplication, broadcast removal, and blocklist filtering.
+Rich deny rows contribute zero candidates. With default limits, an IPv4 `/9` is permitted and an IPv4 `/8` is rejected.
+
+`generate-buckets` stores the effective limits and candidate count in the snapshot.
+`scan` uses these stored limits unless an explicit scan flag replaces one limit.
+A legacy snapshot uses the new defaults.
+
+CAUTION: If both flags are `0`, the command has no target expansion limit.
+The operating system can terminate the process when the available memory is not sufficient.
+
 `generate-buckets` marks snapshots that exclude rich deny rows. If an unmarked snapshot has rich deny input, `scan` stops before TCP dispatch.
 
 Exit code behavior:

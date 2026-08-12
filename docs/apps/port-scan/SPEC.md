@@ -1,6 +1,6 @@
 # port-scan Specification
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-08-10
+**Tool**: `cmd/port-scan` | **Revised**: 2026-08-12
 
 ## Overview
 
@@ -109,6 +109,8 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 |------|---------|-------------|
 | `-cidr-file` | (required) | All commands. Path to the CIDR/rich input CSV. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | `ip` / `ip_cidr` | All commands. Case-sensitive column mapping. |
+| `-target-count-limit` | `10000000` | All commands. Maximum candidate addresses. `0` disables this limit. |
+| `-target-memory-limit-gb` | `16` | All commands. Target expansion budget in decimal GB. `0` disables this limit. |
 | `-pre-scan-ping-timeout` | `100ms` | `pre-ping` only. Ping reply-wait timeout (must be > 0). Removed from `scan`. |
 | `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `pre-ping` output) whose `ip` column is subtracted. |
 | `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
@@ -187,6 +189,28 @@ Rich mode performs reason-aware IP expansion:
 - If `reason` is `MATCH_POLICY_ACCEPT`: only `dst_ip` is scanned
 - Otherwise: only `dst_ip` is scanned
 
+### Target Expansion Limits
+
+All commands verify the full expansion before ping, dial, output creation, or snapshot write.
+`validate` calculates the values without target enumeration.
+
+The candidate count includes every authorized input row before de-duplication, broadcast removal, and blocklist filtering.
+Repeated and overlapping selectors count again. Rich deny rows contribute zero candidates.
+
+The default candidate limit is `10000000`. The default memory limit is `16` decimal GB.
+The memory estimate is `1000000000 + candidate count * 1500` bytes.
+Thus, `10000000` candidates equal `16` GB in this estimate.
+
+An IPv4 `/9` passes the default limits. An IPv4 `/8` does not pass them.
+A positive flag value replaces its default. A value of `0` disables that limit.
+
+CAUTION: If both flags are `0`, expansion continues without a hidden limit.
+Available memory, address space, and operating-system policy then limit the command.
+
+The `pkg/task` expansion-limits module owns counting, estimation, overflow checks, and limit errors.
+Configuration parsers adapt CLI values to this module.
+Workflows supply authorized rows and do not copy the limit rules.
+
 ## Output Formats
 
 ### scan_results-*.csv
@@ -233,9 +257,17 @@ unreachable blocklist so `scan` never needs to ping).
   "chunks": [
     {"cidr": "10.0.0.0/24", "ports": ["8080/tcp"], "next_index": 50, "scanned_count": 50, "total_count": 254, "status": "in_progress"}
   ],
-  "pre_scan_ping": {"enabled": true, "timeout_ms": 0, "unreachable_ipv4_u32": [168430081]}
+  "pre_scan_ping": {"enabled": true, "timeout_ms": 0, "unreachable_ipv4_u32": [168430081]},
+  "target_expansion": {"candidate_count": 256, "candidate_limit": 10000000, "memory_limit_gb": 16}
 }
 ```
+
+`generate-buckets` stores the count before broadcast and blocklist filtering.
+On resume, `scan` counts only incomplete chunks.
+
+If scan limit flags are absent, `scan` uses the stored limits.
+Each explicit scan flag replaces its related stored limit.
+A legacy snapshot has no `target_expansion` object and uses the defaults.
 
 ## Pressure API Contract
 

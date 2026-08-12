@@ -59,6 +59,10 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	if err != nil {
 		return fmt.Errorf("resolve bucket configuration: %w", err)
 	}
+	expansion, err := resolveTargetExpansion(configuration)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(values.SnapshotOutput) == "" {
 		return fmt.Errorf("generate-buckets requires -buckets-out")
 	}
@@ -70,6 +74,10 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	}, defaultRunDependencies())
 	if err != nil {
 		return fmt.Errorf("generate-buckets: load inputs: %w", err)
+	}
+	expansionEstimate, err := task.EstimateAuthorizedCIDRRecords(inputs.cidrRecords, expansion.Limits, nil)
+	if err != nil {
+		return fmt.Errorf("generate-buckets: estimate target expansion: %w", err)
 	}
 
 	blocklist, err := parseUnreachableBlocklist(values.BlocklistFile)
@@ -124,6 +132,11 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	snap := state.Snapshot{
 		Chunks:           chunks,
 		RichDenyExcluded: true,
+		TargetExpansion: &state.TargetExpansionState{
+			CandidateCount: expansionEstimate.CandidateCount,
+			CandidateLimit: int64(expansion.Limits.CandidateLimit()),
+			MemoryLimitGB:  int64(expansion.Limits.MemoryLimitGB()),
+		},
 		PreScanPing: state.PreScanPingState{
 			Enabled:            true,
 			TimeoutMS:          0,

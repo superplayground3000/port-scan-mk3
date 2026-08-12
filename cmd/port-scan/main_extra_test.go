@@ -54,7 +54,7 @@ func TestCLIHelp_IncludesRequiredFlags(t *testing.T) {
 		"pre-ping", "generate-buckets", "scan",
 		"-cidr-file", "-port-file", "-cidr-ip-col", "-cidr-ip-cidr-col",
 		"-resume", "-buckets-out", "-unreachable-file", "-pre-scan-ping-timeout",
-		"-disable-api", "-format",
+		"-target-count-limit", "-target-memory-limit-gb", "-disable-api", "-format",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing help flag %s", want)

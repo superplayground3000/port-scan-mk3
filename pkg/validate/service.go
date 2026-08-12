@@ -10,11 +10,16 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 // Configuration supplies verified values to the validate workflow.
 type Configuration interface {
 	Resolve() (config.ValidateValues, error)
+}
+
+type targetExpansionConfiguration interface {
+	ResolveTargetExpansion() (config.TargetExpansionValues, error)
 }
 
 // Result is the outcome of input validation. Valid is true when all inputs are
@@ -68,6 +73,17 @@ func Inputs(cfg Configuration) Result {
 
 	cidrRecords, err := input.LoadCIDRsWithColumns(cidrFile, values.CIDRIPCol, values.CIDRIPCidrCol)
 	if err != nil {
+		return Result{Valid: false, Detail: err.Error()}
+	}
+	limits := task.DefaultExpansionLimits()
+	if resolver, ok := cfg.(targetExpansionConfiguration); ok {
+		expansion, resolveErr := resolver.ResolveTargetExpansion()
+		if resolveErr != nil {
+			return Result{Valid: false, Detail: fmt.Sprintf("resolve target expansion limits: %v", resolveErr)}
+		}
+		limits = expansion.Limits
+	}
+	if _, err := task.EstimateAuthorizedCIDRRecords(cidrRecords, limits, nil); err != nil {
 		return Result{Valid: false, Detail: err.Error()}
 	}
 	if values.PortFile == "" {

@@ -10,10 +10,12 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 type scanRuntimeInput struct {
 	values                   config.ScanValues
+	targetExpansion          config.TargetExpansionValues
 	pressure                 config.PressureValues
 	stdout                   io.Writer
 	stderr                   io.Writer
@@ -88,6 +90,23 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	// A successful legacy check proves that the snapshot contains no denied
 	// work. A later progress save can record this fact and skip the check.
 	snapshot.RichDenyExcluded = true
+	effectiveLimits, err := effectiveScanExpansionLimits(snapshot.TargetExpansion, r.input.targetExpansion)
+	if err != nil {
+		return err
+	}
+	expansionEstimate, err := task.EstimateAuthorizedCIDRRecords(inputs.cidrRecords, effectiveLimits, incompleteChunkKeys(snapshot.Chunks))
+	if err != nil {
+		return err
+	}
+	candidateCount := expansionEstimate.CandidateCount
+	if snapshot.TargetExpansion != nil {
+		candidateCount = snapshot.TargetExpansion.CandidateCount
+	}
+	snapshot.TargetExpansion = &state.TargetExpansionState{
+		CandidateCount: candidateCount,
+		CandidateLimit: int64(effectiveLimits.CandidateLimit()),
+		MemoryLimitGB:  int64(effectiveLimits.MemoryLimitGB()),
+	}
 	// The snapshot blocklist supplies the reachable predicate. The scan does not
 	// use ping to calculate reachability. An empty blocklist makes all targets
 	// reachable.
@@ -287,7 +306,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
 	snapshotStartedAt := time.Now()
-	rewoundChunks, snapshotErr := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, dispatchErr, runErr)
+	rewoundChunks, snapshotErr := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, dispatchErr, runErr)
 	logger.eventf("snapshot_save_complete", "", 0, "snapshot_save_complete", errorCause(snapshotErr), map[string]any{
 		"duration_ms":    time.Since(snapshotStartedAt).Milliseconds(),
 		"rewound_chunks": rewoundChunks,

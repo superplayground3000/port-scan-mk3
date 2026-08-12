@@ -123,7 +123,8 @@ type ScanValues struct {
 }
 
 type scanState struct {
-	values ScanValues
+	values    ScanValues
+	expansion TargetExpansionValues
 }
 
 // ScanConfig is an opaque configuration for the scan workflow.
@@ -155,7 +156,7 @@ func NewScan(values ScanValues) (ScanConfig, error) {
 	if _, err := values.Pressure.Resolve(); err != nil {
 		return ScanConfig{}, fmt.Errorf("resolve pressure policy: %w", err)
 	}
-	return ScanConfig{state: &scanState{values: values}}, nil
+	return ScanConfig{state: &scanState{values: values, expansion: defaultTargetExpansionValues()}}, nil
 }
 
 // ParseScan parses and verifies the arguments for the scan command.
@@ -164,6 +165,7 @@ func ParseScan(args []string) (ScanConfig, error) {
 	fs := flag.NewFlagSet("port-scan scan", flag.ContinueOnError)
 	common := commonCLIValues{}
 	values := ScanValues{}
+	expansionFlags := targetExpansionFlagValues{}
 	var (
 		pressureAPI          string
 		pressureIntervalRaw  string
@@ -175,6 +177,7 @@ func ParseScan(args []string) (ScanConfig, error) {
 		pressureUseAuth      bool
 	)
 	registerCommonFlags(fs, &common)
+	registerTargetExpansionFlags(fs, &expansionFlags)
 	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.Int("progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path (optional fallback; chunks carry ports)")
@@ -198,6 +201,10 @@ func ParseScan(args []string) (ScanConfig, error) {
 	}
 	if err := common.validate(); err != nil {
 		return ScanConfig{}, fmt.Errorf("validate scan flags: %w", err)
+	}
+	expansion, err := resolveTargetExpansionFlags(fs, expansionFlags)
+	if err != nil {
+		return ScanConfig{}, err
 	}
 	interval, err := parsePressureInterval(pressureIntervalRaw)
 	if err != nil {
@@ -255,6 +262,7 @@ func ParseScan(args []string) (ScanConfig, error) {
 	if err != nil {
 		return ScanConfig{}, fmt.Errorf("validate scan arguments: %w", err)
 	}
+	cfg.state.expansion = expansion
 	return cfg, nil
 }
 
@@ -265,4 +273,12 @@ func (c ScanConfig) Resolve() (ScanValues, error) {
 		return ScanValues{}, ErrUninitializedConfiguration
 	}
 	return c.state.values, nil
+}
+
+// ResolveTargetExpansion returns the verified target expansion values.
+func (c ScanConfig) ResolveTargetExpansion() (TargetExpansionValues, error) {
+	if c.state == nil {
+		return TargetExpansionValues{}, ErrUninitializedConfiguration
+	}
+	return c.state.expansion, nil
 }

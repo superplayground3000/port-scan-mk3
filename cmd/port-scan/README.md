@@ -100,6 +100,21 @@ compatibility.
 | `-quiet` | `false` | Suppress the console logs. Keep the pressure API logs |
 | `-cidr-ip-col` | `ip` | Column name for the IP selector in the CIDR CSV |
 | `-cidr-ip-cidr-col` | `ip_cidr` | Column name for the boundary CIDR in the CIDR CSV |
+| `-target-count-limit` | `10000000` | Maximum candidate addresses. Set `0` to disable the count limit. |
+| `-target-memory-limit-gb` | `16` | Target expansion budget in decimal GB. Set `0` to disable the memory limit. |
+
+The commands verify target expansion before ping, dial, snapshot write, or result-file creation.
+The estimate is `1000000000 + candidate count * 1500` bytes.
+
+The count includes each authorized input row before de-duplication, broadcast removal, and blocklist filtering.
+A rich deny row contributes zero candidates. An IPv4 `/9` passes the defaults, but an IPv4 `/8` does not.
+
+`generate-buckets` stores the effective limits and candidate count in the snapshot.
+`scan` uses the stored limits unless an explicit scan flag replaces one limit.
+A legacy snapshot uses the defaults.
+
+CAUTION: Set both flags to `0` only when the host has sufficient memory.
+With this setting, no hidden target limit protects the process from resource exhaustion.
 
 ## Input Formats
 

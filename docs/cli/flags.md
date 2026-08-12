@@ -15,7 +15,7 @@ from the current parser behavior in:
 pipeline commands register only their workflow flags. An unregistered flag is
 an unknown-flag error (exit `2`).
 
-`validate` is a compatibility exception. It accepts and verifies all 24 flags
+`validate` is a compatibility exception. It accepts and verifies all 26 flags
 from the removed shared parser. It discards values that input validation does
 not use.
 
@@ -33,7 +33,9 @@ not register `-disable-pre-scan-ping` or `-pre-scan-ping-timeout`.
 
 Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 (default `ip`), `-cidr-ip-cidr-col` (default `ip_cidr`), `-log-level` (default
-`info`), `-format` (`human`|`json`, default `human`), `-quiet`.
+`info`), `-format` (`human`|`json`, default `human`), `-quiet`,
+`-target-count-limit` (default `10000000`), and
+`-target-memory-limit-gb` (default `16`).
 
 ### `port-scan pre-ping`
 
@@ -41,6 +43,8 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 |------|------|---------|-------------|
 | `-cidr-file` | string | required | Path to CIDR/rich CSV input file. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
+| `-target-count-limit` | int | `10000000` | Maximum candidate addresses. `0` disables this limit. |
+| `-target-memory-limit-gb` | int | `16` | Target expansion budget in decimal GB. `0` disables this limit. |
 | `-pre-scan-ping-timeout` | duration | `100ms` | Reply-wait timeout for each ping reachability check. Must be > 0. On Windows, the process wall-clock ceiling adds an internal fixed startup allowance to this value. The ping launch therefore does not kill a fast reply. The reply-wait still uses this value. |
 | `-workers` | int | `10` | Concurrent ping workers. Accepted range `1`-`1024`. One ping process can run for each worker. |
 | `-output` | string | `scan_results.csv` | Output anchor path. It gives the directory and the shared timestamp suffix for `unreachable_results-<ts>.csv`. |
@@ -58,6 +62,8 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 |------|------|---------|-------------|
 | `-cidr-file` | string | required | Path to CIDR/rich CSV input file. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
+| `-target-count-limit` | int | `10000000` | Maximum candidate addresses. `0` disables this limit. |
+| `-target-memory-limit-gb` | int | `16` | Target expansion budget in decimal GB. `0` disables this limit. |
 | `-port-file` | string | optional | Port list (`<port>/tcp` lines). Required in basic (non-rich) mode. Ignored in rich mode, where the command reads the port of each target from the CSV. |
 | `-unreachable-file` | string | optional | Blocklist CSV (a `pre-ping` output). The command subtracts its `ip` column from the target set. Omit it to bucket all targets. |
 | `-buckets-out` | string | **required** | Output path for the bucket snapshot (the resume `Snapshot` JSON). |
@@ -74,6 +80,8 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 |------|------|---------|-------------|
 | `-cidr-file` | string | required | Rich/basic CSV — the source of truth for target metadata. The command rebuilds it on every run. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | string | `ip` / `ip_cidr` | Case-sensitive column mapping. |
+| `-target-count-limit` | int | stored or `10000000` | Explicit value replaces the stored count limit. `0` disables this limit. |
+| `-target-memory-limit-gb` | int | stored or `16` | Explicit value replaces the stored memory limit. `0` disables this limit. |
 | `-resume` | string | **required** | Bucket snapshot file to scan. The command reads it at start. On an interrupt or an error, the command **updates it in place at this path**. |
 | `-output` | string | `scan_results.csv` | Output anchor. It gives the directory and the shared suffix for `scan_results-<ts>.csv` and `opened_results-<ts>.csv`. |
 | `-timeout` | duration | `100ms` | TCP dial timeout for each probe. |
@@ -98,7 +106,7 @@ Flags shared by every subcommand: `-cidr-file` (required), `-cidr-ip-col`
 ### `port-scan validate`
 
 The command uses these values: `-cidr-file` (required), `-port-file` (optional),
-`-cidr-ip-col`, `-cidr-ip-cidr-col`, and `-format`.
+`-cidr-ip-col`, `-cidr-ip-cidr-col`, `-format`, and both target expansion flags.
 
 For compatibility, it also accepts and verifies these values:
 
@@ -120,6 +128,10 @@ The command validates input files only. It never scans and never pings.
 - `-cidr-file` is required for every subcommand.
 - `-format` accepts `human` or `json` only.
 - `-cidr-ip-col` and `-cidr-ip-cidr-col` must not be empty after the command trims them.
+- A target expansion flag must be zero or positive. Zero disables only that limit.
+- The memory estimate is `1000000000 + candidate count * 1500` bytes.
+- The count occurs before de-duplication, broadcast removal, and blocklist filtering.
+- Rich deny rows contribute zero candidates.
 - `pre-ping` requires `-pre-scan-ping-timeout > 0`.
 - `generate-buckets` requires `-buckets-out`. `-unreachable-file` is optional.
 - `scan` requires `-resume`, and `-pressure-interval` must be more than zero. If

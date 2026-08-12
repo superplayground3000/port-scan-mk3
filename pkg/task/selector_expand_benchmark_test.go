@@ -10,3 +10,14 @@ func BenchmarkExpandIPSelectorsSlash16(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkEstimateIPSelectorsDefaultRejection(b *testing.B) {
+	input := []SelectorInput{{Row: 1, Selector: "10.0.0.0/8"}}
+	limits := DefaultExpansionLimits()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := EstimateIPSelectors(input, limits); err == nil {
+			b.Fatal("EstimateIPSelectors(/8) error = nil")
+		}
+	}
+}
