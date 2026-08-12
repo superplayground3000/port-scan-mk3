@@ -1,5 +1,5 @@
 .PHONY: build build-linux build-windows build-all verify-dist clean test lint \
-        fmt fmt-check vet cover verify verify-e2e e2e help
+		fmt fmt-check vet cover verify verify-e2e verify-performance e2e help
 
 VERSION := $(shell git describe --always --dirty 2>/dev/null || echo "dev")
 # The full commit, stamped SEPARATELY from VERSION. A build made exactly on a
@@ -136,6 +136,10 @@ verify:
 ## verify-e2e: Run the full quality gate plus the isolated Docker e2e suite
 verify-e2e:
 	bash scripts/verify.sh --e2e
+
+## verify-performance: Run the complete native Linux large-data matrix
+verify-performance:
+	bash scripts/performance_gate.sh full
 
 ## e2e: Run only the isolated Docker e2e suite
 e2e:
