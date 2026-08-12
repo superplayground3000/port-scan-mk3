@@ -351,3 +351,50 @@ The recovery and reference digest was:
 ```
 
 The retained diagnostic is in `/media/hp/secondary/issue151-performance-a3d4736-diagnostics/cancel-result-99-10m/`.
+
+## Input cancellation memory correction
+
+The first 10-million-item `input-parsing` diagnostic canceled at 99 percent.
+It reached 16,097,673,216 bytes of committed memory and failed the 8 GB parse limit.
+
+The cancellation harness used the generic reader interface.
+That interface did not use the optimized two-pass path for a seekable reader.
+
+The public 100,000-row seekable-reader test failed first:
+
+```text
+peak heap increase = 148815872 bytes, want at most 70000000
+```
+
+The reader interface now detects `io.ReadSeeker`.
+It uses the existing count, rewind, exact-capacity, and parse implementation.
+An input stream that cannot seek keeps the original one-pass behavior.
+
+Three green peak-heap runs used these values:
+
+```text
+69337088
+69304320
+69304320
+```
+
+The cancellation progress reader starts injection after the rewind.
+Therefore, the count pass does not trigger cancellation.
+The parse pass still injects cancellation at the requested byte-based record estimate.
+
+The exact 10-million-item `input-parsing` diagnostic used commit `5a9ef5e`.
+It canceled at 99 percent with these results:
+
+| Metric | Result | Contract |
+| --- | ---: | ---: |
+| Stage wall time | `4.348s` | `< 5m` |
+| Work-stop time | `28,464ns` | `< 1s` |
+| Stage committed memory | `6,399,045,632` | `< 8GB` |
+| Stage peak heap | `6,321,266,688` | Report only |
+| Process swaps | `0` | Report only |
+
+The injection threshold was 9,900,000 records.
+The observed estimate was 9,900,037 records.
+The stage started no probes.
+
+The retained diagnostic is in `/media/hp/secondary/issue151-performance-5a9ef5e-diagnostics/cancel-input-99-10m/`.
