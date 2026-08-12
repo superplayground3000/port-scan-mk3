@@ -832,6 +832,52 @@ func TestRun_WhenLegacySnapshotCountMatchesAuthorizedTargets_RejectsBeforeDial(t
 	}
 }
 
+func TestRun_WhenLegacyBasicSnapshotCountHidesDifferentRowPortSet_RejectsBeforeDial(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	resumeFile := filepath.Join(tmp, "legacy.json")
+	if err := os.WriteFile(cidrFile, []byte("ip,ip_cidr,port\n192.0.2.1,192.0.2.0/24,443\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSnapshot(resumeFile, state.Snapshot{Chunks: []task.Chunk{{
+		CIDR:       "192.0.2.0/24",
+		Ports:      []string{"80/tcp"},
+		TotalCount: 1,
+		Status:     "pending",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	dialed := false
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        10 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
+	}
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("unexpected dial")
+		},
+		DisableKeyboard: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "target-semantics version") || !strings.Contains(err.Error(), "run generate-buckets") {
+		t.Fatalf("Run() error = %v, want legacy target-semantics regeneration guidance", err)
+	}
+	if dialed {
+		t.Fatal("Run() dialed before it rejected the legacy row-port snapshot")
+	}
+	if matches, globErr := filepath.Glob(filepath.Join(tmp, "*results*.csv")); globErr != nil || len(matches) != 0 {
+		t.Fatalf("result files = %v, glob error = %v; want none", matches, globErr)
+	}
+}
+
 func TestRun_WhenResumeInputAddsCrossSegmentDeny_RejectsBeforeDial(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "rich.csv")

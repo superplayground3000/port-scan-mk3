@@ -52,7 +52,7 @@ func loadRunInputsContext(ctx context.Context, cfg inputConfiguration, deps runD
 		// Rich input carries its port per record. When resuming, the bucket's
 		// chunks already carry the ports, so scan needs no -port-file either;
 		// only a fresh basic build (e.g. generate-buckets) requires it.
-		if hasRichRecords(cidrRecords) || cfg.allowMissingPort {
+		if hasRichRecords(cidrRecords) || allBasicRecordsHavePorts(cidrRecords) || cfg.allowMissingPort {
 			return runInputs{
 				cidrRecords: cidrRecords,
 				portSpecs:   nil,
@@ -81,6 +81,18 @@ func loadRunInputsContext(ctx context.Context, cfg inputConfiguration, deps runD
 		cidrRecords: cidrRecords,
 		portSpecs:   portSpecs,
 	}, nil
+}
+
+func allBasicRecordsHavePorts(records []input.CIDRRecord) bool {
+	if len(records) == 0 {
+		return false
+	}
+	for _, record := range records {
+		if record.IsRich || record.Port <= 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // loadPrePingInputs loads only the CIDR records needed by the pre-scan ping

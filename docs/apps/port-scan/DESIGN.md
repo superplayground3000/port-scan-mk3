@@ -32,7 +32,7 @@ CLI entry point (main.go)
     │       config.ParseGenerateBuckets() → config.GenerateBucketsConfig
     │           └── scanapp.GenerateBuckets(GenerateBucketsConfiguration)
     │           ├── load records + ports; parse -unreachable-file blocklist
-    │           ├── subtract blocklist; group per CIDR; build chunks (parallel over -workers)
+    │           ├── resolve basic row ports or rich targets → build chunks (parallel over -workers)
     │           ├── stamp pre_scan_ping.enabled=true and timeout_ms=0
     │           └── state.SaveSnapshot(-buckets-out)   (== resume Snapshot JSON)
     │
@@ -155,10 +155,17 @@ deduplication, and target filters. Inner loops read it within 4,096 items.
 The snapshot can contain prior output paths. The runtime uses these paths in
 append mode. Otherwise, it creates new timestamped paths.
 
-**CIDR Grouping Strategies:**
+**Target resolution:**
 
-- **Basic mode** (`basicGroupStrategy`): groups records by `ip_cidr` boundary, expands IP selectors within each CIDR
-- **Rich mode** (`richGroupStrategy`): groups by `dst_network_segment`, implements CIDR-scoped rate control with global execution-key deduplication
+- **Basic mode** (`basic_target_resolution.go`): expands selectors, applies row-port overrides, applies fallback ports, and removes duplicate tasks.
+- The basic module groups only IPs with the same port set into one Cartesian chunk. This rule prevents ports from leaking between rows.
+- Bucket generation and resume rebuild use the same basic resolution result and exact counts.
+- **Rich mode** (`richGroupStrategy`): groups by `dst_network_segment` and keeps global execution-key deduplication.
+
+New snapshots contain `target_semantics_version=1`. Basic snapshots also
+contain `basic_port_fallback` for blank row ports. If basic input contains a
+row port, the runtime rejects a legacy unversioned snapshot before output or
+network work. Run `generate-buckets` to create a new snapshot.
 
 ### Stage 3: Output Setup (`batch_output.go`, `output_files.go`)
 

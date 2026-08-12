@@ -419,7 +419,7 @@ defaults are in [All flags](docs/cli/flags.md).
 | `-log-level` / `-format` / `-quiet` | all | Shared observability flags |
 | `-pre-scan-ping-timeout` | `pre-ping` | Ping reply-wait (default `100ms`). Removed from `scan` |
 | `-output` | `pre-ping`, `scan` | Output anchor: unreachable CSV (`pre-ping`), scan/opened CSVs (`scan`) |
-| `-port-file` | `generate-buckets` (primary), `scan` (fallback) | Required in basic mode. Ignored in rich mode |
+| `-port-file` | `generate-buckets` (primary), `scan` (legacy fallback) | Basic rows with blank `port` values require this file. Rich mode ignores it |
 | `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `pre-ping` output) — **NEW** |
 | `-buckets-out` (required) | `generate-buckets` | Bucket snapshot output path — **NEW** |
 | `-resume` (required) | `scan` | Bucket snapshot to scan. Updated in place on cancel or error |

@@ -100,8 +100,11 @@ func Inputs(cfg Configuration) Result {
 			if rec.IsRich {
 				return Result{Valid: true, Detail: "ok"}
 			}
+			if rec.Port <= 0 {
+				return Result{Valid: false, Detail: fmt.Sprintf("basic row %d has no port source; set its port or provide -port-file (-port-file is required for blank basic row ports)", rec.RowNumber)}
+			}
 		}
-		return Result{Valid: false, Detail: "-port-file is required when cidr input is not rich mode"}
+		return Result{Valid: true, Detail: "ok"}
 	}
 
 	if _, err := input.LoadPortsFileContext(context.Background(), values.PortFile, resourceLimits.Port); err != nil {

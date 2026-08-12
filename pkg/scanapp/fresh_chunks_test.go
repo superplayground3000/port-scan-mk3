@@ -1,6 +1,7 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -18,14 +19,11 @@ func buildFreshChunksForTest(cidrRecords []input.CIDRRecord, portSpecs []input.P
 		}
 		return chunks, nil
 	}
-	groups, err := buildCIDRGroupsWithPredicate(cidrRecords, reachable)
+	resolution, err := resolveBasicTargetsContext(context.Background(), cidrRecords, portSpecs, reachable)
 	if err != nil {
 		return nil, fmt.Errorf("build basic groups: %w", err)
 	}
-	rawPorts := make([]string, 0, len(portSpecs))
-	for _, portSpec := range portSpecs {
-		rawPorts = append(rawPorts, portSpec.Raw)
-	}
+	groups := resolution.groups
 	keys := make([]string, 0, len(groups))
 	for key := range groups {
 		keys = append(keys, key)
@@ -34,7 +32,7 @@ func buildFreshChunksForTest(cidrRecords []input.CIDRRecord, portSpecs []input.P
 
 	chunks := make([]task.Chunk, 0, len(keys))
 	for _, key := range keys {
-		chunks = append(chunks, basicChunkFromGroup(key, groups[key], rawPorts))
+		chunks = append(chunks, basicChunkFromGroup(groups[key]))
 	}
 	return chunks, nil
 }

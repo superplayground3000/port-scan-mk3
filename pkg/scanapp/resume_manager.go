@@ -18,10 +18,10 @@ import (
 // task before this function saves the snapshot. A resumed run can write some
 // rows again, but it cannot skip an unwritten row.
 func persistResumeSnapshot(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, targetExpansion *state.TargetExpansionState, dispatchErr, runErr error) (int, error) {
-	return persistResumeSnapshotWithLimits(savePath, logger, runtimes, preScanPing, output, richDenyExcluded, targetExpansion, state.DefaultSnapshotLimits(), dispatchErr, runErr)
+	return persistResumeSnapshotWithLimits(savePath, logger, runtimes, preScanPing, output, richDenyExcluded, targetExpansion, state.CurrentTargetSemanticsVersion, nil, state.DefaultSnapshotLimits(), dispatchErr, runErr)
 }
 
-func persistResumeSnapshotWithLimits(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, targetExpansion *state.TargetExpansionState, limits state.SnapshotLimits, dispatchErr, runErr error) (int, error) {
+func persistResumeSnapshotWithLimits(savePath string, logger *scanLogger, runtimes []*chunkRuntime, preScanPing state.PreScanPingState, output *state.OutputState, richDenyExcluded bool, targetExpansion *state.TargetExpansionState, targetSemanticsVersion int, basicPortFallback []string, limits state.SnapshotLimits, dispatchErr, runErr error) (int, error) {
 	rewoundChunks := 0
 	for _, rt := range runtimes {
 		if rt.tracker.RewindUnwritten() {
@@ -34,11 +34,13 @@ func persistResumeSnapshotWithLimits(savePath string, logger *scanLogger, runtim
 	}
 
 	if err := state.SaveSnapshotWithLimits(savePath, state.Snapshot{
-		Chunks:           collectChunkStates(runtimes),
-		PreScanPing:      preScanPing,
-		Output:           output,
-		RichDenyExcluded: richDenyExcluded,
-		TargetExpansion:  targetExpansion,
+		Chunks:                 collectChunkStates(runtimes),
+		PreScanPing:            preScanPing,
+		Output:                 output,
+		RichDenyExcluded:       richDenyExcluded,
+		TargetExpansion:        targetExpansion,
+		TargetSemanticsVersion: targetSemanticsVersion,
+		BasicPortFallback:      append([]string(nil), basicPortFallback...),
 	}, limits); err != nil {
 		return rewoundChunks, err
 	}

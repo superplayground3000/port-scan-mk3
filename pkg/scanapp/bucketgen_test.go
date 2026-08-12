@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 const richBucketCSVHeader = "src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n"
@@ -158,6 +163,287 @@ func TestGenerateBuckets_NoBlocklist_ScansAll(t *testing.T) {
 	}
 }
 
+func TestGenerateBuckets_BasicRowPortOverridesPortFile(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	out := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte("ip,ip_cidr,port\n192.0.2.1,192.0.2.0/24,443\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("80/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		SnapshotOutput: out,
+		Workers:        1,
+	})
+	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	snapshot, err := state.LoadSnapshot(out)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if len(snapshot.Chunks) != 1 {
+		t.Fatalf("len(snapshot.Chunks) = %d, want 1", len(snapshot.Chunks))
+	}
+	if got := snapshot.Chunks[0].Ports; len(got) != 1 || got[0] != "443/tcp" {
+		t.Fatalf("snapshot ports = %v, want [443/tcp]", got)
+	}
+	if got := snapshot.Chunks[0].TotalCount; got != 1 {
+		t.Fatalf("snapshot total_count = %d, want 1", got)
+	}
+}
+
+func TestGenerateBuckets_BasicPureFallbackPreservesCartesianChunkOrder(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	out := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte(
+		"ip,ip_cidr,port,cidr_name\n"+
+			"198.51.100.2,198.51.100.0/24,,second\n"+
+			"192.0.2.2,192.0.2.0/24,,first\n"+
+			"192.0.2.1,192.0.2.0/24,,first\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("443/tcp\n80/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		SnapshotOutput: out,
+		Workers:        8,
+	})
+	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	snapshot, err := state.LoadSnapshot(out)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	want := []task.Chunk{
+		{CIDR: "192.0.2.0/24", CIDRName: "first", Ports: []string{"443/tcp", "80/tcp"}, TotalCount: 4, Status: "pending"},
+		{CIDR: "198.51.100.0/24", CIDRName: "second", Ports: []string{"443/tcp", "80/tcp"}, TotalCount: 2, Status: "pending"},
+	}
+	if !reflect.DeepEqual(snapshot.Chunks, want) {
+		t.Fatalf("snapshot chunks = %+v, want %+v", snapshot.Chunks, want)
+	}
+}
+
+func TestGenerateBuckets_BasicMixedRowPortsResumeWithoutCrossProduct(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	out := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte(
+		"ip,ip_cidr,port\n"+
+			"192.0.2.1,192.0.2.0/24,443\n"+
+			"192.0.2.2,192.0.2.0/24,8443\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("80/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		SnapshotOutput: out,
+		Workers:        2,
+	})
+	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	snapshot, err := state.LoadSnapshot(out)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	records, err := readCIDRFile(cidrFile, "ip", "ip_cidr")
+	if err != nil {
+		t.Fatalf("readCIDRFile() error = %v", err)
+	}
+	ports, err := inputPortSpecsFromRows(snapshot.BasicPortFallback)
+	if err != nil {
+		t.Fatalf("inputPortSpecsFromRows() error = %v", err)
+	}
+	runtimes, err := buildRuntimeWithPredicate(snapshot.Chunks, records, ports, runtimePolicy{}, nil, nil)
+	if err != nil {
+		t.Fatalf("buildRuntimeWithPredicate() error = %v", err)
+	}
+	defer func() {
+		for _, runtime := range runtimes {
+			if runtime.bkt != nil {
+				runtime.bkt.Close()
+			}
+		}
+	}()
+
+	got := make([]string, 0, 2)
+	for _, runtime := range runtimes {
+		for index := 0; index < runtime.state.TotalCount; index++ {
+			target, port, mapErr := indexToRuntimeTarget(runtime.targets, runtime.ports, index)
+			if mapErr != nil {
+				t.Fatalf("indexToRuntimeTarget() error = %v", mapErr)
+			}
+			got = append(got, fmt.Sprintf("%s:%d/tcp", target.ip, port))
+		}
+	}
+	want := []string{"192.0.2.1:443/tcp", "192.0.2.2:8443/tcp"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("runtime targets = %v, want %v", got, want)
+	}
+}
+
+func TestGenerateBuckets_BasicRowsWithPortsDoNotNeedPortFile(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	out := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte(
+		"ip,ip_cidr,port\n"+
+			"192.0.2.1,192.0.2.0/24,443\n"+
+			"192.0.2.2,192.0.2.0/24,8443\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		SnapshotOutput: out,
+		Workers:        1,
+	})
+	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	snapshot, err := state.LoadSnapshot(out)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if got := sumTotalCount(snapshot); got != 2 {
+		t.Fatalf("snapshot total_count sum = %d, want 2", got)
+	}
+}
+
+func TestGenerateBuckets_BasicRowWithoutAnyPortSourceReturnsRowError(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	out := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte("ip,ip_cidr,port\n192.0.2.1,192.0.2.0/24,\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		SnapshotOutput: out,
+		Workers:        1,
+	})
+	err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{})
+	if err == nil || !strings.Contains(err.Error(), "basic row 2 has no port source") {
+		t.Fatalf("GenerateBuckets() error = %v, want row port-source error", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("snapshot stat error = %v, want no snapshot", statErr)
+	}
+}
+
+func TestGenerateBuckets_BasicCIDRRowPortsFallbackAndDedup(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	out := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte(
+		"ip,ip_cidr,port\n"+
+			"192.0.2.0/30,192.0.2.0/29,443\n"+
+			"192.0.2.1,192.0.2.0/29,443\n"+
+			"192.0.2.1,192.0.2.0/29,\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("80/tcp\n8443/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile:       cidrFile,
+		CIDRIPCol:      "ip",
+		CIDRIPCidrCol:  "ip_cidr",
+		PortFile:       portFile,
+		SnapshotOutput: out,
+		Workers:        4,
+	})
+	if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	snapshot, err := state.LoadSnapshot(out)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if got := sumTotalCount(snapshot); got != 6 {
+		t.Fatalf("snapshot total_count sum = %d, want 6 unique tasks", got)
+	}
+	records, err := readCIDRFile(cidrFile, "ip", "ip_cidr")
+	if err != nil {
+		t.Fatalf("readCIDRFile() error = %v", err)
+	}
+	ports, err := inputPortSpecsFromRows(snapshot.BasicPortFallback)
+	if err != nil {
+		t.Fatalf("inputPortSpecsFromRows() error = %v", err)
+	}
+	runtimes, err := buildRuntimeWithPredicate(snapshot.Chunks, records, ports, runtimePolicy{}, nil, nil)
+	if err != nil {
+		t.Fatalf("buildRuntimeWithPredicate() error = %v", err)
+	}
+	defer func() {
+		for _, runtime := range runtimes {
+			if runtime.bkt != nil {
+				runtime.bkt.Close()
+			}
+		}
+	}()
+	gotCounts := make(map[int]int)
+	gotTasks := make(map[string]struct{})
+	for _, runtime := range runtimes {
+		for index := 0; index < runtime.state.TotalCount; index++ {
+			target, port, mapErr := indexToRuntimeTarget(runtime.targets, runtime.ports, index)
+			if mapErr != nil {
+				t.Fatalf("indexToRuntimeTarget() error = %v", mapErr)
+			}
+			gotCounts[port]++
+			gotTasks[fmt.Sprintf("%s:%d/tcp", target.ip, port)] = struct{}{}
+		}
+	}
+	wantCounts := map[int]int{80: 1, 443: 4, 8443: 1}
+	if !maps.Equal(gotCounts, wantCounts) {
+		t.Fatalf("task counts by port = %v, want %v", gotCounts, wantCounts)
+	}
+	if len(gotTasks) != 6 {
+		t.Fatalf("unique runtime tasks = %v, want 6", gotTasks)
+	}
+}
+
 func TestGenerateBuckets_WhenRichInputIsDenied_WritesEmptySnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "rich-denied.csv")
@@ -234,6 +520,60 @@ func TestGenerateBuckets_Deterministic_AcrossWorkers(t *testing.T) {
 	}
 	if !bytes.Equal(b1, b8) {
 		t.Fatalf("serialized snapshots differ across worker counts:\n--- workers=1 ---\n%s\n--- workers=8 ---\n%s", b1, b8)
+	}
+}
+
+func TestGenerateBuckets_BasicRowPortsDeterministicAcrossWorkers(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	if err := os.WriteFile(cidrFile, []byte(
+		"ip,ip_cidr,port\n"+
+			"192.0.2.0/30,192.0.2.0/29,443\n"+
+			"192.0.2.1,192.0.2.0/29,\n"+
+			"198.51.100.1,198.51.100.0/24,8443\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("80/tcp\n443/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out1 := filepath.Join(tmp, "basic-w1.json")
+	out8 := filepath.Join(tmp, "basic-w8.json")
+	for _, test := range []struct {
+		workers int
+		output  string
+	}{{workers: 1, output: out1}, {workers: 8, output: out8}} {
+		cfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+			CIDRFile:       cidrFile,
+			CIDRIPCol:      "ip",
+			CIDRIPCidrCol:  "ip_cidr",
+			PortFile:       portFile,
+			SnapshotOutput: test.output,
+			Workers:        test.workers,
+		})
+		if err := GenerateBuckets(context.Background(), cfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+			t.Fatalf("workers=%d: GenerateBuckets() error = %v", test.workers, err)
+		}
+	}
+	b1, err := os.ReadFile(out1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b8, err := os.ReadFile(out8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b1, b8) {
+		t.Fatalf("basic row-port snapshots differ across worker counts:\nworkers=1:\n%s\nworkers=8:\n%s", b1, b8)
+	}
+	snapshot, err := state.LoadSnapshot(out1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.TargetSemanticsVersion != state.CurrentTargetSemanticsVersion {
+		t.Fatalf("target semantics version = %d, want %d", snapshot.TargetSemanticsVersion, state.CurrentTargetSemanticsVersion)
 	}
 }
 

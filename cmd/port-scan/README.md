@@ -6,7 +6,7 @@ TCP port scanner for IPv4 with pressure-aware pacing, rate control, and resume s
 
 `port-scan` is the main scanner binary for the port-scan-mk3 project. It supports two input modes:
 
-- **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs. A port file gives the TCP ports to test.
+- **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs. Each row can override the port file.
 - **Rich mode** — A single CSV file with full firewall-policy rows (for example, src_ip, dst_ip, port, and decision). In rich mode, you do not need a separate port file.
 
 The scanner dispatches tasks to a worker pool that you configure. It writes the results in real time. SIGINT or a pressure API can pause the scan and resume it.
@@ -78,7 +78,7 @@ compatibility.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-cidr-file` | (required) | Path to the CIDR input CSV |
-| `-port-file` | (required in basic mode) | Path to the port input file (one `port/tcp` per line). Not required in rich mode. |
+| `-port-file` | (conditional) | Path to the port input file. A basic row with a blank `port` value uses this file. Rich mode ignores it. |
 | `-output` | `scan_results.csv` | Base path for result CSV files. Actual files are `scan_results-<ts>.csv` and `opened_results-<ts>.csv` written in the same directory as the output path. |
 | `-output-flush-results` | `1000` | Number of probe results in one output batch. `1` flushes each result. `0` disables periodic flushes. |
 | `-timeout` | `100ms` | Per-scan TCP connection timeout (duration string) |
@@ -150,7 +150,7 @@ One row per IP selector. `port-scan` matches the columns by header name. If the 
 | `ip_cidr` | Yes | Boundary CIDR containing the selector |
 | `fab_name` | No | Fabric/mesh name carried through to output |
 | `cidr_name` | No | Human-readable CIDR label carried through to output |
-| `port` | No | Pre-specified port number on this row (otherwise uses port-file) |
+| `port` | No | TCP port for this row. A value overrides the port file for all IPs from this selector. |
 
 **Example:**
 ```csv
@@ -163,6 +163,10 @@ fab2,192.168.1.0,192.168.1.0/28,dmz
 ### Basic Mode: Port File
 
 One specification per line in `port/tcp` format.
+
+A basic row with a blank `port` value uses every port in this file. If all
+basic rows contain a port, `-port-file` is optional. The scanner combines all
+rows and scans each unique `ip:port/tcp` target one time.
 
 ```
 80/tcp

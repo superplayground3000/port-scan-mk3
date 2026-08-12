@@ -12,7 +12,10 @@ import (
 )
 
 type cidrGroup struct {
-	targets []scanTarget
+	cidr       string
+	ports      []string
+	targets    []scanTarget
+	totalCount int
 }
 
 type groupBuildStrategy interface {
@@ -62,91 +65,6 @@ func buildGroups(records []input.CIDRRecord, strategy groupBuildStrategy) (map[s
 	}
 
 	return out, nil
-}
-
-type basicGroupStrategy struct{}
-
-func (basicGroupStrategy) ShouldInclude(_ input.CIDRRecord) bool { return true }
-
-func (basicGroupStrategy) Key(rec input.CIDRRecord) (string, error) {
-	cidr := rec.CIDR
-	if cidr == "" && rec.Net != nil {
-		cidr = rec.Net.String()
-	}
-	if cidr == "" {
-		return "", fmt.Errorf("record missing ip_cidr")
-	}
-	return cidr, nil
-}
-
-func (s basicGroupStrategy) NewGroup(rec input.CIDRRecord) (cidrGroup, error) {
-	targets, err := s.targets(rec)
-	if err != nil {
-		return cidrGroup{}, err
-	}
-	return cidrGroup{targets: targets}, nil
-}
-
-func (s basicGroupStrategy) MergeGroup(existing cidrGroup, rec input.CIDRRecord) (cidrGroup, error) {
-	targets, err := s.targets(rec)
-	if err != nil {
-		return cidrGroup{}, err
-	}
-	existing.targets = append(existing.targets, targets...)
-	return existing, nil
-}
-
-func (basicGroupStrategy) RequireNonEmpty() bool { return false }
-
-func (basicGroupStrategy) targets(rec input.CIDRRecord) ([]scanTarget, error) {
-	return (basicGroupStrategy{}).targetsContext(context.Background(), rec)
-}
-
-func (basicGroupStrategy) targetsContext(ctx context.Context, rec input.CIDRRecord) ([]scanTarget, error) {
-	cidr := rec.CIDR
-	if cidr == "" && rec.Net != nil {
-		cidr = rec.Net.String()
-	}
-
-	selector := ""
-	switch {
-	case rec.Selector != nil:
-		selector = rec.Selector.String()
-	case strings.TrimSpace(rec.IPRaw) != "":
-		selector = strings.TrimSpace(rec.IPRaw)
-	case rec.Net != nil:
-		selector = rec.Net.String()
-	default:
-		return nil, fmt.Errorf("record for cidr %s missing selector", cidr)
-	}
-
-	ips, err := task.ExpandIPSelectorsContextWithLimits(ctx, []string{selector}, task.ExpansionLimits{})
-	if err != nil {
-		return nil, fmt.Errorf("expand selector failed for cidr %s: %w", cidr, err)
-	}
-	// The broadcast address of the boundary subnet is not a scannable host and
-	// is excluded regardless of whether it arrived via CIDR expansion or as an
-	// explicitly listed single IP.
-	ips = task.FilterBoundaryBroadcast(ips, rec.Net)
-
-	targets := make([]scanTarget, 0, len(ips))
-	for i, ip := range ips {
-		if i%4096 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		targets = append(targets, scanTarget{
-			ip:     ip,
-			ipCidr: cidr,
-			ipU32:  ipv4ToUint32(ip),
-			meta: targetMeta{
-				fabName:  rec.FabName,
-				cidrName: rec.CIDRName,
-			},
-		})
-	}
-	return targets, nil
 }
 
 type richGroupStrategy struct{}

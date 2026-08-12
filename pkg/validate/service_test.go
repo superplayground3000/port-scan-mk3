@@ -136,6 +136,44 @@ func TestInputs_WhenDefaultCSVAndPortFileMissing_ReturnsInvalidDetail(t *testing
 	}
 }
 
+func TestInputs_WhenAllBasicRowsHavePortsAndPortFileMissing_ReturnsValidResult(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "cidr.csv")
+	if err := os.WriteFile(cidr, []byte(
+		"ip,ip_cidr,port\n"+
+			"192.0.2.1,192.0.2.0/24,443\n"+
+			"198.51.100.1,198.51.100.0/24,8443\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
+		CIDRFile:      cidr,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+	}))
+	if !result.Valid || result.Detail != "ok" {
+		t.Fatalf("Inputs() = %+v, want valid result", result)
+	}
+}
+
+func TestInputs_WhenBasicRowHasNoPortSource_ReturnsRowError(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "cidr.csv")
+	if err := os.WriteFile(cidr, []byte("ip,ip_cidr,port\n192.0.2.1,192.0.2.0/24,\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
+		CIDRFile:      cidr,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+	}))
+	if result.Valid || !strings.Contains(result.Detail, "basic row 2 has no port source") {
+		t.Fatalf("Inputs() = %+v, want row port-source error", result)
+	}
+}
+
 func TestInputs_WhenExpansionExceedsDefault_ReturnsEstimateWithoutMaterializingTargets(t *testing.T) {
 	tmp := t.TempDir()
 	cidr := filepath.Join(tmp, "cidr.csv")

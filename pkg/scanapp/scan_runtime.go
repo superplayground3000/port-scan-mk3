@@ -91,6 +91,15 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	if err := validateSnapshotAuthorization(snapshot, inputs.cidrRecords); err != nil {
 		return err
 	}
+	if err := validateSnapshotTargetSemantics(snapshot, inputs.cidrRecords); err != nil {
+		return err
+	}
+	if snapshot.TargetSemanticsVersion == state.CurrentTargetSemanticsVersion && !hasRichRecords(inputs.cidrRecords) {
+		inputs.portSpecs, err = inputPortSpecsFromRows(snapshot.BasicPortFallback)
+		if err != nil {
+			return err
+		}
+	}
 	// A successful legacy check proves that the snapshot contains no denied
 	// work. A later progress save can record this fact and skip the check.
 	snapshot.RichDenyExcluded = true
@@ -311,7 +320,7 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
 	snapshotStartedAt := time.Now()
-	rewoundChunks, snapshotErr := persistResumeSnapshotWithLimits(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, r.input.resourceLimits.Snapshot, dispatchErr, runErr)
+	rewoundChunks, snapshotErr := persistResumeSnapshotWithLimits(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, snapshot.TargetSemanticsVersion, snapshot.BasicPortFallback, r.input.resourceLimits.Snapshot, dispatchErr, runErr)
 	logger.eventf("snapshot_save_complete", "", 0, "snapshot_save_complete", errorCause(snapshotErr), map[string]any{
 		"duration_ms":    time.Since(snapshotStartedAt).Milliseconds(),
 		"rewound_chunks": rewoundChunks,

@@ -37,6 +37,8 @@ import (
 )
 
 const (
+	// CurrentTargetSemanticsVersion identifies snapshots that apply basic row ports.
+	CurrentTargetSemanticsVersion = 1
 	// DefaultSnapshotSizeLimitBytes is the default serialized snapshot size.
 	DefaultSnapshotSizeLimitBytes uint64 = 2_000_000_000
 	// DefaultSnapshotChunkLimit is the default number of chunks in a snapshot.
@@ -100,14 +102,20 @@ type Snapshot struct {
 	RichDenyExcluded bool `json:"rich_deny_excluded,omitempty"`
 	// TargetExpansion is nil for snapshots that predate expansion limits.
 	TargetExpansion *TargetExpansionState `json:"target_expansion,omitempty"`
+	// TargetSemanticsVersion identifies the rules that produced the target set.
+	TargetSemanticsVersion int `json:"target_semantics_version,omitempty"`
+	// BasicPortFallback records the port-file values for blank basic row ports.
+	BasicPortFallback []string `json:"basic_port_fallback,omitempty"`
 }
 
 type snapshotEnvelope struct {
-	Chunks           *[]task.Chunk         `json:"chunks"`
-	PreScanPing      *preScanPingEnvelope  `json:"pre_scan_ping,omitempty"`
-	Output           *OutputState          `json:"output,omitempty"`
-	RichDenyExcluded bool                  `json:"rich_deny_excluded,omitempty"`
-	TargetExpansion  *TargetExpansionState `json:"target_expansion,omitempty"`
+	Chunks                 *[]task.Chunk         `json:"chunks"`
+	PreScanPing            *preScanPingEnvelope  `json:"pre_scan_ping,omitempty"`
+	Output                 *OutputState          `json:"output,omitempty"`
+	RichDenyExcluded       bool                  `json:"rich_deny_excluded,omitempty"`
+	TargetExpansion        *TargetExpansionState `json:"target_expansion,omitempty"`
+	TargetSemanticsVersion int                   `json:"target_semantics_version,omitempty"`
+	BasicPortFallback      []string              `json:"basic_port_fallback,omitempty"`
 }
 
 type preScanPingEnvelope struct {
@@ -177,6 +185,8 @@ func SaveSnapshotWithLimits(path string, snap Snapshot, limits SnapshotLimits) e
 		expansion := *snap.TargetExpansion
 		env.TargetExpansion = &expansion
 	}
+	env.TargetSemanticsVersion = snap.TargetSemanticsVersion
+	env.BasicPortFallback = append([]string(nil), snap.BasicPortFallback...)
 
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
@@ -337,8 +347,10 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 			return Snapshot{}, errors.New("resume snapshot missing required chunks field")
 		}
 		snap := Snapshot{
-			Chunks:           *env.Chunks,
-			RichDenyExcluded: env.RichDenyExcluded,
+			Chunks:                 *env.Chunks,
+			RichDenyExcluded:       env.RichDenyExcluded,
+			TargetSemanticsVersion: env.TargetSemanticsVersion,
+			BasicPortFallback:      append([]string(nil), env.BasicPortFallback...),
 		}
 		if env.TargetExpansion != nil {
 			expansion := *env.TargetExpansion
