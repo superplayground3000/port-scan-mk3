@@ -211,7 +211,7 @@ func resolveBasicTargetsContext(ctx context.Context, records []input.CIDRRecord,
 }
 
 func resolveBasicFallbackTargetsContext(ctx context.Context, records []input.CIDRRecord, fallbackPorts []int, reachable func(string) bool) (basicTargetResolution, error) {
-	cidrGroups, err := buildCIDRGroupsWithPredicateContext(ctx, records, reachable)
+	cidrGroups, err := buildBasicFallbackGroupsContext(ctx, records, reachable)
 	if err != nil {
 		return basicTargetResolution{}, fmt.Errorf("build fallback CIDR groups: %w", err)
 	}
@@ -243,6 +243,63 @@ func resolveBasicFallbackTargetsContext(ctx context.Context, records []input.CID
 		groups[basicResolutionGroupKey(cidr, fallbackPorts)] = group
 	}
 	return basicTargetResolution{groups: groups}, nil
+}
+
+func buildBasicFallbackGroupsContext(ctx context.Context, records []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
+	strategy := basicGroupStrategy{}
+	predicate := normalizeReachablePredicate(reachable)
+	groups := make(map[string]cidrGroup)
+	for index, record := range records {
+		if index%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		cidr, err := strategy.Key(record)
+		if err != nil {
+			return nil, err
+		}
+		targets, err := strategy.targetsContext(ctx, record)
+		if err != nil {
+			return nil, err
+		}
+		targets, err = filterBasicFallbackTargetsContext(ctx, targets, predicate)
+		if err != nil {
+			return nil, err
+		}
+		if len(targets) == 0 {
+			continue
+		}
+		group, exists := groups[cidr]
+		if !exists {
+			group.targets = targets
+		} else {
+			group.targets = append(group.targets, targets...)
+		}
+		groups[cidr] = group
+	}
+	for cidr, group := range groups {
+		sort.Slice(group.targets, func(i, j int) bool {
+			return group.targets[i].ipU32 < group.targets[j].ipU32
+		})
+		groups[cidr] = group
+	}
+	return groups, nil
+}
+
+func filterBasicFallbackTargetsContext(ctx context.Context, targets []scanTarget, reachable func(string) bool) ([]scanTarget, error) {
+	kept := targets[:0]
+	for index := range targets {
+		if index%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if reachable(targets[index].ip) {
+			kept = append(kept, targets[index])
+		}
+	}
+	return kept, nil
 }
 
 func (resolution basicTargetResolution) groupForChunk(chunk task.Chunk) (cidrGroup, error) {
