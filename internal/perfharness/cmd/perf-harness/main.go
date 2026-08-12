@@ -134,6 +134,10 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	matrixPassed := true
+	if workflowItems >= contract.SmokeItems {
+		matrixPassed = applyWorkerMemoryThreshold(results, harness)
+	}
 
 	report := perfharness.Report{
 		SchemaVersion: perfharness.SchemaVersion,
@@ -162,10 +166,55 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
+	if !matrixPassed {
+		if err := writeStatus(stderr, "performance matrix failed one or more thresholds: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown); err != nil {
+			return 1
+		}
+		return 1
+	}
 	if err := writeStatus(stdout, "performance matrix passed: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown); err != nil {
 		return 1
 	}
 	return 0
+}
+
+func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfharness.Harness) bool {
+	workers16 := findCase(results, "production-workflow/workers-16")
+	workers256 := findCase(results, "production-workflow/workers-256")
+	if workers16 == nil || workers256 == nil {
+		return false
+	}
+	comparisons := []perfharness.WorkerComparison{
+		{Workers16Bytes: workerMemory(workers16.ColdStart), Workers256Bytes: workerMemory(workers256.ColdStart)},
+		{Workers16Bytes: workerMemory(workers16.SteadyMedian), Workers256Bytes: workerMemory(workers256.SteadyMedian)},
+	}
+	for _, comparison := range comparisons {
+		verdict := harness.Evaluate(perfharness.EvaluationInput{Workers: &comparison})
+		if !verdict.Passed {
+			workers256.Verdict.Passed = false
+			workers256.Verdict.Failures = append(workers256.Verdict.Failures, verdict.Failures...)
+		}
+	}
+	return workers256.Verdict.Passed
+}
+
+func workerMemory(observation perfharness.Observation) uint64 {
+	if observation.LinuxPeakRSSBytes > 0 {
+		return observation.LinuxPeakRSSBytes
+	}
+	if observation.WindowsWorkingSetBytes > 0 {
+		return observation.WindowsWorkingSetBytes
+	}
+	return observation.PeakCommittedBytes
+}
+
+func findCase(results []perfharness.CaseResult, name string) *perfharness.CaseResult {
+	for index := range results {
+		if results[index].Name == name {
+			return &results[index]
+		}
+	}
+	return nil
 }
 
 func writeStatus(output io.Writer, format string, values ...any) error {

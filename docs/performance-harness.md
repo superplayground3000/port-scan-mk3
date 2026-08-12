@@ -17,6 +17,8 @@ Production packages do not import the performance harness.
 The Linux shell and Windows PowerShell scripts are OS adapters.
 They start the process, collect OS metrics, prepare paths, and remove specific temporary files.
 The Go module owns all threshold formulas.
+Build-tagged process samplers record OS metrics for each case.
+The scripts also keep raw metrics for the complete matrix process.
 
 ## Matrix profiles
 
@@ -41,6 +43,7 @@ The contract also records LF and CRLF input variants.
 
 The bounded `smoke` profile uses 100,000 records and a 100 MB snapshot.
 Linux and Windows CI run this profile.
+The worker-memory threshold applies at this scale and at larger scales.
 
 The production fake-probe cases use 1, 16, and 256 workers.
 The native loopback cases use 1 and 32 workers.
@@ -102,6 +105,8 @@ The portable observation has these metrics:
 - Linux peak RSS or Windows peak working set.
 - Peak committed memory.
 - Swap or pagefile bytes and I/O.
+
+On Windows, the I/O counters include process file I/O and paging I/O.
 
 The report records the CPU, core counts, power mode, RAM, filesystem, and disk.
 It also records free space, Go version, commit, constraints, and evidence label.

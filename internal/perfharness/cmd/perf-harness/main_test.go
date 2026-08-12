@@ -77,3 +77,28 @@ func TestRunCommandFailsWhenItCannotWriteStatus(t *testing.T) {
 		t.Fatalf("exit code = %d, want 1 for status output failure", exitCode)
 	}
 }
+
+func TestApplyWorkerMemoryThresholdBlocksMoreThanTwentyFivePercentGrowth(t *testing.T) {
+	t.Parallel()
+
+	results := []perfharness.CaseResult{
+		{
+			Name:         "production-workflow/workers-16",
+			ColdStart:    perfharness.Observation{PeakCommittedBytes: 100},
+			SteadyMedian: perfharness.Observation{PeakCommittedBytes: 100},
+			Verdict:      perfharness.Verdict{Passed: true},
+		},
+		{
+			Name:         "production-workflow/workers-256",
+			ColdStart:    perfharness.Observation{PeakCommittedBytes: 126},
+			SteadyMedian: perfharness.Observation{PeakCommittedBytes: 126},
+			Verdict:      perfharness.Verdict{Passed: true},
+		},
+	}
+	if applyWorkerMemoryThreshold(results, perfharness.New()) {
+		t.Fatal("worker memory threshold accepted 26 percent growth")
+	}
+	if !results[1].Verdict.HasFailure("worker-memory") {
+		t.Fatalf("workers-256 verdict = %+v", results[1].Verdict)
+	}
+}

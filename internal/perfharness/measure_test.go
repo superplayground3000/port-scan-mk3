@@ -2,6 +2,7 @@ package perfharness_test
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/internal/perfharness"
@@ -29,5 +30,11 @@ func TestMeasureRecordsPortableGoMetrics(t *testing.T) {
 	}
 	if observation.GoAllocatedBytes == 0 || observation.GoAllocationCount == 0 || observation.GoPeakHeapBytes == 0 {
 		t.Fatalf("Go metrics = %+v", observation)
+	}
+	if runtime.GOOS == "linux" && (observation.LinuxPeakRSSBytes == 0 || observation.PeakCommittedBytes == 0) {
+		t.Fatalf("Linux process metrics = %+v", observation)
+	}
+	if runtime.GOOS == "windows" && (observation.WindowsWorkingSetBytes == 0 || observation.PeakCommittedBytes == 0) {
+		t.Fatalf("Windows process metrics = %+v", observation)
 	}
 }

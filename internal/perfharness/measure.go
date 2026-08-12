@@ -16,10 +16,15 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err
 	}
+	processBefore, err := sampleProcessMetrics()
+	if err != nil {
+		return Observation{}, err
+	}
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 	var peak atomic.Uint64
 	peak.Store(before.HeapInuse)
+	processPeak := newProcessPeaks(processBefore)
 	stop := make(chan struct{})
 	var wait sync.WaitGroup
 	wait.Add(1)
@@ -35,6 +40,9 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 				var sample runtime.MemStats
 				runtime.ReadMemStats(&sample)
 				storeMaximum(&peak, sample.HeapInuse)
+				if processSample, sampleErr := sampleProcessMetrics(); sampleErr == nil {
+					processPeak.store(processSample)
+				}
 			}
 		}
 	}()
@@ -46,18 +54,65 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	storeMaximum(&peak, after.HeapInuse)
+	processAfter, processErr := sampleProcessMetrics()
+	if processErr != nil && err == nil {
+		err = processErr
+	}
+	processPeak.store(processAfter)
 	observation := Observation{
-		InputBytes:        inputBytes,
-		OutputBytes:       outputBytes,
-		WallTime:          elapsed,
-		GoAllocatedBytes:  after.TotalAlloc - before.TotalAlloc,
-		GoAllocationCount: after.Mallocs - before.Mallocs,
-		GoPeakHeapBytes:   peak.Load(),
+		InputBytes:             inputBytes,
+		OutputBytes:            outputBytes,
+		WallTime:               elapsed,
+		GoAllocatedBytes:       after.TotalAlloc - before.TotalAlloc,
+		GoAllocationCount:      after.Mallocs - before.Mallocs,
+		GoPeakHeapBytes:        peak.Load(),
+		LinuxPeakRSSBytes:      processPeak.linuxRSS.Load(),
+		WindowsWorkingSetBytes: processPeak.windowsWorkingSet.Load(),
+		PeakCommittedBytes:     processPeak.committed.Load(),
+		SwapOrPagefileBytes:    processPeak.swapOrPagefile.Load(),
+		PagingReadBytes:        counterDelta(processAfter.pagingRead, processBefore.pagingRead),
+		PagingWriteBytes:       counterDelta(processAfter.pagingWrite, processBefore.pagingWrite),
 	}
 	if elapsed > 0 {
 		observation.ThroughputPerSecond = float64(units) / elapsed.Seconds()
 	}
 	return observation, err
+}
+
+type processMetrics struct {
+	linuxRSS          uint64
+	windowsWorkingSet uint64
+	committed         uint64
+	swapOrPagefile    uint64
+	pagingRead        uint64
+	pagingWrite       uint64
+}
+
+type processPeaks struct {
+	linuxRSS          atomic.Uint64
+	windowsWorkingSet atomic.Uint64
+	committed         atomic.Uint64
+	swapOrPagefile    atomic.Uint64
+}
+
+func newProcessPeaks(initial processMetrics) *processPeaks {
+	peaks := &processPeaks{}
+	peaks.store(initial)
+	return peaks
+}
+
+func (peaks *processPeaks) store(sample processMetrics) {
+	storeMaximum(&peaks.linuxRSS, sample.linuxRSS)
+	storeMaximum(&peaks.windowsWorkingSet, sample.windowsWorkingSet)
+	storeMaximum(&peaks.committed, sample.committed)
+	storeMaximum(&peaks.swapOrPagefile, sample.swapOrPagefile)
+}
+
+func counterDelta(after, before uint64) uint64 {
+	if after < before {
+		return 0
+	}
+	return after - before
 }
 
 func storeMaximum(value *atomic.Uint64, candidate uint64) {

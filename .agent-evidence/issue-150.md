@@ -252,6 +252,72 @@ The reviewer also called the required single `Harness` interface a prohibited go
 Issue 150 explicitly requires one private interface for these evidence operations.
 The interface remains one deep evidence-run boundary, and production packages do not use it.
 
+### Per-case native process metrics
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestMeasureRecordsPortableGoMetrics -count=1
+```
+
+Observed red reason:
+
+```text
+LinuxPeakRSSBytes:0 PeakCommittedBytes:0
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness 0.003s
+```
+
+Green commands:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness -run TestMeasureRecordsPortableGoMetrics -count=1
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOTOOLCHAIN=go1.24.4 go test -c ./internal/perfharness
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness 0.003s
+Windows output: PE32+ executable for MS Windows, x86-64
+```
+
+The Linux adapter samples `/proc/self/status` and `/proc/self/io` for each action.
+The Windows adapter uses `GetProcessMemoryInfo` and `GetProcessIoCounters` for each action.
+The scripts keep the raw whole-process evidence in addition to these case metrics.
+
+The bounded native Linux smoke passed with nonzero RSS and committed-memory fields for all seven cases.
+The worker-memory evaluator compared the cold and steady 16-worker and 256-worker observations.
+
+### Worker-memory threshold in the matrix runner
+
+Red command:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestApplyWorkerMemoryThresholdBlocksMoreThanTwentyFivePercentGrowth -count=1
+```
+
+Observed red reason:
+
+```text
+undefined: applyWorkerMemoryThreshold
+FAIL github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness [build failed]
+```
+
+Green commands:
+
+```text
+GOTOOLCHAIN=go1.24.4 go test ./internal/perfharness/cmd/perf-harness -run TestApplyWorkerMemoryThresholdBlocksMoreThanTwentyFivePercentGrowth -count=1
+GOTOOLCHAIN=go1.24.4 bash scripts/performance_gate.sh smoke /tmp/port-scan-mk3-issue-150-smoke-per-case
+```
+
+Observed green result:
+
+```text
+ok github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness 0.002s
+performance matrix passed: JSON=/tmp/port-scan-mk3-issue-150-smoke-per-case/report/performance-report.json Markdown=/tmp/port-scan-mk3-issue-150-smoke-per-case/report/performance-report.md
+Performance matrix artifacts: /tmp/port-scan-mk3-issue-150-smoke-per-case
+```
+
 ### Full repository gate
 
 Command:
