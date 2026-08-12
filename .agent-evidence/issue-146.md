@@ -317,3 +317,45 @@ The counter-overflow test started with this command:
 It failed to compile because `incrementInputCount` and `incrementResponseCount` did not exist.
 The input and pressure readers now reject byte or item counters that cannot represent the next value.
 The same command then passed both packages.
+
+The corrected configuration exposes one limit type for each workflow.
+Pre-ping receives only CIDR limits.
+Validation receives CIDR and port limits.
+Bucket generation receives CIDR, port, and snapshot limits.
+Scanning receives all four data-source limits.
+The aggregate `ResourceLimitValues` type was new on this branch and was not part of the base revision.
+
+The uncontended performance smoke command was:
+
+`bash scripts/performance_gate.sh smoke /tmp/issue146-smoke-3688dd9-clean`
+
+It exited 0 with 60 non-target resource-limit rows and no failed verdict.
+Each valid-value row recorded production enforcement acceptance or plus-one rejection.
+The raw process metric reported `Swaps: 0`.
+An earlier smoke run overlapped the focused race command and is not performance evidence.
+
+The final focused race command passed the changed production and harness packages.
+Its package results included `pkg/scanapp` in `2.795s` and `internal/perfharness` in `18.785s`.
+
+The first final `make verify` process completed, but the tool lost its live output session.
+Its exit status and final lines were not used as evidence.
+No commit or file changed before the repeated command.
+
+The repeated command was `GOTOOLCHAIN=go1.24.4 make verify`.
+It exited 0 with:
+
+```text
+coverage gate passed: 85.0%
+
+=== RESULT ===
+All selected quality gates passed.
+```
+
+The isolated command was:
+
+`COMPOSE_PROJECT_NAME=issue146_limits_3688dd9 GOTOOLCHAIN=go1.24.4 make verify-e2e`
+
+It exited 0 with the same coverage and final result lines.
+
+The final pragmatic Simple English check covered all review-fix comments, errors, and documentation.
+Sentences are short and active, terms are consistent, and conditions occur before commands.
