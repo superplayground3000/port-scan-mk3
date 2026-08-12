@@ -214,3 +214,12 @@ A fixture test verifies that `TargetBytes` is a lower bound.
 The failed run took `14:05.20` and reached `18996320` KB maximum RSS.
 Its raw `/usr/bin/time -v` process metric reported `Swaps: 0`.
 This value describes only that measured process; it does not assign global swap activity.
+
+After the fixture correction, `make verify` again completed with:
+
+```text
+coverage gate passed: 85.0%
+
+=== RESULT ===
+All selected quality gates passed.
+```
