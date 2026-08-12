@@ -232,3 +232,10 @@ These are different object shapes and cannot form one growth chain.
 Command: `go test ./internal/perfharness/cmd/perf-harness -run '^TestApplyInputAndSnapshotGrowthThresholdsChecksEveryTenfoldStep$' -count=1`
 
 Result: failed because the evaluator marked `snapshot-heavy/port-heavy` instead of the same-shape `snapshot-heavy/mixed/ten-megabytes` case.
+
+The corrected evaluator uses one explicit `snapshot-heavy/mixed` chain.
+It compares 1 MB, 10 MB, 100 MB, and 1 GB in ascending order.
+The object-heavy snapshot shapes remain independent correctness cases.
+
+After this correction, the focused harness packages passed in `2.816s` and `17.744s`.
+The complete `make verify` gate also passed at `85.0%` coverage.
