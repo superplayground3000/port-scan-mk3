@@ -214,6 +214,25 @@ func TestLoadSnapshot_WhenJSONHasAnotherRoot_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestLoadSnapshot_WhenJSONStructureIsMalformed_ReturnsError(t *testing.T) {
+	tests := []string{
+		`{"chunks":[{"cidr":"brace } comma ,"}`,
+		`{"chunks":[{"cidr":"unterminated}]}`,
+		`{"chunks":[],"output":{"scan_path":"x"`,
+		`{"chunks":[],"output":{"scan_path":"x" "open_path":"y"}}`,
+		`{"chunks":[],"output":{"scan_path":"x",}}`,
+	}
+	for index, data := range tests {
+		file := filepath.Join(t.TempDir(), "malformed.json")
+		if err := os.WriteFile(file, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadSnapshotWithLimits(file, SnapshotLimits{}); err == nil {
+			t.Fatalf("case %d: LoadSnapshotWithLimits() accepted malformed JSON", index)
+		}
+	}
+}
+
 func TestLoadSnapshot_UnreachableNumberSyntaxMatchesJSONUint32(t *testing.T) {
 	tests := []struct {
 		name    string

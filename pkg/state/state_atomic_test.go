@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -76,6 +77,53 @@ func TestSaveSnapshot_WhenWriteFails_PreservesPreviousSnapshot(t *testing.T) {
 
 	err := SaveSnapshot(path, replacementSnapshot())
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "write")
+}
+
+func TestSaveSnapshot_WhenBufferedWriteFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+	snapshot := replacementSnapshot()
+	snapshot.PreScanPing = PreScanPingState{Enabled: true, UnreachableIPv4U32: make([]uint32, 100_000)}
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		realWrite := ops.write
+		writes := 0
+		ops.write = func(file *os.File, data []byte) (int, error) {
+			writes++
+			if writes == 2 {
+				return 0, errInjected
+			}
+			return realWrite(file, data)
+		}
+	})
+
+	err := SaveSnapshot(path, snapshot)
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "write")
+}
+
+func TestSaveSnapshot_WhenWriterReturnsShortCount_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		ops.write = func(*os.File, []byte) (int, error) { return 1, nil }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("SaveSnapshot() error = %v, want short write", err)
+	}
+	if !strings.Contains(err.Error(), "previous snapshot remains usable") {
+		t.Fatalf("SaveSnapshot() error = %v, want old-file guarantee", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("short write changed the previous snapshot")
+	}
+	assertNoTempFilesBesideSnapshot(t, path)
 }
 
 // TestSaveSnapshot_WhenSyncFails_PreservesPreviousSnapshot proves the temp file
