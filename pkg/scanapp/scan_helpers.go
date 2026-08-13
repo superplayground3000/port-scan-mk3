@@ -50,6 +50,16 @@ func indexToChunkRuntimeTarget(runtime *chunkRuntime, idx int) (scanTarget, int,
 		return scanTarget{}, 0, fmt.Errorf("chunk runtime has mixed target storage")
 	}
 	if len(runtime.basicTargets) == 0 {
+		// Runtime target groups are homogeneous. Rich targets have positive ports.
+		if len(runtime.targets) > 0 && len(runtime.ports) == 1 && runtime.targets[0].port > 0 {
+			if idx < 0 {
+				return scanTarget{}, 0, fmt.Errorf("negative index")
+			}
+			if idx >= len(runtime.targets) {
+				return scanTarget{}, 0, fmt.Errorf("index out of range")
+			}
+			return runtime.targets[idx], runtime.targets[idx].port, nil
+		}
 		return indexToRuntimeTarget(runtime.targets, runtime.ports, idx)
 	}
 	if len(runtime.ports) == 0 {

@@ -489,6 +489,54 @@ func TestIndexToRuntimeTarget_WhenRichTargetsHaveDedicatedPorts_MapsOneTaskPerTa
 	}
 }
 
+func TestIndexToRuntimeTarget_WhenTargetPortsAreMixed_UsesRuntimePort(t *testing.T) {
+	targets := []scanTarget{
+		{ip: "10.0.0.1", port: 443},
+		{ip: "10.0.0.2"},
+	}
+	target, port, err := indexToRuntimeTarget(targets, []int{8443}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ip != "10.0.0.2" || port != 8443 {
+		t.Fatalf("mixed target mapping = %s:%d, want 10.0.0.2:8443", target.ip, port)
+	}
+}
+
+func TestIndexToChunkRuntimeTarget_DedicatedPortLookupDoesNotScaleWithTargetCount(t *testing.T) {
+	makeRuntime := func(count int) *chunkRuntime {
+		targets := make([]scanTarget, count)
+		for index := range targets {
+			targets[index] = scanTarget{ip: "192.0.2.1", port: 443}
+		}
+		return &chunkRuntime{targets: targets, ports: []int{1}}
+	}
+	measure := func(targetCount int) testing.BenchmarkResult {
+		runtime := makeRuntime(targetCount)
+		observed := 0
+		result := testing.Benchmark(func(b *testing.B) {
+			for index := 0; index < b.N; index++ {
+				target, port, err := indexToChunkRuntimeTarget(runtime, index%targetCount)
+				if err != nil {
+					b.Fatal(err)
+				}
+				observed += len(target.ip) + port
+			}
+		})
+		if observed == 0 {
+			t.Fatal("lookup result was not consumed")
+		}
+		return result
+	}
+
+	small := measure(1)
+	large := measure(65_536)
+	t.Logf("dedicated-port lookup: one=%s, 65536=%s", small, large)
+	if large.NsPerOp() > small.NsPerOp()*32 {
+		t.Fatalf("dedicated-port lookup scales with target count: one=%s, 65536=%s", small, large)
+	}
+}
+
 func TestBuildRichChunks_WhenNoUsableRows_ReturnsError(t *testing.T) {
 	_, err := buildRichChunks([]input.CIDRRecord{{IsRich: true, IsValid: false}})
 	if err == nil {
