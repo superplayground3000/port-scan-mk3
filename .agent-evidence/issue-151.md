@@ -603,3 +603,44 @@ Raw JSON and process logs are under this directory:
 ```text
 /media/hp/secondary/issue151-performance-52d8cbe-diagnostics/
 ```
+
+## First final full-matrix attempt
+
+The exact commit was `6d9c6dfb2c398dfe958d23e74ebe056995f49514`.
+The matrix used one process and ran for more than five hours.
+It passed 140 cases and reported no case failure before the final error.
+
+All 15 cancellation cases passed at 10,000,000 logical items.
+The resume cases at 0%, 50%, and 99% passed.
+The three failure cases passed in six observations each.
+
+The next accepted rich workflow stopped before pre-ping.
+Its generated CSV was 1,022,664,300 bytes.
+The default CIDR input limit was 1,000,000,000 bytes.
+The exact error was:
+
+```text
+run rich family=rich-record-mixed: run rich-deny pre-ping workflow: CIDR input /media/hp/secondary/issue151-performance-6d9c6df/cases/rich-rich-record-mixed/run-0/fixture/input.csv size 1022664300 bytes exceeds limit 1000000000 bytes; use -cidr-input-size-limit-gb to override it
+exit status 1
+```
+
+The harness did not write a partial JSON or Markdown report.
+The raw log and case artifacts remain under these paths:
+
+```text
+/media/hp/secondary/issue151-performance-6d9c6df.log
+/media/hp/secondary/issue151-performance-6d9c6df/
+```
+
+The focused regression test first failed to compile because
+`acceptedRichResourceLimits` did not exist.
+The new helper calculates the smallest positive decimal-GB override.
+For the failed fixture, the override is 2,000,000,000 bytes.
+The pre-ping, bucket, and scan stages use the same resource limits.
+All unrelated limits keep their default values.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.142s
+```

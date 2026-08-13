@@ -6,6 +6,23 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-13 — A large accepted fixture used the default file-size limit
+- Symptom: the full issue #151 matrix stopped after 5 hours and 31 minutes.
+  The first accepted `rich-record-mixed` workflow rejected its 1,022,664,300-byte
+  CSV because the default limit was 1,000,000,000 bytes.
+- Root cause: `RunRichSmoke` generated the large fixture, but it used default
+  resource limits for pre-ping, bucket generation, and scan. The harness did
+  not calculate an override from the actual fixture size.
+- Fix / rule: after fixture generation, calculate the smallest positive
+  decimal-GB limit that contains the actual file. Give the same limit to all
+  three production stages. Keep the other limits at their defaults. Keep the
+  dedicated rejection and bypass cases separate. See [[60-development-guidelines]]
+  G3.
+- Evidence: the full log contains `size 1022664300 bytes exceeds limit
+  1000000000 bytes`. The focused regression test was red because the limit
+  helper did not exist. The focused race test passed in 1.142 seconds after
+  the fix.
+
 ## 2026-08-02 — A `select` loop raced its own exit condition and dropped a fatal error
 - Symptom: `TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError` failed ~6% of
   runs (measured 7/120 on master `19eb4da`), always as `err == nil` in 0.00s.

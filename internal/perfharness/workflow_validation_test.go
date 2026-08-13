@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
@@ -86,6 +88,62 @@ func TestWorkflowSpecificationsRejectInvalidCasesBeforeRunning(t *testing.T) {
 				t.Fatal("invalid workflow specification was accepted")
 			}
 		})
+	}
+}
+
+func TestAcceptedRichWorkflowUsesTheSmallestPositiveCIDRSizeOverride(t *testing.T) {
+	for _, check := range []struct {
+		actual uint64
+		want   uint64
+	}{
+		{actual: 999_999_999, want: 1_000_000_000},
+		{actual: 1_000_000_000, want: 1_000_000_000},
+		{actual: 1_022_664_300, want: 2_000_000_000},
+	} {
+		limits, err := acceptedRichResourceLimits(check.actual)
+		if err != nil {
+			t.Fatalf("actual bytes %d: %v", check.actual, err)
+		}
+		if limits.CIDR.MaxBytes != check.want {
+			t.Fatalf("actual bytes %d: CIDR byte limit = %d, want %d", check.actual, limits.CIDR.MaxBytes, check.want)
+		}
+	}
+	limits, err := acceptedRichResourceLimits(1_022_664_300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultCIDR := input.DefaultCIDRLimits("")
+	if limits.CIDR.MaxRecords != defaultCIDR.MaxRecords {
+		t.Fatalf("accepted rich CIDR record limit = %d, want %d", limits.CIDR.MaxRecords, defaultCIDR.MaxRecords)
+	}
+	if limits.Port != input.DefaultPortLimits("") || limits.Snapshot != state.DefaultSnapshotLimits() || limits.Pressure != pressure.DefaultResponseLimits() {
+		t.Fatalf("accepted rich unrelated limits changed: %+v", limits)
+	}
+
+	fixture := FixtureSpec{
+		Family: FamilyRichRecordMixed,
+		Scale:  Scale{InputRecords: 100, TargetBytes: 20_000},
+		Seed:   DefaultGeneratorSeed,
+	}
+	workflowLimits, err := acceptedRichResourceLimits(20_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restricted := workflowLimits
+	restricted.CIDR.MaxBytes = 10_000
+	if _, err := runRichProductionWithLimits(context.Background(), filepath.Join(t.TempDir(), "restricted"), 100, 2, fixture, &restricted); err == nil {
+		t.Fatal("restricted accepted rich workflow did not reject an oversized input")
+	}
+	if _, err := runRichProductionWithLimits(context.Background(), filepath.Join(t.TempDir(), "overridden"), 100, 2, fixture, &workflowLimits); err != nil {
+		t.Fatalf("accepted rich workflow with positive size override: %v", err)
+	}
+}
+
+func TestAcceptedRichResourceLimitsRejectInvalidSizes(t *testing.T) {
+	for _, actualBytes := range []uint64{0, ^uint64(0)} {
+		if _, err := acceptedRichResourceLimits(actualBytes); err == nil {
+			t.Fatalf("accepted rich input size %d did not fail", actualBytes)
+		}
 	}
 }
 

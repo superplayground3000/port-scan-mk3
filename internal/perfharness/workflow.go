@@ -282,6 +282,28 @@ func runRichProduction(ctx context.Context, outputDir string, items uint64, work
 	return runRichProductionWithLimits(ctx, outputDir, items, workers, fixture, nil)
 }
 
+func acceptedRichResourceLimits(actualBytes uint64) (config.ScanResourceLimits, error) {
+	if actualBytes == 0 {
+		return config.ScanResourceLimits{}, fmt.Errorf("accepted rich input size must be positive")
+	}
+	const decimalGB = uint64(1_000_000_000)
+	limitGB := actualBytes / decimalGB
+	if actualBytes%decimalGB != 0 {
+		limitGB++
+	}
+	if limitGB > ^uint64(0)/decimalGB {
+		return config.ScanResourceLimits{}, fmt.Errorf("accepted rich input size %d overflows the size override", actualBytes)
+	}
+	limits := config.ScanResourceLimits{
+		CIDR:     input.DefaultCIDRLimits(""),
+		Port:     input.DefaultPortLimits(""),
+		Snapshot: state.DefaultSnapshotLimits(),
+		Pressure: pressure.DefaultResponseLimits(),
+	}
+	limits.CIDR.MaxBytes = limitGB * decimalGB
+	return limits, nil
+}
+
 func runRichProductionWithLimits(ctx context.Context, outputDir string, items uint64, workers int, fixture FixtureSpec, resourceLimits *config.ScanResourceLimits) (WorkflowResult, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return WorkflowResult{}, fmt.Errorf("create rich workflow directory: %w", err)
@@ -300,6 +322,13 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 	})
 	if err != nil {
 		return WorkflowResult{}, err
+	}
+	if resourceLimits == nil {
+		acceptedLimits, limitErr := acceptedRichResourceLimits(manifest.ActualBytes)
+		if limitErr != nil {
+			return WorkflowResult{}, fmt.Errorf("set accepted rich input limits: %w", limitErr)
+		}
+		resourceLimits = &acceptedLimits
 	}
 	snapshotPath := filepath.Join(outputDir, "buckets.json")
 	prePingDir := filepath.Join(outputDir, "pre-ping")
