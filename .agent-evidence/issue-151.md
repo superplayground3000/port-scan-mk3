@@ -554,3 +554,39 @@ The final aggregate coverage command exited zero with this line:
 ```text
 coverage gate passed: 85.0%
 ```
+
+## Ten-million-item failure diagnostics
+
+The three diagnostics used exact production commit `52d8cbecb99bf451b6cc6e747af0029a0f50322b`.
+Each diagnostic ran once and used 10,000,000 logical items with 16 workers.
+Fixture preparation and the injected failure stage had separate measurements.
+The stage budget was 15 minutes and 24 GB committed memory.
+All three diagnostics passed this budget and reported zero process swaps.
+
+The snapshot-save failure stage took `18.371980964s` and used `17,200,660,480` committed bytes.
+The previous snapshot remained loadable and byte-identical.
+The failed replacement left no temp file and released the file handle.
+The injected save error took precedence over the pressure error.
+
+The pressure fatal stage took `18.576056648s` and used `17,201,692,672` committed bytes.
+Three pressure samples failed.
+The run started one probe before the fatal stop and zero probes after it.
+The saved cursor was 1, and 9,999,999 tasks remained.
+Recovery completed every remaining task.
+The recovery digest matched the reference digest.
+Both CSV files ended with 10,000,000 rows and cursor 10,000,000.
+
+The output failure stage took `63.870161933s` and used `18,132,717,568` committed bytes.
+The writer failed at result 5,000,000 and rewound one chunk.
+The saved cursor was 4,998,995, and 5,001,005 tasks remained.
+Recovery completed every remaining task, and its digest matched the reference digest.
+The final cursor was 10,000,000.
+Each CSV file had 10,000,005 rows.
+Five durable in-flight rows were repeated after rewind, but no probe task was omitted.
+The output handles were released.
+
+Raw JSON and process logs are under this directory:
+
+```text
+/media/hp/secondary/issue151-performance-52d8cbe-diagnostics/
+```
