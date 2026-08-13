@@ -18,8 +18,6 @@ func TestLinuxProcessMetricsUseCurrentValuesForPerCasePeaks(t *testing.T) {
 }
 
 func TestLinuxProcessMetricsParsingDoesNotAllocate(t *testing.T) {
-	t.Parallel()
-
 	status := []byte("VmHWM:\t999 kB\nVmRSS:\t123 kB\nVmSwap:\t7 kB\n")
 	if allocations := testing.AllocsPerRun(100, func() {
 		metrics := linuxProcessMetrics(status)

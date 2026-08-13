@@ -53,7 +53,7 @@ func TestRunCommandRejectsInvalidInvocation(t *testing.T) {
 func TestRunFailureCaseRetainsSixRunEvidence(t *testing.T) {
 	t.Parallel()
 
-	result, err := runFailureCase(context.Background(), perfharness.New(), t.TempDir(), 2, 1, "snapshot-save-failure")
+	result, err := runFailureCase(context.Background(), perfharness.New(), t.TempDir(), 20, 1, "snapshot-save-failure")
 	if err != nil {
 		t.Fatalf("runFailureCase: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestRunFailureCaseRetainsSixRunEvidence(t *testing.T) {
 		t.Fatalf("failure phase evidence = %+v", result)
 	}
 	for run, evidence := range result.Failure.Runs {
-		if evidence.TotalItems != 2 || evidence.Operation == "" || evidence.ErrorClass == "" {
+		if evidence.TotalItems != 20 || evidence.Operation == "" || evidence.ErrorClass == "" {
 			t.Fatalf("run %d failure evidence = %+v", run, evidence)
 		}
 	}

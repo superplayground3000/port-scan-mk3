@@ -531,3 +531,26 @@ ok  github.com/xuxiping/port-scan-mk3/pkg/state  1.032s
 ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  2.925s
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  2.552s
 ```
+
+## Failure coverage and fail-closed validation
+
+The first aggregate coverage check reported `84.7%`.
+No test threshold changed.
+
+New public tests cover invalid injection values, blocked preparation paths, missing snapshots, and nested report differences.
+One new test found that an unknown failure scenario could pass `FailureResult.Correct` when its common fields were present.
+The test failed first.
+The validator now rejects every unknown scenario.
+
+The first repeated coverage run also found a test isolation problem.
+An allocation assertion ran in parallel and counted one allocation from another goroutine.
+The parser used zero allocations in 20 normal runs and 20 coverage-instrumented runs.
+The assertion now runs in sequence and passed 100 focused runs.
+The production sampler did not change.
+
+The focused race tests passed.
+The final aggregate coverage command exited zero with this line:
+
+```text
+coverage gate passed: 85.0%
+```

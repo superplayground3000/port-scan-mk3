@@ -223,3 +223,36 @@ func TestCompareReportsKeepsStablePressureFailureEvidence(t *testing.T) {
 		t.Fatalf("pressure recovery difference = %v", differences)
 	}
 }
+
+func TestCompareReportsRejectsMissingOrMismatchedFailureEvidence(t *testing.T) {
+	t.Parallel()
+
+	evidence := &perfharness.FailureCaseEvidence{
+		SchemaVersion: perfharness.FailureEvidenceSchemaVersion,
+		Runs: []perfharness.FailureResult{{
+			Scenario: "output-failure", Observed: true, ErrorClass: "output", Operation: "output-write", TotalItems: 10,
+			Output:   &perfharness.FailureOutputEvidence{FailureAtResult: 5},
+			Snapshot: &perfharness.FailureSnapshotEvidence{FailureOperation: "replace"},
+			Pressure: &perfharness.FailurePressureEvidence{PressureFailures: 3},
+		}},
+	}
+	left := perfharness.Report{Cases: []perfharness.CaseResult{{Name: "failure", Failure: evidence}}}
+	if differences := perfharness.New().CompareReports(left, perfharness.Report{Cases: []perfharness.CaseResult{{Name: "failure"}}}); !slices.Contains(differences, "failure:failure") {
+		t.Fatalf("missing failure evidence differences = %v", differences)
+	}
+	for _, mutate := range []func(*perfharness.FailureCaseEvidence){
+		func(value *perfharness.FailureCaseEvidence) { value.SchemaVersion = "different" },
+		func(value *perfharness.FailureCaseEvidence) { value.Runs = nil },
+		func(value *perfharness.FailureCaseEvidence) { value.Runs[0].Output = nil },
+		func(value *perfharness.FailureCaseEvidence) { value.Runs[0].Snapshot = nil },
+		func(value *perfharness.FailureCaseEvidence) { value.Runs[0].Pressure = nil },
+	} {
+		copyEvidence := *evidence
+		copyEvidence.Runs = append([]perfharness.FailureResult(nil), evidence.Runs...)
+		mutate(&copyEvidence)
+		right := perfharness.Report{Cases: []perfharness.CaseResult{{Name: "failure", Failure: &copyEvidence}}}
+		if differences := perfharness.New().CompareReports(left, right); !slices.Contains(differences, "failure:failure") {
+			t.Fatalf("mismatched failure evidence differences = %v", differences)
+		}
+	}
+}

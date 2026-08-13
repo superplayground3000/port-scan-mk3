@@ -208,6 +208,19 @@ func TestSaveSnapshotWithFailureInjectionPreservesThePreviousSnapshot(t *testing
 	}
 }
 
+func TestSaveSnapshotWithFailureInjectionRejectsUnknownOperation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	err := SaveSnapshotWithFailureInjection(path, replacementSnapshot(), DefaultSnapshotLimits(), SaveFailureInjection{
+		Operation: "unknown",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported snapshot save failure operation") {
+		t.Fatalf("SaveSnapshotWithFailureInjection() error = %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid injection wrote a snapshot: %v", statErr)
+	}
+}
+
 // TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot covers the
 // stage before any file exists — a read-only or full directory.
 func TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot(t *testing.T) {

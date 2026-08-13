@@ -241,6 +241,65 @@ func TestFailureResultCorrectRequiresOutputRecoveryProof(t *testing.T) {
 	}
 }
 
+func TestFailureResultCorrectRejectsIncompleteScenarioEvidence(t *testing.T) {
+	t.Parallel()
+
+	checks := []perfharness.FailureResult{
+		{},
+		{Scenario: "unknown", Observed: true, ErrorText: "failure", ErrorClass: "unknown", Operation: "unknown", TotalItems: 10},
+		{Scenario: "snapshot-save-failure", Observed: true, ErrorText: "failure", ErrorClass: "snapshot-save", Operation: "snapshot-replace", TotalItems: 10},
+		{Scenario: "pressure-fatal-error", Observed: true, ErrorText: "failure", ErrorClass: "pressure-fatal", Operation: "pressure-poll", TotalItems: 10},
+		{Scenario: "output-failure", Observed: true, ErrorText: "failure", ErrorClass: "output", Operation: "output-write", TotalItems: 10},
+	}
+	for _, result := range checks {
+		if result.Correct() {
+			t.Fatalf("FailureResult.Correct accepted incomplete evidence: %+v", result)
+		}
+	}
+}
+
+func TestRunFailureSmokeReportsPreparationFilesystemErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		prepare func(t *testing.T) string
+	}{
+		{name: "output directory is a file", prepare: func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "blocked output")
+			if err := os.WriteFile(path, []byte("not a directory"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}},
+		{name: "fixture directory is a file", prepare: func(t *testing.T) string {
+			path := t.TempDir()
+			if err := os.WriteFile(filepath.Join(path, "fixture"), []byte("not a directory"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}},
+		{name: "port file is a directory", prepare: func(t *testing.T) string {
+			path := t.TempDir()
+			if err := os.Mkdir(filepath.Join(path, "ports.csv"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := perfharness.New().RunFailureSmoke(context.Background(), perfharness.FailureSpec{
+				OutputDir: test.prepare(t), Items: 1, Workers: 1, Scenario: "output-failure",
+			})
+			if err == nil {
+				t.Fatal("RunFailureSmoke accepted a blocked preparation path")
+			}
+		})
+	}
+}
+
 func TestRunFailureSmokePreservesTheOldSnapshotAfterFatalSaveFailure(t *testing.T) {
 	t.Parallel()
 

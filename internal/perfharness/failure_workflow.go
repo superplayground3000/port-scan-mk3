@@ -99,7 +99,7 @@ func (result FailureResult) Correct() bool {
 			pressure.FinalOpenRows == pressure.OpenRowsBeforeRecovery+pressure.Remaining && pressure.FinalCursor == result.TotalItems
 	}
 	if result.Scenario != "output-failure" {
-		return true
+		return false
 	}
 	output := result.Output
 	return output != nil && output.FailureAtResult > 0 && output.RewoundChunks > 0 &&

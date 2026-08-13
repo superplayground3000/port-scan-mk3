@@ -111,3 +111,23 @@ func TestRun_OutputFailureInjectionUsesRealWritersAndSavesRecoveryState(t *testi
 		t.Fatalf("snapshot telemetry = %+v, want rewound chunks", snapshotTelemetry)
 	}
 }
+
+func TestRunRejectsInvalidOutputFailureInjection(t *testing.T) {
+	cfg, _, _ := newInterruptibleScanConfig(t)
+
+	for _, options := range []RunOptions{
+		{DisableKeyboard: true, OutputFailure: &OutputFailureInjection{}},
+		{
+			DisableKeyboard: true,
+			OutputFailure:   &OutputFailureInjection{FailOnResult: 1},
+			batchOutputsOpener: func(string, string, bool) (*batchOutputs, error) {
+				return nil, errors.New("must not run")
+			},
+		},
+	} {
+		err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, options)
+		if err == nil {
+			t.Fatal("Run() accepted an invalid output failure injection")
+		}
+	}
+}

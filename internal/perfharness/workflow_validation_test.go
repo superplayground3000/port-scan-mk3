@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 func TestWorkflowSpecificationsRejectInvalidCasesBeforeRunning(t *testing.T) {
@@ -48,6 +52,26 @@ func TestWorkflowSpecificationsRejectInvalidCasesBeforeRunning(t *testing.T) {
 			_, err := suite.RunFailureSmoke(context.Background(), FailureSpec{})
 			return err
 		}},
+		{name: "failure scenario", run: func() error {
+			_, err := suite.RunFailureSmoke(context.Background(), FailureSpec{
+				OutputDir: filepath.Join(t.TempDir(), "unknown failure"), Items: 1, Workers: 1, Scenario: "unknown",
+			})
+			return err
+		}},
+		{name: "failure workers", run: func() error {
+			_, err := suite.RunFailureSmoke(context.Background(), FailureSpec{
+				OutputDir: filepath.Join(t.TempDir(), "invalid workers"), Items: 1, Workers: 0, Scenario: "output-failure",
+			})
+			return err
+		}},
+		{name: "failure canceled preparation", run: func() error {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err := suite.RunFailureSmoke(ctx, FailureSpec{
+				OutputDir: filepath.Join(t.TempDir(), "canceled preparation"), Items: 1, Workers: 1, Scenario: "output-failure",
+			})
+			return err
+		}},
 		{name: "cancellation zero items", run: func() error {
 			_, err := suite.RunCancellationSmoke(context.Background(), CancellationSpec{})
 			return err
@@ -71,6 +95,42 @@ func TestExpectedFailureRejectsMissingOrDifferentErrors(t *testing.T) {
 		if _, validationErr := expectedFailure("case", "operation", "class", err, "expected failure"); validationErr == nil {
 			t.Fatalf("expectedFailure accepted %v", err)
 		}
+	}
+}
+
+func TestFailureReferenceEvidenceRejectsInvalidSnapshots(t *testing.T) {
+	t.Parallel()
+
+	for _, snapshot := range []state.Snapshot{
+		{},
+		{Chunks: []task.Chunk{{TotalCount: 2, NextIndex: 0, Ports: []string{"443/tcp"}}}},
+	} {
+		if _, err := failureCandidateTaskEvidence(snapshot, 1); err == nil {
+			t.Fatalf("failureCandidateTaskEvidence accepted %+v", snapshot)
+		}
+	}
+}
+
+func TestOutputHandleCheckRejectsMissingFiles(t *testing.T) {
+	t.Parallel()
+
+	if outputHandlesReleased(filepath.Join(t.TempDir(), "missing.csv")) {
+		t.Fatal("outputHandlesReleased accepted a missing output file")
+	}
+}
+
+func TestFailureEvidenceCompletionRejectsMissingSnapshots(t *testing.T) {
+	t.Parallel()
+
+	inputs := failureInputs{snapshotPath: filepath.Join(t.TempDir(), "missing.json")}
+	if _, err := completeOutputFailureEvidence(context.Background(), FailureSpec{Items: 1}, inputs, failureStageState{}); err == nil {
+		t.Fatal("completeOutputFailureEvidence accepted a missing snapshot")
+	}
+	if _, err := completeSnapshotFailureEvidence(inputs, failureStageState{}); err == nil {
+		t.Fatal("completeSnapshotFailureEvidence accepted a missing snapshot")
+	}
+	if _, err := completePressureFailureEvidence(context.Background(), FailureSpec{Items: 1}, inputs, failureStageState{}); err == nil {
+		t.Fatal("completePressureFailureEvidence accepted a missing snapshot")
 	}
 }
 
