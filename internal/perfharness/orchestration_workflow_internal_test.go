@@ -41,7 +41,7 @@ func TestRunOrchestrationSmokePreparesExactTasksBeforeMeasurement(t *testing.T) 
 	if err != nil {
 		t.Fatalf("runOrchestrationWorkflow: %v", err)
 	}
-	if measureCalls != 2 || result.ProbeCount != 10 || result.ScanRows != 10 || result.OpenRows != 10 || result.Semantic.TaskCount != 10 {
+	if measureCalls != 2 || result.ProbeCount != 10 || result.ScanRows != 10 || result.OpenRows != 10 || result.Semantic.TaskCount != 10 || result.Semantic.SnapshotDigest == "" {
 		t.Fatalf("orchestration result = %+v", result)
 	}
 	if result.ExpansionOverride == nil || result.ExpansionOverride.CandidateLimit != 11 || result.ExpansionOverride.MemoryLimitGB != 2 || result.ExpansionOverride.ScannableTasks != 10 {

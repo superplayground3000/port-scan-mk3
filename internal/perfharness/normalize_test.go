@@ -71,7 +71,7 @@ func TestCompareSemanticReportsEveryStableDifference(t *testing.T) {
 	left := perfharness.SemanticArtifact{
 		Root: "/tmp/left", Path: "/tmp/left/results.csv", TaskCount: 1, TaskDigest: "tasks",
 		TaskPrefix: []string{"first"}, TaskSuffix: []string{"last"}, TaskOrder: []string{"task"},
-		RowCount: 1, Status: "completed", Cursor: 1, OutputDigest: "output",
+		RowCount: 1, Status: "completed", Cursor: 1, OutputDigest: "output", SnapshotDigest: "snapshot",
 	}
 	right := left
 	right.Root = `C:\right`
@@ -80,8 +80,9 @@ func TestCompareSemanticReportsEveryStableDifference(t *testing.T) {
 	right.Status = "incomplete"
 	right.Cursor = 2
 	right.OutputDigest = "different"
+	right.SnapshotDigest = "different"
 	differences := perfharness.New().CompareSemantic(left, right)
-	for _, want := range []string{"path", "row_count", "status", "cursor", "output_digest"} {
+	for _, want := range []string{"path", "row_count", "status", "cursor", "output_digest", "snapshot_digest"} {
 		if !slices.Contains(differences, want) {
 			t.Fatalf("CompareSemantic differences = %v, want %q", differences, want)
 		}

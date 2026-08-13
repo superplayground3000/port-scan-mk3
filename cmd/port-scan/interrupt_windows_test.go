@@ -68,7 +68,7 @@ func TestScanInterruptContext_OnWindows_ProcessSecondCtrlBreakExits130(t *testin
 	waitForWindowsInterruptLine(t, lines, "graceful finalization is in progress")
 	sendInterruptTestCtrlBreak(t, child.Process.Pid)
 
-	err = child.Wait()
+	err = waitForForcedInterruptExit(t, child)
 	killed = true
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 130 {

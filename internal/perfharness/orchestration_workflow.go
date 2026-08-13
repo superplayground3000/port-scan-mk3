@@ -3,8 +3,10 @@ package perfharness
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -206,8 +208,28 @@ func runOrchestrationWorkflow(ctx context.Context, spec WorkflowSpec, measure me
 	if err != nil {
 		return WorkflowResult{}, err
 	}
+	result.Semantic.SnapshotDigest, err = normalizedSnapshotDigest(snapshotPath)
+	if err != nil {
+		return WorkflowResult{}, err
+	}
 	result.ExpansionOverride = &expansionOverride
 	return result, nil
+}
+
+func normalizedSnapshotDigest(path string) (string, error) {
+	snapshot, err := state.LoadSnapshotWithLimits(path, state.SnapshotLimits{})
+	if err != nil {
+		return "", fmt.Errorf("load orchestration snapshot for digest: %w", err)
+	}
+	if snapshot.Output != nil {
+		snapshot.Output.ScanPath = "scan-results.csv"
+		snapshot.Output.OpenPath = "open-results.csv"
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("encode orchestration snapshot for digest: %w", err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
 
 func writeCompactTaskInput(ctx context.Context, path string, items uint64, lineEnding string) (resultErr error) {

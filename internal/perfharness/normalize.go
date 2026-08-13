@@ -9,20 +9,21 @@ import (
 
 // SemanticArtifact contains portable results and declared volatile fields.
 type SemanticArtifact struct {
-	Root         string        `json:"root"`
-	Path         string        `json:"path"`
-	Timestamp    time.Time     `json:"timestamp"`
-	Duration     time.Duration `json:"duration_ns"`
-	OSError      string        `json:"os_error"`
-	TaskOrder    []string      `json:"task_order"`
-	TaskCount    uint64        `json:"task_count"`
-	TaskDigest   string        `json:"task_digest"`
-	TaskPrefix   []string      `json:"task_prefix"`
-	TaskSuffix   []string      `json:"task_suffix"`
-	RowCount     uint64        `json:"row_count"`
-	Status       string        `json:"status"`
-	Cursor       uint64        `json:"cursor"`
-	OutputDigest string        `json:"output_digest"`
+	Root           string        `json:"root"`
+	Path           string        `json:"path"`
+	Timestamp      time.Time     `json:"timestamp"`
+	Duration       time.Duration `json:"duration_ns"`
+	OSError        string        `json:"os_error"`
+	TaskOrder      []string      `json:"task_order"`
+	TaskCount      uint64        `json:"task_count"`
+	TaskDigest     string        `json:"task_digest"`
+	TaskPrefix     []string      `json:"task_prefix"`
+	TaskSuffix     []string      `json:"task_suffix"`
+	RowCount       uint64        `json:"row_count"`
+	Status         string        `json:"status"`
+	Cursor         uint64        `json:"cursor"`
+	OutputDigest   string        `json:"output_digest"`
+	SnapshotDigest string        `json:"snapshot_digest"`
 }
 
 // CompareReports checks portable Linux and Windows case evidence.
@@ -188,6 +189,9 @@ func (Suite) CompareSemantic(left, right SemanticArtifact) []string {
 	}
 	if left.OutputDigest != right.OutputDigest {
 		differences = append(differences, "output_digest")
+	}
+	if left.SnapshotDigest != right.SnapshotDigest {
+		differences = append(differences, "snapshot_digest")
 	}
 	return differences
 }

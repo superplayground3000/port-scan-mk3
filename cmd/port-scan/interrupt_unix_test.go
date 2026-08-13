@@ -66,7 +66,7 @@ func TestScanInterruptContext_OnLinux_ProcessSecondSIGINTExits130(t *testing.T) 
 		t.Fatalf("send second SIGINT: %v", err)
 	}
 
-	err = child.Wait()
+	err = waitForForcedInterruptExit(t, child)
 	killed = true
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 130 {
