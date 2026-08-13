@@ -722,3 +722,59 @@ ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  5.457s
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  2.616s
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness  8.671s
 ```
+
+## Accepted rich snapshot limit correction
+
+The full matrix at commit `f35cfa9b1b7ab217f5a7a89df3fc601f42a366c4` ran for `6:38:35`.
+It reached `production-rich/rich-precheck` after every earlier production case passed.
+The matrix then exited with status 1 during the first precheck observation.
+
+The 1,052,121,388-byte CSV produced a snapshot larger than 2 GB.
+The retained exact-size evidence measured that snapshot at 2,233,986,251 bytes.
+The accepted rich harness raised the CIDR limit to 2 GB.
+It incorrectly kept the snapshot byte limit at the 2 GB product default.
+The limiting writer stopped at byte 2,000,000,001, as designed.
+
+The failed matrix used no swap.
+Its maximum RSS was 23,947,512 KiB.
+The raw artifacts remain in this directory:
+
+```text
+/media/hp/secondary/issue151-performance-f35cfa9-root/run-20260813T142029Z-363412/
+```
+
+The focused test first failed with this result:
+
+```text
+snapshot byte limit = 2000000000, want 4000000000
+```
+
+The accepted rich policy now gives the snapshot twice the rounded CIDR byte allowance.
+The exact fixture therefore uses a positive 4 GB snapshot limit.
+The 10,000,000 chunk, port-entry, and unreachable-IP limits remain unchanged.
+The product default and the 15-minute and 24 GB performance gates also remain unchanged.
+
+The focused race test passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.039s
+```
+
+The first broad package race command used a 10-minute test timeout.
+It timed out while three existing heavy tests waited for concurrent GC cycles.
+It reported no data race.
+The repository gate ran the same package with its supported shuffle settings and passed.
+
+`make verify` exited 0 with 85.1 percent coverage.
+Its final result was:
+
+```text
+All selected quality gates passed.
+```
+
+`make verify-e2e` also exited 0.
+Its final result was:
+
+```text
+All selected quality gates passed.
+```

@@ -91,21 +91,25 @@ func TestWorkflowSpecificationsRejectInvalidCasesBeforeRunning(t *testing.T) {
 	}
 }
 
-func TestAcceptedRichWorkflowUsesTheSmallestPositiveCIDRSizeOverride(t *testing.T) {
+func TestAcceptedRichWorkflowUsesBoundedPositiveSizeOverrides(t *testing.T) {
 	for _, check := range []struct {
-		actual uint64
-		want   uint64
+		actual       uint64
+		wantCIDR     uint64
+		wantSnapshot uint64
 	}{
-		{actual: 999_999_999, want: 1_000_000_000},
-		{actual: 1_000_000_000, want: 1_000_000_000},
-		{actual: 1_022_664_300, want: 2_000_000_000},
+		{actual: 999_999_999, wantCIDR: 1_000_000_000, wantSnapshot: 2_000_000_000},
+		{actual: 1_000_000_000, wantCIDR: 1_000_000_000, wantSnapshot: 2_000_000_000},
+		{actual: 1_022_664_300, wantCIDR: 2_000_000_000, wantSnapshot: 4_000_000_000},
 	} {
 		limits, err := acceptedRichResourceLimits(check.actual)
 		if err != nil {
 			t.Fatalf("actual bytes %d: %v", check.actual, err)
 		}
-		if limits.CIDR.MaxBytes != check.want {
-			t.Fatalf("actual bytes %d: CIDR byte limit = %d, want %d", check.actual, limits.CIDR.MaxBytes, check.want)
+		if limits.CIDR.MaxBytes != check.wantCIDR {
+			t.Fatalf("actual bytes %d: CIDR byte limit = %d, want %d", check.actual, limits.CIDR.MaxBytes, check.wantCIDR)
+		}
+		if limits.Snapshot.MaxBytes != check.wantSnapshot {
+			t.Fatalf("actual bytes %d: snapshot byte limit = %d, want %d", check.actual, limits.Snapshot.MaxBytes, check.wantSnapshot)
 		}
 	}
 	limits, err := acceptedRichResourceLimits(1_022_664_300)
@@ -116,7 +120,11 @@ func TestAcceptedRichWorkflowUsesTheSmallestPositiveCIDRSizeOverride(t *testing.
 	if limits.CIDR.MaxRecords != defaultCIDR.MaxRecords {
 		t.Fatalf("accepted rich CIDR record limit = %d, want %d", limits.CIDR.MaxRecords, defaultCIDR.MaxRecords)
 	}
-	if limits.Port != input.DefaultPortLimits("") || limits.Snapshot != state.DefaultSnapshotLimits() || limits.Pressure != pressure.DefaultResponseLimits() {
+	defaultSnapshot := state.DefaultSnapshotLimits()
+	if limits.Snapshot.MaxChunks != defaultSnapshot.MaxChunks ||
+		limits.Snapshot.MaxPortEntries != defaultSnapshot.MaxPortEntries ||
+		limits.Snapshot.MaxUnreachableIPs != defaultSnapshot.MaxUnreachableIPs ||
+		limits.Port != input.DefaultPortLimits("") || limits.Pressure != pressure.DefaultResponseLimits() {
 		t.Fatalf("accepted rich unrelated limits changed: %+v", limits)
 	}
 
@@ -140,7 +148,7 @@ func TestAcceptedRichWorkflowUsesTheSmallestPositiveCIDRSizeOverride(t *testing.
 }
 
 func TestAcceptedRichResourceLimitsRejectInvalidSizes(t *testing.T) {
-	for _, actualBytes := range []uint64{0, ^uint64(0)} {
+	for _, actualBytes := range []uint64{0, ^uint64(0)/2 + 1, ^uint64(0)} {
 		if _, err := acceptedRichResourceLimits(actualBytes); err == nil {
 			t.Fatalf("accepted rich input size %d did not fail", actualBytes)
 		}

@@ -294,13 +294,20 @@ func acceptedRichResourceLimits(actualBytes uint64) (config.ScanResourceLimits, 
 	if limitGB > ^uint64(0)/decimalGB {
 		return config.ScanResourceLimits{}, fmt.Errorf("accepted rich input size %d overflows the size override", actualBytes)
 	}
+	cidrMaxBytes := limitGB * decimalGB
+	if cidrMaxBytes > ^uint64(0)/2 {
+		return config.ScanResourceLimits{}, fmt.Errorf("accepted rich input size %d overflows the snapshot size override", actualBytes)
+	}
 	limits := config.ScanResourceLimits{
 		CIDR:     input.DefaultCIDRLimits(""),
 		Port:     input.DefaultPortLimits(""),
 		Snapshot: state.DefaultSnapshotLimits(),
 		Pressure: pressure.DefaultResponseLimits(),
 	}
-	limits.CIDR.MaxBytes = limitGB * decimalGB
+	limits.CIDR.MaxBytes = cidrMaxBytes
+	// A resume snapshot can be larger than its rich CSV input. Keep the
+	// workflow bounded. Give the JSON envelope twice the rounded input allowance.
+	limits.Snapshot.MaxBytes = cidrMaxBytes * 2
 	return limits, nil
 }
 
