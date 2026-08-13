@@ -555,6 +555,19 @@ The final aggregate coverage command exited zero with this line:
 coverage gate passed: 85.0%
 ```
 
+The first complete `make verify` still failed at the aggregate coverage stage.
+All earlier gate stages passed, but that coverage run reported `84.9%`.
+The earlier result had no safe headroom.
+
+Additional tests cover report destination errors, malformed artifacts, every stable semantic difference, counter reset, and missing Linux counters.
+The new standalone gate covered 7,141 of 8,381 statements.
+This is `85.2046%` before the gate formats the value to one decimal place.
+The command exited zero with this line:
+
+```text
+coverage gate passed: 85.1%
+```
+
 ## Ten-million-item failure diagnostics
 
 The three diagnostics used exact production commit `52d8cbecb99bf451b6cc6e747af0029a0f50322b`.

@@ -65,6 +65,29 @@ func TestCompareReportsEnforcesPortableCaseParity(t *testing.T) {
 	}
 }
 
+func TestCompareSemanticReportsEveryStableDifference(t *testing.T) {
+	t.Parallel()
+
+	left := perfharness.SemanticArtifact{
+		Root: "/tmp/left", Path: "/tmp/left/results.csv", TaskCount: 1, TaskDigest: "tasks",
+		TaskPrefix: []string{"first"}, TaskSuffix: []string{"last"}, TaskOrder: []string{"task"},
+		RowCount: 1, Status: "completed", Cursor: 1, OutputDigest: "output",
+	}
+	right := left
+	right.Root = `C:\right`
+	right.Path = `C:\right\other.csv`
+	right.RowCount = 2
+	right.Status = "incomplete"
+	right.Cursor = 2
+	right.OutputDigest = "different"
+	differences := perfharness.New().CompareSemantic(left, right)
+	for _, want := range []string{"path", "row_count", "status", "cursor", "output_digest"} {
+		if !slices.Contains(differences, want) {
+			t.Fatalf("CompareSemantic differences = %v, want %q", differences, want)
+		}
+	}
+}
+
 func TestCompareReportsKeepsStableCancellationEvidence(t *testing.T) {
 	t.Parallel()
 

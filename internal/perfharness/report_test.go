@@ -54,9 +54,8 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 		}},
 	}
 	report := perfharness.Report{
-		SchemaVersion: perfharness.SchemaVersion,
-		Contract:      perfharness.DefaultContract(),
-		Platform:      "linux/amd64",
+		Contract: perfharness.DefaultContract(),
+		Platform: "linux/amd64",
 		Hardware: perfharness.HardwareProfile{
 			EvidenceLabel: perfharness.EvidenceHardwareQualified,
 			CPU:           "fixture CPU",
@@ -78,6 +77,9 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 	}
 	if len(decoded.Cases) != 1 || decoded.Cases[0].SteadyMedian.WallTime != 3*time.Second {
 		t.Fatalf("unexpected JSON report: %+v", decoded)
+	}
+	if decoded.SchemaVersion != perfharness.SchemaVersion {
+		t.Fatalf("report schema = %q, want %q", decoded.SchemaVersion, perfharness.SchemaVersion)
 	}
 	markdown, err := os.ReadFile(paths.Markdown)
 	if err != nil {
@@ -105,5 +107,20 @@ func TestWriteReportsRecordsColdRunAndFiveRunMedian(t *testing.T) {
 		if !strings.Contains(string(markdown), evidence) {
 			t.Fatalf("Markdown report lacks failure evidence %q:\n%s", evidence, markdown)
 		}
+	}
+}
+
+func TestWriteReportsRejectsCanceledAndBlockedDestinations(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := harness.WriteReports(ctx, filepath.Join(t.TempDir(), "canceled"), perfharness.Report{}); err == nil {
+		t.Fatal("WriteReports accepted a canceled context")
+	}
+	blocked := filepath.Join(t.TempDir(), "missing parent", "report")
+	if _, err := harness.WriteReports(context.Background(), blocked, perfharness.Report{}); err == nil {
+		t.Fatal("WriteReports accepted a destination with a missing parent")
 	}
 }

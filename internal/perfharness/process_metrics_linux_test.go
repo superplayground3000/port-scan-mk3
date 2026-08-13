@@ -17,6 +17,15 @@ func TestLinuxProcessMetricsUseCurrentValuesForPerCasePeaks(t *testing.T) {
 	}
 }
 
+func TestLinuxProcessMetricsAllowMissingOptionalCounters(t *testing.T) {
+	t.Parallel()
+
+	metrics := linuxProcessMetrics([]byte("Name:\tport-scan\n"))
+	if metrics.linuxRSS != 0 || metrics.committed != 0 || metrics.swapOrPagefile != 0 {
+		t.Fatalf("missing Linux process counters = %+v, want zero", metrics)
+	}
+}
+
 func TestLinuxProcessMetricsParsingDoesNotAllocate(t *testing.T) {
 	status := []byte("VmHWM:\t999 kB\nVmRSS:\t123 kB\nVmSwap:\t7 kB\n")
 	if allocations := testing.AllocsPerRun(100, func() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -131,6 +132,46 @@ func TestFailureEvidenceCompletionRejectsMissingSnapshots(t *testing.T) {
 	}
 	if _, err := completePressureFailureEvidence(context.Background(), FailureSpec{Items: 1}, inputs, failureStageState{}); err == nil {
 		t.Fatal("completePressureFailureEvidence accepted a missing snapshot")
+	}
+}
+
+func TestWorkflowArtifactEvidenceReportsMissingAndMalformedFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing.csv")
+	if _, err := fileSize(missing); err == nil {
+		t.Fatal("fileSize accepted a missing artifact")
+	}
+	if _, _, err := workflowOutputPaths(root); err == nil {
+		t.Fatal("workflowOutputPaths accepted missing output files")
+	}
+	if _, err := countCSVRows(missing); err == nil {
+		t.Fatal("countCSVRows accepted a missing CSV")
+	}
+	if _, err := fileDigest(missing); err == nil {
+		t.Fatal("fileDigest accepted a missing artifact")
+	}
+	if _, err := workflowResultFromFiles(0, 0, false, Observation{}, Observation{}, missing, missing, nil); err == nil {
+		t.Fatal("workflowResultFromFiles accepted missing output files")
+	}
+
+	empty := filepath.Join(root, "empty.csv")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := countCSVRows(empty); err == nil {
+		t.Fatal("countCSVRows accepted a CSV without a header")
+	}
+	malformed := filepath.Join(root, "malformed.csv")
+	if err := os.WriteFile(malformed, []byte("a,b\n\"unterminated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := countCSVRows(malformed); err == nil {
+		t.Fatal("countCSVRows accepted a malformed row")
+	}
+	if _, err := fileDigest(root); err == nil {
+		t.Fatal("fileDigest accepted a directory")
 	}
 }
 
