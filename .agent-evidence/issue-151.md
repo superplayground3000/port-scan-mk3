@@ -644,3 +644,81 @@ The focused race command passed:
 ```text
 ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  1.142s
 ```
+
+## Accepted rich workflow bottlenecks
+
+The first corrected full matrix used commit `212050c0939906b4c537d8553deac62b2e034160`.
+It passed the accepted rich fixture cases and all earlier production cases.
+The later production rich case processed only about 50 rows each second.
+This rate required more than 55 hours for one observation.
+The process received `SIGTERM` after more than six hours.
+
+The CPU profile found an O(N) target-port lookup for each rich scan task.
+At one million items, `indexToRuntimeTarget` used 69.14 percent of CPU time.
+The lookup test failed with these results:
+
+```text
+one target: 18.87ns/op
+65,536 targets: 30,631ns/op
+```
+
+The homogeneous rich runtime now uses a direct indexed lookup.
+The focused race test passed with 59.89ns/op for one target and 55.79ns/op for 65,536 targets.
+An exact one-million-item rich workflow then completed in 25.27 seconds.
+
+## Accepted rich memory correction
+
+The first exact ten-million-item run after the lookup fix took about 5 minutes and 29 seconds.
+It used 27,979,001,856 committed bytes and failed the 24,000,000,000-byte limit.
+
+The pre-ping workflow built the complete authorized rich target graph twice.
+The first graph produced the unique ping addresses.
+The second graph produced the unreachable rows.
+The workflow also retained all unreachable rows before it wrote the CSV file.
+
+The first public allocation test used 100,000 all-unreachable rich rows.
+It allocated 718,055,352 bytes.
+The final target-plan and streaming-writer implementation allocated 385,498,720 bytes.
+The implementation keeps one authorized plan and writes merged unreachable rows in order.
+
+The scan resume builder also copied the complete CIDR record table when all chunks were incomplete.
+The new selection helper reuses the original table for this case.
+Partial resumes keep the existing key filter.
+The differential rich and basic runtime tests passed.
+
+The rich harness previously measured three separate CLI commands as one process stage.
+Each command now has a separate measurement boundary.
+The combined workflow adds time and allocation counters and uses the largest command memory peak.
+No runtime memory limit or `GOMEMLIMIT` value is set by the fix.
+
+The final exact diagnostic used 10,000,000 rich records and 16 workers.
+It passed all counts, completion checks, and semantic digests.
+The evaluator returned this result:
+
+```text
+wall_time: 4m24.403987579s
+peak_committed_bytes: 22961319936
+go_peak_heap_bytes: 22500483072
+go_allocated_bytes: 125430936272
+swap_bytes: 0
+verdict: passed
+```
+
+The raw artifacts are in this directory:
+
+```text
+/media/hp/secondary/issue151-rich-10m-integrated-green-463a86e-dirty/
+```
+
+Six pre-ping benchmark runs used 10,000 rich rows.
+The base median was approximately 69.4ms/op and 68.49MB/op.
+The branch median was approximately 39.4ms/op and 37.76MB/op.
+The branch reduced time by about 43 percent and allocated bytes by about 45 percent.
+
+The focused race command passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/pkg/scanapp  5.457s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  2.616s
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness/cmd/perf-harness  8.671s
+```

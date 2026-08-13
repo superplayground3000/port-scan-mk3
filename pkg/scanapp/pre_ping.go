@@ -57,7 +57,11 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 		return err
 	}
 
-	uniqueIPs, err := collectUniquePreScanIPs(inputs)
+	plan, err := buildAuthorizedPreScanPlan(inputs)
+	if err != nil {
+		return err
+	}
+	uniqueIPs, err := plan.collectUniqueIPs()
 	if err != nil {
 		return err
 	}
@@ -83,12 +87,16 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 		return err
 	}
 
-	rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable), reason)
-	if err != nil {
-		return err
-	}
-
-	if err := finalizeUnreachableResults(outputPaths.unreachablePath, rows); err != nil {
+	if len(unreachable) == 0 {
+		if err := finalizeUnreachableResults(outputPaths.unreachablePath, nil); err != nil {
+			return err
+		}
+	} else if err := finalizeUnreachableResultsFromPlan(
+		outputPaths.unreachablePath,
+		plan,
+		reachablePredicate(unreachable),
+		reason,
+	); err != nil {
 		return err
 	}
 
@@ -122,6 +130,18 @@ func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecor
 			_ = output.Finalize(false)
 			return err
 		}
+	}
+	return output.Finalize(true)
+}
+
+func finalizeUnreachableResultsFromPlan(finalPath string, plan authorizedPreScanPlan, reachable func(string) bool, reason string) error {
+	output, err := openUnreachableOutput(finalPath)
+	if err != nil {
+		return err
+	}
+	if err := plan.visitUnreachableRows(reachable, reason, output.writer.Write); err != nil {
+		_ = output.Finalize(false)
+		return err
 	}
 	return output.Finalize(true)
 }

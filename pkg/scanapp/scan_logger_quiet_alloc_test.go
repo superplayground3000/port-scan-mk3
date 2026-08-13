@@ -10,8 +10,6 @@ import (
 )
 
 func TestQuietScanResultEventDoesNotAllocate(t *testing.T) {
-	t.Parallel()
-
 	logger := newLoggerWithQuiet("error", true, io.Discard, true)
 	result := scanResult{record: writer.Record{
 		IP: "192.0.2.1", IPCidr: "192.0.2.0/24", Port: 443, Status: "open",

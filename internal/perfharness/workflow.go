@@ -402,16 +402,28 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 	var openPath string
 	taskEvidence := newOrderedTaskEvidence()
 	prePingCompleted := false
-	stage, err := suite.Measure(ctx, manifest.ActualBytes, items, func(runCtx context.Context) (uint64, error) {
+	prePingStage, err := suite.Measure(ctx, manifest.ActualBytes, items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.RunPrePing(runCtx, prePingConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			ReachabilityChecker: countingReachability{count: &reachability},
 		}); runErr != nil {
 			return 0, fmt.Errorf("run rich-deny pre-ping workflow: %w", runErr)
 		}
 		prePingCompleted = true
+		return 0, nil
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	bucketStage, err := suite.Measure(ctx, manifest.ActualBytes, items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.GenerateBuckets(runCtx, bucketConfig, io.Discard, scanapp.GenerateBucketsOptions{}); runErr != nil {
 			return 0, fmt.Errorf("run rich-deny bucket workflow: %w", runErr)
 		}
+		return fileSize(snapshotPath)
+	})
+	if err != nil {
+		return WorkflowResult{}, err
+	}
+	scanStage, err := suite.Measure(ctx, manifest.ActualBytes, items, func(runCtx context.Context) (uint64, error) {
 		dial := func(context.Context, string, string) (net.Conn, error) {
 			probes.Add(1)
 			return fakeOpenConn{}, nil
@@ -444,9 +456,31 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 	if err != nil {
 		return WorkflowResult{}, err
 	}
+	stage := combineSequentialObservations(manifest.ActualBytes, scanStage.OutputBytes, items, []Observation{prePingStage, bucketStage, scanStage})
 	result, err := workflowResultFromFiles(probes.Load(), reachability.Load(), true, fixtureGeneration, stage, scanPath, openPath, taskEvidence)
 	result.PrePingCompleted = prePingCompleted
 	return result, err
+}
+
+func combineSequentialObservations(inputBytes, outputBytes, units uint64, observations []Observation) Observation {
+	result := Observation{InputBytes: inputBytes, OutputBytes: outputBytes}
+	for _, observation := range observations {
+		result.WallTime += observation.WallTime
+		result.GoAllocatedBytes += observation.GoAllocatedBytes
+		result.GoAllocationCount += observation.GoAllocationCount
+		result.GoPeakHeapBytes = max(result.GoPeakHeapBytes, observation.GoPeakHeapBytes)
+		result.LinuxPeakRSSBytes = max(result.LinuxPeakRSSBytes, observation.LinuxPeakRSSBytes)
+		result.WindowsWorkingSetBytes = max(result.WindowsWorkingSetBytes, observation.WindowsWorkingSetBytes)
+		result.PeakCommittedBytes = max(result.PeakCommittedBytes, observation.PeakCommittedBytes)
+		result.SwapOrPagefileBytes = max(result.SwapOrPagefileBytes, observation.SwapOrPagefileBytes)
+		result.PagingReadBytes += observation.PagingReadBytes
+		result.PagingWriteBytes += observation.PagingWriteBytes
+	}
+	if result.WallTime > 0 {
+		result.ThroughputPerSecond = float64(units) / result.WallTime.Seconds()
+		result.MegabytesPerSecond = float64(outputBytes) / 1_000_000 / result.WallTime.Seconds()
+	}
+	return result
 }
 
 // RunNativeLoopbackSmoke runs the production workflow against one local listener.

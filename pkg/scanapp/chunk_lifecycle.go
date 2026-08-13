@@ -115,6 +115,7 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 	}
 	incompleteKeys := make(map[string]struct{}, len(chunks))
 	allIncompleteHaveTotal := true
+	incompleteChunkCount := 0
 	for i := range chunks {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -122,6 +123,7 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 		if chunkIsCompleted(&chunks[i]) {
 			continue
 		}
+		incompleteChunkCount++
 		incompleteKeys[chunks[i].CIDR] = struct{}{}
 		if chunks[i].TotalCount == 0 {
 			allIncompleteHaveTotal = false
@@ -136,13 +138,9 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 	// omitted (legacy snapshots decode it to 0) that guard is disabled, so filtering
 	// would silently change the incomplete target set; fall back to the whole-input
 	// build to reproduce ownership exactly.
-	records := cidrRecords
-	if len(incompleteKeys) > 0 && allIncompleteHaveTotal {
-		var err error
-		records, err = filterRecordsByChunkKeyContext(ctx, cidrRecords, incompleteKeys)
-		if err != nil {
-			return nil, err
-		}
+	records, err := selectRuntimeRecords(ctx, cidrRecords, incompleteKeys, allIncompleteHaveTotal, incompleteChunkCount, len(chunks))
+	if err != nil {
+		return nil, err
 	}
 	// Decide richMode on exactly the records the build consumes, so the group
 	// builder and the port-defaulting branch below agree on the mode.
@@ -151,7 +149,6 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 	var (
 		groups          map[string]cidrGroup
 		basicResolution basicTargetResolution
-		err             error
 	)
 	if len(incompleteKeys) > 0 {
 		if richMode {
@@ -258,6 +255,13 @@ func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, 
 		}
 	}
 	return runtimes, nil
+}
+
+func selectRuntimeRecords(ctx context.Context, records []input.CIDRRecord, incompleteKeys map[string]struct{}, allIncompleteHaveTotal bool, incompleteChunkCount, totalChunkCount int) ([]input.CIDRRecord, error) {
+	if len(incompleteKeys) == 0 || !allIncompleteHaveTotal || incompleteChunkCount == totalChunkCount {
+		return records, nil
+	}
+	return filterRecordsByChunkKeyContext(ctx, records, incompleteKeys)
 }
 
 func newRuntimeBucket(remaining int, policy runtimePolicy) *ratelimit.LeakyBucket {
