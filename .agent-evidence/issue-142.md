@@ -16,6 +16,8 @@ expected an input error, got entries []cidrutil.CIDREntry{...}
 
 The header tracer found seven contract errors. Partial official headers, empty input, blank input, and a one-field legacy header did not fail correctly.
 
+The review tracer required available header locations. Five header errors omitted record 1, line 1, and the available field column.
+
 The whitespace tracer used whitespace-only lines before and after the header. The parser used the first whitespace-only line as the header.
 
 The command tracer ran the compiled binary with invalid deny and open inputs. Stderr was empty for both inputs. The open-input case also wrote a stdout header.

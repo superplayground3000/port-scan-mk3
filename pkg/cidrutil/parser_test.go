@@ -359,11 +359,12 @@ func TestCSVEntryPointsStopAtFirstInvalidRecord(t *testing.T) {
 
 func TestCSVHeaderContract(t *testing.T) {
 	tests := []struct {
-		name        string
-		parse       func(string) ([]CIDREntry, error)
-		content     string
-		wantNetwork string
-		wantError   string
+		name         string
+		parse        func(string) ([]CIDREntry, error)
+		content      string
+		wantNetwork  string
+		wantError    string
+		wantLocation string
 	}{
 		{
 			name:        "deny official headers at arbitrary indexes",
@@ -394,28 +395,32 @@ func TestCSVHeaderContract(t *testing.T) {
 			wantNetwork: "192.168.0.0/16",
 		},
 		{
-			name:      "deny only CIDR header",
-			parse:     ParseDenyCSV,
-			content:   "dst_network_segment,action\n10.0.0.0/8,deny\n",
-			wantError: "partial official header",
+			name:         "deny only CIDR header",
+			parse:        ParseDenyCSV,
+			content:      "dst_network_segment,action\n10.0.0.0/8,deny\n",
+			wantError:    "partial official header",
+			wantLocation: "record 1 line 1 column 1",
 		},
 		{
-			name:      "deny only filter header",
-			parse:     ParseDenyCSV,
-			content:   "network,decision\n10.0.0.0/8,deny\n",
-			wantError: "partial official header",
+			name:         "deny only filter header",
+			parse:        ParseDenyCSV,
+			content:      "network,decision\n10.0.0.0/8,deny\n",
+			wantError:    "partial official header",
+			wantLocation: "record 1 line 1 column 9",
 		},
 		{
-			name:      "open only CIDR header",
-			parse:     ParseOpenCSV,
-			content:   "segment,result\n10.0.0.1/32,open\n",
-			wantError: "partial official header",
+			name:         "open only CIDR header",
+			parse:        ParseOpenCSV,
+			content:      "segment,result\n10.0.0.1/32,open\n",
+			wantError:    "partial official header",
+			wantLocation: "record 1 line 1 column 1",
 		},
 		{
-			name:      "open only filter header",
-			parse:     ParseOpenCSV,
-			content:   "network,status\n10.0.0.1/32,open\n",
-			wantError: "partial official header",
+			name:         "open only filter header",
+			parse:        ParseOpenCSV,
+			content:      "network,status\n10.0.0.1/32,open\n",
+			wantError:    "partial official header",
+			wantLocation: "record 1 line 1 column 9",
 		},
 		{
 			name:      "empty input",
@@ -429,10 +434,11 @@ func TestCSVHeaderContract(t *testing.T) {
 			wantError: "missing header",
 		},
 		{
-			name:      "legacy header has one field",
-			parse:     ParseDenyCSV,
-			content:   "network\n10.0.0.0/8\n",
-			wantError: "header requires at least 2 fields, got 1",
+			name:         "legacy header has one field",
+			parse:        ParseDenyCSV,
+			content:      "network\n10.0.0.0/8\n",
+			wantError:    "header requires at least 2 fields, got 1",
+			wantLocation: "record 1 line 1 column 1",
 		},
 	}
 
@@ -448,6 +454,9 @@ func TestCSVHeaderContract(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tt.wantError) {
 					t.Errorf("error = %q, want detail %q", err, tt.wantError)
+				}
+				if tt.wantLocation != "" && !strings.Contains(err.Error(), tt.wantLocation) {
+					t.Errorf("error = %q, want location %q", err, tt.wantLocation)
 				}
 				return
 			}

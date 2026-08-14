@@ -81,18 +81,28 @@ func parseCSV(input io.Reader, policy csvPolicy) ([]CIDREntry, error) {
 	cidrIndex := findColumnIndex(header, policy.cidrHeader)
 	filterIndex := findColumnIndex(header, policy.filterHeader)
 	if (cidrIndex >= 0) != (filterIndex >= 0) {
+		presentIndex := cidrIndex
+		if presentIndex < 0 {
+			presentIndex = filterIndex
+		}
+		line, column := reader.FieldPos(presentIndex)
 		return nil, fmt.Errorf(
-			"%s input has partial official header: %q and %q must both be present",
+			"%s input record 1 line %d column %d has partial official header: %q and %q must both be present",
 			policy.role,
+			line,
+			column,
 			policy.cidrHeader,
 			policy.filterHeader,
 		)
 	}
 	if cidrIndex < 0 {
 		if len(header) < 2 {
+			line, column := reader.FieldPos(0)
 			return nil, fmt.Errorf(
-				"%s input header requires at least 2 fields, got %d",
+				"%s input record 1 line %d column %d header requires at least 2 fields, got %d",
 				policy.role,
+				line,
+				column,
 				len(header),
 			)
 		}
