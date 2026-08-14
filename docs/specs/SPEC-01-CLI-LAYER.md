@@ -48,7 +48,7 @@ A foreign flag causes an unknown-flag error. `validate` uses
 | **0** | Success | Valid input, scan completed |
 | **1** | Validation/Runtime error | Invalid input (`validate`), scan runtime error (`scan`) |
 | **2** | CLI parsing error | Invalid flags, missing required args, flag validation fail |
-| **130** | Scan canceled | SIGINT (Ctrl+C) - detected via `context.Canceled` |
+| **130** | Command canceled | Ctrl+C or Windows Ctrl+Break, detected via `context.Canceled` |
 
 ## 2. Command Handlers (command_handlers.go)
 
@@ -122,7 +122,7 @@ func runScan(args []string, stdout, stderr io.Writer) int
 **Flow:**
 1. Parse configuration with `config.ParseScan(args)`. The `-resume` flag is
    required, and no ping flags are registered.
-2. Wrap context with SIGINT handling via `state.WithSIGINTCancel(ctx)`
+2. Wrap the context with `state.WithInterruptEscalation(ctx, onFirst, forceExit)`.
 3. Call `scanapp.Run(ctx, cfg, stdout, stderr, scanapp.RunOptions{})`.
 4. Map errors to exit codes.
 
@@ -135,7 +135,7 @@ cmd/port-scan (CLI layer)
     ├── pkg/validate     # validate.Inputs(cfg) for validation command
     ├── pkg/cli          # cli.WriteValidation() for output formatting
     ├── pkg/scanapp     # scanapp.Run() for scan command
-    └── pkg/state       # state.WithSIGINTCancel() for SIGINT handling
+    └── pkg/state       # Graceful cancellation and second-interrupt handling
 ```
 
 ## 4. Key Design Patterns
@@ -210,5 +210,5 @@ Errors from scanapp.Run() are mapped to exit codes:
 - **Config**: four command-specific parsers return opaque configuration values.
 - **Validation**: `validate.Inputs(Configuration)` returns `Result{Valid, Detail}`.
 - **Scan**: `scanapp.Run(ctx, ScanConfiguration, stdout, stderr, opts)` returns an error.
-- **Signal**: `state.WithSIGINTCancel(ctx)` → context
+- **Signal**: `WithSIGINTCancel` for preparation commands and `WithInterruptEscalation` for `scan`.
 - **Output**: `cli.WriteValidation(out, format, valid, detail)` → void

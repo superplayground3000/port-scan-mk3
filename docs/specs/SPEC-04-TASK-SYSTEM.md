@@ -17,17 +17,21 @@ pkg/task/
 
 ```go
 type Chunk struct {
-    CIDR     string     // CIDR boundary (e.g., "10.0.0.0/24")
-    Ports    []int      // Ports to scan for this CIDR
-    Targets  []string   // Expanded IP selectors
+    CIDR     string     // CIDR boundary, for example "10.0.0.0/24"
+    CIDRName string     // Human-readable CIDR name
+    Ports    []string   // Port specifications in <port>/tcp format
     
     // Progress tracking
     NextIndex   int     // Next task index to dispatch (0-based)
-    ScannedCount int   // Number of completed scans
-    TotalCount  int     // Total tasks (len(Targets) * len(Ports))
+    ScannedCount int   // Number of committed results credited to progress
+    TotalCount  int     // Number of ordered probe tasks in this chunk
     Status      string  // "pending", "scanning", "completed"
 }
 ```
+
+The snapshot does not store an expanded target list. The runtime rebuilds incomplete chunk targets from the current input.
+
+Port overrides, authorization, exclusions, and deduplication determine `TotalCount`. One universal multiplication formula does not apply.
 
 ### 1.2 Task
 

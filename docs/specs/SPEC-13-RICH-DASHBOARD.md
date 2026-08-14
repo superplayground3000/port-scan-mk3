@@ -4,7 +4,7 @@
 
 The Rich Dashboard provides a real-time terminal UI during scan execution, showing progress, rate metrics, and system status.
 
-> **Note:** This feature is planned for future implementation. This spec documents the design.
+> **Status:** The dashboard is implemented for the `scan` command.
 
 ## 1. Design Principles
 
@@ -34,8 +34,8 @@ Progress: ████████████░░░░░░░ 60% (600/100
 ```
 
 Fields:
-- `TotalTasks`: Total scan tasks
-- `ScannedTasks`: Completed tasks
+- `TotalTasks`: Total probe tasks
+- `ScannedTasks`: Committed results
 - `Percent`: Calculated percentage
 
 ### 3.2 Current CIDR Section
@@ -132,7 +132,7 @@ Receives events from scan pipeline:
 | `OnBucketWaitStart` | `BucketStatus = "waiting_bucket"` |
 | `OnGateWaitStart` | `BucketStatus = "waiting_gate"` |
 | `OnTaskEnqueued` | `BucketStatus = "enqueued"`, increment dispatch counter |
-| On result | Increment result counter |
+| On committed result | Increment result counter |
 
 ### 4.3 dashboard_renderer
 
@@ -188,18 +188,13 @@ result_aggregator                          dashboard_state
 
 ## 6. API State Observable (Controller Extension)
 
-The controller exposes API pause state for the dashboard:
+The controller exposes its API pause state for the dashboard:
 
 ```go
-type Controller struct {
-    // ... existing fields
-    
-    // New: exported API paused accessor
-    func (c *Controller) APIPaused() bool
-}
+func (c *Controller) APIPaused() bool
 ```
 
-Used by dashboard to display pause status.
+The dashboard uses this value to display the pause status.
 
 ## 7. Error Handling
 
@@ -219,7 +214,7 @@ Used by dashboard to display pause status.
 - **Destination**: stderr only (not stdout)
 - **Reason**: stdout reserved for CSV output
 
-## 10. File Structure (Planned)
+## 10. File Structure
 
 ```
 pkg/scanapp/
@@ -227,7 +222,9 @@ pkg/scanapp/
 ├── dashboard_state_test.go  # State tests
 ├── dashboard_renderer.go    # ANSI rendering
 ├── dashboard_renderer_test.go # Renderer tests
-└── dashboard_runtime.go     # Lifecycle management
+├── dashboard_runtime.go     # Lifecycle management
+├── dashboard_runtime_test.go # Runtime tests
+└── dashboard_telemetry.go   # Event adapters
 ```
 
 ## 11. Integration Points

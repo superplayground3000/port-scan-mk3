@@ -330,7 +330,7 @@ Per-chunk leaky bucket token refill:
 ### Speed Controller (`speedctrl/controller.go`)
 
 Manages pause gate:
-- Keyboard `p`/`r` toggles manual pause
+- The space bar toggles manual pause
 - Pressure API toggles API-based pause
 - Gate blocks dispatch when either condition is active
 

@@ -199,8 +199,8 @@ Expected:
 - On SIGINT (exit `130`) or on an error, `scan` writes the progress back to the
   **same** `-resume` path (`e2e/out/buckets.json`). It overwrites the bucket file
   that it read.
-- The second run loads that updated snapshot and continues without duplicate or
-  missing records.
+- The second run loads the updated snapshot and omits no probe task.
+- A rewind can repeat a row that the first run already committed.
 
 Troubleshooting:
 - There is no separate `resume_state.json` for the pipeline flow — the bucket

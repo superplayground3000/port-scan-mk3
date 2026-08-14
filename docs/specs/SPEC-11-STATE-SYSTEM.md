@@ -82,6 +82,16 @@ The runtime verifies only candidates from incomplete chunks.
 If scan limit flags are absent, the runtime uses limits from `target_expansion`.
 Each explicit scan flag replaces its related stored limit.
 
+Resume reads and parses the complete current input. This cost increases with its byte count (`B`) and row count (`R`).
+
+The runtime does not expand or revalidate completed chunks. The incomplete rebuild cost increases with their candidate-address count (`Cᵢ`).
+
+A completed chunk is historical snapshot work. Completed results can use a different input revision from incomplete results.
+
+If all results must use one input revision, start a fresh run.
+
+Snapshot-save cost increases with the serialized snapshot byte count (`S`). See the [performance harness](../performance-harness.md) for the measured report.
+
 ## 5. Output-failure rewind
 
 Dispatch can advance before an output write completes. When a required writer
@@ -103,11 +113,12 @@ dispatcher error.
 
 ```go
 func WithSIGINTCancel(ctx context.Context) (context.Context, func())
+func WithInterruptEscalation(ctx context.Context, onFirst func(), forceExit func(int)) (context.Context, func())
 ```
 
-`WithSIGINTCancel` returns a context that cancels after `SIGINT`. Its cleanup
-function restores the signal handler. The command layer uses this context for
-the scan workflow.
+`WithSIGINTCancel` cancels preparation commands after the first interrupt.
+
+The `scan` command uses `WithInterruptEscalation`. The first interrupt starts graceful cancellation. The second interrupt calls `forceExit(130)`.
 
 ## 8. Compatibility rules
 
@@ -127,7 +138,7 @@ If an unmarked snapshot has rich deny input, `scan` rejects it before TCP dispat
 | File | Responsibility |
 | --- | --- |
 | `pkg/state/state.go` | Snapshot format, strict decode, and safe replacement |
-| `pkg/state/signal.go` | `SIGINT` cancellation |
+| `pkg/state/signal.go` | Graceful cancellation and second-interrupt handling |
 | `pkg/scanapp/scan_runtime.go` | Snapshot load and lifecycle order |
 | `pkg/scanapp/resume_manager.go` | Rewind and save decision |
 | `pkg/scanapp/output_path_upgrade.go` | Legacy relative output paths |

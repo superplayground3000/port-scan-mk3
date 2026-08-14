@@ -447,3 +447,57 @@ Green command:
 `go test -race ./pkg/scanapp -run '^(TestParsePortRowsContext_ChecksCancellationWithinFourThousandNinetySixRows|TestDispatchTasks_CancellationStopsBucketGateAndSendWaits)$' -count=1`
 
 Result: `ok github.com/xuxiping/port-scan-mk3/pkg/scanapp 1.010s`
+
+## Snapshot fixture calibration
+
+The shared full matrix requires 100 MB chunk-heavy, port-heavy, and unreachable-heavy snapshots.
+The proportional fixture estimator stopped below 100 MB for discrete snapshot shapes.
+
+The focused test first failed with this result:
+
+```text
+prepareSnapshotSaveFixture: snapshot save fixture did not reach target 100000000 bytes
+FAIL
+```
+
+A first one-item correction also failed because a discrete item did not cross the target.
+The final correction advances by one quarter of the allowed size tolerance when proportional growth does not increase the serialized size.
+The correction keeps the existing upper-size tolerance and overflow protection.
+
+The focused test passed all three 100 MB shapes:
+
+```text
+PASS
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  8.110s
+```
+
+The package race command also passed:
+
+```text
+ok  github.com/xuxiping/port-scan-mk3/internal/perfharness  74.749s
+```
+
+## Final performance result
+
+The complete Linux matrix tested commit `3ad301eacb6f574a83b6839919186dc41a81aac7`.
+It ran for `4:44:24` and exited with status 0.
+All 149 cases passed, including every snapshot load and save case.
+
+The 100 MB snapshot-save results used these serialized sizes:
+
+| Shape | Serialized bytes | Steady median |
+| --- | ---: | ---: |
+| chunk-heavy | `100,397,567` | `225.919432ms` |
+| port-heavy | `100,002,468` | `535.764384ms` |
+| unreachable-heavy | `100,058,836` | `147.821524ms` |
+
+The mixed 1 GB snapshot-save case wrote `1,000,000,143` bytes in a `2.05328577s` steady median.
+The operation included serialization, write, sync, close, and atomic replacement.
+
+The raw reports are here:
+
+```text
+/media/hp/secondary/issue125-performance-3ad301e/report/performance-report.json
+/media/hp/secondary/issue125-performance-3ad301e/report/performance-report.md
+/media/hp/secondary/issue125-performance-3ad301e/matrix-os-metrics.txt
+```

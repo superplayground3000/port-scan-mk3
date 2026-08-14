@@ -9,27 +9,39 @@ TCP port scanner for IPv4 with pressure-aware pacing, rate control, and resume s
 - **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs. Each row can override the port file.
 - **Rich mode** — A single CSV file with full firewall-policy rows (for example, src_ip, dst_ip, port, and decision). In rich mode, you do not need a separate port file.
 
-The scanner dispatches tasks to a worker pool that you configure. It writes the results in real time. SIGINT or a pressure API can pause the scan and resume it.
+The scanner dispatches probe tasks to a worker pool that you configure. It writes results during the scan.
+
+An OS interrupt cancels the scan. The pressure API or space bar can pause and resume dispatch in the same process.
 
 ## Commands
 
 ### validate
 
-This command parses and validates the input files. It does not run a network scan. It runs in O(n) time over the input rows.
+This command parses and validates the input files. It does not run a network scan.
+
+The validation cost increases with the input byte count and row count.
 
 ```bash
 port-scan validate -cidr-file targets.csv -port-file ports.csv
 port-scan validate -cidr-file targets.csv -port-file ports.csv -format json
 ```
 
+### pre-ping
+
+Ping the authorized candidate addresses. The command writes an unreachable-address CSV and prints its path.
+
+### generate-buckets
+
+Build a resume snapshot from the authorized input. In basic mode, this command also reads the port file.
+
 ### scan
 
-Run the full scan pipeline. The command writes the output to `scan_results-<timestamp>.csv` (all results) and `opened_results-<timestamp>.csv` (open ports only).
+Scan the probe tasks in a required resume snapshot. The command never pings targets or builds new buckets.
 
 ```bash
-port-scan scan -cidr-file targets.csv -port-file ports.csv
-port-scan scan -cidr-file targets.csv -port-file ports.csv -output ./results
-port-scan scan -cidr-file targets.csv -port-file ports.csv -format json -log-level debug
+port-scan pre-ping -cidr-file targets.csv
+port-scan generate-buckets -cidr-file targets.csv -port-file ports.csv -buckets-out buckets.json
+port-scan scan -cidr-file targets.csv -resume buckets.json -output ./results
 ```
 
 ## Architecture
@@ -41,18 +53,16 @@ CLI entry point (main.go)
     │       config.ParseValidate() → config.ValidateConfig
     │           └── validate.Inputs(Configuration) → cli.WriteValidation()
     │
-    └── handleScanCommand
-            config.ParseScan() → config.ScanConfig
-                   │
-                   ▼
-            scanapp.Run(ScanConfiguration)
-                   │
-                   └── private scanRuntime.execute(context.Context)
-                           ├── load the snapshot and rebuild runtime state
-                           ├── start pressure, control, worker, and dispatch tasks
-                           ├── drain results and errors after cancellation
-                           ├── write results and save resume state
-                           └── stop tasks and close output files
+    ├── handlePrePingCommand → scanapp.RunPrePing
+    ├── handleGenerateBucketsCommand → scanapp.GenerateBuckets
+    └── handleScanCommand → scanapp.Run
+                               │
+                               └── private scanRuntime.execute(context.Context)
+                                      ├── load the snapshot and rebuild incomplete chunks
+                                      ├── start pressure, control, worker, and dispatch tasks
+                                      ├── drain results and errors after cancellation
+                                      ├── write committed results and save resume state
+                                      └── stop tasks and close output files
 ```
 
 ### Key Packages
@@ -63,11 +73,11 @@ CLI entry point (main.go)
 | `pkg/validate` | Input file validation (exists, parseable, correct schema) |
 | `pkg/input` | CIDR CSV and port file loading. It detects basic or rich mode automatically |
 | `pkg/scanapp` | Workflow entry points and the private scan runtime |
-| `pkg/speedctrl` | Rate control through a leaky-bucket controller, plus keyboard pause support |
+| `pkg/speedctrl` | Rate control and a space-bar pause gate |
 | `pkg/scanner` | Low-level TCP scanning via `net.DialTimeout` |
 | `pkg/writer` | CSV output with a fixed 14-column schema, plus the OpenOnlyWriter filter |
 | `pkg/cli` | CLI formatting (human vs JSON output for validate command) |
-| `pkg/state` | SIGINT cancel context for graceful interruption |
+| `pkg/state` | Interrupt contexts for graceful cancellation and emergency exit |
 
 ## CLI Flags
 
@@ -83,7 +93,7 @@ compatibility.
 | `-output-flush-results` | `1000` | Number of probe results in one output batch. `1` flushes each result. `0` disables periodic flushes. |
 | `-timeout` | `100ms` | Per-scan TCP connection timeout (duration string) |
 | `-pre-scan-ping-timeout` | `100ms` | Pre-scan ping reachability timeout (duration string, must be > 0) |
-| `-delay` | `10ms` | Pause between dispatching consecutive tasks |
+| `-delay` | `10ms` | Wait between consecutive task dispatches |
 | `-bucket-rate` | `100` | Leaky-bucket token refill rate (tokens/second) |
 | `-bucket-capacity` | `100` | Leaky-bucket maximum burst size |
 | `-workers` | `10` | Number of concurrent scan goroutines |
@@ -251,10 +261,14 @@ after both writers flush. A controlled stop flushes the final batch.
 If a write or flush fails, the scan rewinds the complete current batch. A
 resumed scan can duplicate rows from that batch, but it does not omit them.
 
-### resume_state.json
+### Bucket snapshot and resume state
 
-`port-scan` updates this file after graceful cancellation or a scan failure.
+The path from `-resume` is the bucket snapshot and the resume state. `port-scan` updates it after cancellation or a scan failure.
 The file records completed work and the lowest unwritten task in each chunk.
+
+Resume reads and parses the current input. It rebuilds only incomplete chunks and does not revalidate completed chunks.
+
+Completed chunks can use an earlier input revision. If all results must use one input revision, start a fresh run.
 
 Queued probes do not start after cancellation. Started probes finish with their
 original timeout, and the command writes their results before snapshot persistence.
@@ -409,6 +423,8 @@ Workers share a bounded task channel. One result loop serializes output writes.
 Cancellation stops queue consumption before the next dial. It does not change
 the context or timeout of a dial that already started.
 
-For pressure control, the task dispatcher consults a `speedctrl.Controller` before it releases each task. The controller accumulates tokens from the leaky-bucket scheduler and from the pressure API (when it is enabled). Keyboard input (`p` to pause, `r` to resume) updates the controller directly.
+For pressure control, the task dispatcher reads a `speedctrl.Controller` before it releases each task.
+
+The leaky bucket controls rate. The pressure API and the space bar control the pause gate.
 
 `pkg/writer/csv_writer.go` defines the output schema (14 columns) as a single source of truth. A change to the schema is a MAJOR version change, per the product constitution.

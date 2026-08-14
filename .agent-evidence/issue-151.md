@@ -815,3 +815,83 @@ The generated reports are here:
 /media/hp/secondary/issue151-performance-f35cfa9-root/run-20260813T211538Z-1692500/report/performance-report.json
 /media/hp/secondary/issue151-performance-f35cfa9-root/run-20260813T211538Z-1692500/report/performance-report.md
 ```
+
+## Final scale-conformance corrections
+
+The final correction removed retained input rows from the measured rich fixture results.
+It also bounded reusable parser state and grouped rich targets with the corrected allocation shape.
+
+The production fake-probe cases disable the rate limiter through the existing test seam.
+This setting measures production data paths without the intentional rate policy delay.
+The product default rate policy did not change.
+
+The mixed snapshot generator now preserves the approved 4,000-to-42,587 shape ratio at every size.
+It calculates representable counts with checked arithmetic and writes the snapshot as a stream.
+
+The snapshot contract now uses 100 MB for chunk-heavy and port-heavy cases.
+A focused test locks all three discrete 100 MB save shapes to the target tolerance.
+
+## Final full Linux matrix
+
+The complete Linux matrix tested commit `3ad301eacb6f574a83b6839919186dc41a81aac7`.
+It ran for `4:44:24` and exited with status 0.
+All 149 cases passed, and the process used zero swaps.
+
+The recorded host used these values:
+
+- Platform: `linux/amd64`
+- CPU: `AMD RYZEN AI MAX+ 395 w/ Radeon 8060S`
+- Cores: 16 physical and 32 logical
+- RAM: `131891437568` bytes
+- Disk: `WD_BLACK SN7100 2TB`
+- Filesystem label: `ext2/ext3`
+- Power mode: `powersave`
+- Go: `go1.26.1`
+- Evidence label: `hardware-qualified`
+
+The matrix maximum RSS was `25,714,804` KiB.
+The runner recorded no major page faults and no swaps.
+
+The previous five evaluator failures passed with these final measurements:
+
+| Case | Cold committed bytes | Steady committed bytes | Steady wall time |
+| --- | ---: | ---: | ---: |
+| rich-record-mixed fixture | `7,230,087,168` | `7,255,273,472` | `12.433246369s` |
+| rich-unique-key fixture | `7,204,720,640` | `7,300,870,144` | `12.082167045s` |
+| rich-hot-key fixture | `7,302,819,840` | `7,316,893,696` | `11.820423425s` |
+| production-rich/rich-precheck | `18,994,585,600` | `21,063,430,144` | `3m29.987046398s` |
+
+`production-workflow/complete/growth-1x/workers-16` also passed its 12.5-fold growth rule.
+Its steady wall time was `3.030068886s` for 1,000,000 tasks.
+The 10,000,000-task steady wall time was `32.306613298s`.
+
+The rich precheck case wrote a `2,204,185,907`-byte snapshot in each observation.
+All six observations completed the scan and the 24 GB memory gate.
+
+The complete snapshot-save matrix passed.
+The mixed 1 GB save wrote `1,000,000,143` bytes in a `2.05328577s` steady median.
+
+The raw reports and native metrics are here:
+
+```text
+/media/hp/secondary/issue125-performance-3ad301e/report/performance-report.json
+/media/hp/secondary/issue125-performance-3ad301e/report/performance-report.md
+/media/hp/secondary/issue125-performance-3ad301e/matrix-os-metrics.txt
+```
+
+The native Windows full matrix remains a release checklist item in issue 99.
+The repository Windows CI runs the bounded native smoke profile for each pull request.
+
+The final `make verify` command exited with status 0 and reported 85.1 percent coverage.
+Its final result was:
+
+```text
+All selected quality gates passed.
+```
+
+The final Docker e2e command also exited with status 0.
+Its final result was:
+
+```text
+All selected quality gates passed.
+```

@@ -213,7 +213,7 @@ Exit code behavior:
 - `0`: success
 - `1`: validation failed (`validate`) or scan runtime error (`scan`)
 - `2`: CLI parsing/config error
-- `130`: scan canceled by `SIGINT` (`Ctrl+C`)
+- `130`: command canceled by Ctrl+C or Windows Ctrl+Break
 
 ## Version Contract
 
@@ -381,6 +381,8 @@ any TCP dial" guarantee — `pre-ping` completes before `scan` runs.
 - To skip the reachability gate, skip the `pre-ping` step and run `generate-buckets` without `-unreachable-file`.
 - The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel or error saves progress back to that exact path (in place). A re-run of the same `scan` command continues from there.
 - The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist, so `scan` reuses the same filtering decision without a ping.
+- Resume reads and parses the current input. It rebuilds only incomplete chunks and does not revalidate completed chunks.
+- Completed chunks can come from an earlier input revision. If all results must use one input revision, start a fresh run.
 - **If an output write fails, `scan` saves corrected resume progress.** Each result carries its zero-based task index. `scan` rewinds each affected chunk to its first dispatched task that did not reach all required writers. A chunk with no unwritten result keeps its cursor. The command logs `resume_state_rewound`, saves the corrected snapshot, and exits with the write error.
 
   Recovery: run the same `scan -resume` command. The resumed run covers every target and appends to the recorded output files. It can write some persisted rows again because results finish out of order. Duplicate rows can occur in both `scan_results-*.csv` and `opened_results-*.csv`. Use a CSV parser and the `ip` plus `port` columns to remove duplicates. Do not use line-based tools because quoted fields can contain newlines. The [3.0.1 release notes](docs/release-notes/3.0.1.md) include a standard-library script that keeps the last result for each target.

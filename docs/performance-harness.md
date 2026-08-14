@@ -218,6 +218,14 @@ The Native Windows tracker must also cover these items:
 
 - Ctrl+Break delivery.
 - A second interrupt and exit code `130`.
+
+## Accepted Linux report
+
+The complete Linux matrix passed for commit `3ad301eacb6f574a83b6839919186dc41a81aac7`.
+It ran 149 cases on the recorded hardware and used no swap.
+
+The [issue 151 evidence](../.agent-evidence/issue-151.md#final-full-linux-matrix) records the result and the raw report paths.
+The report includes all four mixed snapshot sizes and all 100 MB snapshot shapes.
 - Complete large-data finalization.
 
 Do not label an unconstrained result as `minimum-profile certified`.
