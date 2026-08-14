@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -352,7 +353,7 @@ func writeSizedSnapshot(ctx context.Context, output io.Writer, spec FixtureSpec)
 	case "unreachable-heavy":
 		err = writeUnreachableSnapshot(ctx, buffer, written, spec.Scale.TargetBytes, "{\"chunks\":[]")
 	case "mixed", "":
-		err = writeUnreachableSnapshot(ctx, buffer, written, spec.Scale.TargetBytes, "{\"chunks\":[{\"cidr\":\"127.0.0.1/32\",\"cidr_name\":\"mixed\",\"ports\":[\"80/tcp\",\"443/tcp\"],\"next_index\":0,\"scanned_count\":0,\"total_count\":2,\"status\":\"pending\"}]")
+		err = writeMixedSnapshot(ctx, buffer, spec.Scale.TargetBytes)
 	default:
 		return fmt.Errorf("unsupported snapshot shape %q", spec.Shape)
 	}
@@ -363,6 +364,149 @@ func writeSizedSnapshot(ctx context.Context, output io.Writer, spec FixtureSpec)
 		return fmt.Errorf("flush snapshot fixture: %w", err)
 	}
 	return nil
+}
+
+func writeMixedSnapshot(ctx context.Context, buffer *bufio.Writer, target uint64) error {
+	const (
+		approvedChunks      = uint64(4_000)
+		approvedUnreachable = uint64(42_587)
+		chunkPrefix         = `{"cidr":"127.0.0.1/32","cidr_name":"mixed-`
+		chunkSuffix         = `","ports":["80/tcp","443/tcp"],"next_index":0,"scanned_count":0,"total_count":2,"status":"pending"}`
+		snapshotPrefix      = `{"chunks":[`
+		unreachablePrefix   = `],"pre_scan_ping":{"enabled":true,"timeout_ms":0,"unreachable_ipv4_u32":[`
+		snapshotSuffix      = "]}}\n"
+	)
+
+	chunkCount, unreachableCount, err := mixedSnapshotCounts(target)
+	if err != nil {
+		return err
+	}
+	if _, err := buffer.WriteString(snapshotPrefix); err != nil {
+		return fmt.Errorf("write mixed snapshot prefix: %w", err)
+	}
+	for index := uint64(0); index < chunkCount; index++ {
+		if index%4_096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if index > 0 {
+			if err := buffer.WriteByte(','); err != nil {
+				return fmt.Errorf("write mixed snapshot chunk separator: %w", err)
+			}
+		}
+		if _, err := fmt.Fprintf(buffer, "%s%d%s", chunkPrefix, index, chunkSuffix); err != nil {
+			return fmt.Errorf("write mixed snapshot chunk: %w", err)
+		}
+	}
+	if _, err := buffer.WriteString(unreachablePrefix); err != nil {
+		return fmt.Errorf("write mixed snapshot unreachable prefix: %w", err)
+	}
+	var scratch [20]byte
+	for index := uint64(0); index < unreachableCount; index++ {
+		if index%4_096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if index > 0 {
+			if err := buffer.WriteByte(','); err != nil {
+				return fmt.Errorf("write mixed snapshot unreachable separator: %w", err)
+			}
+		}
+		if _, err := buffer.Write(strconv.AppendUint(scratch[:0], uint64(uint32(index)), 10)); err != nil {
+			return fmt.Errorf("write mixed snapshot unreachable entry: %w", err)
+		}
+	}
+	if _, err := buffer.WriteString(snapshotSuffix); err != nil {
+		return fmt.Errorf("write mixed snapshot suffix: %w", err)
+	}
+	return nil
+}
+
+func mixedSnapshotCounts(target uint64) (uint64, uint64, error) {
+	const (
+		approvedChunks      = uint64(4_000)
+		approvedUnreachable = uint64(42_587)
+		maxUnreachable      = uint64(math.MaxUint32) + 1
+	)
+	maxChunks := maxUnreachable * approvedChunks / approvedUnreachable
+	sizeAtMax, _, ok := mixedSnapshotSize(maxChunks)
+	if !ok || sizeAtMax < target {
+		return 0, 0, fmt.Errorf("mixed snapshot target exceeds the addressable ratio")
+	}
+	low, high := uint64(1), maxChunks
+	for low < high {
+		middle := low + (high-low)/2
+		size, _, representable := mixedSnapshotSize(middle)
+		if representable && size >= target {
+			high = middle
+		} else {
+			low = middle + 1
+		}
+	}
+	_, unreachable, ok := mixedSnapshotSize(low)
+	if !ok {
+		return 0, 0, fmt.Errorf("mixed snapshot target exceeds the addressable ratio")
+	}
+	return low, unreachable, nil
+}
+
+func mixedSnapshotSize(chunks uint64) (uint64, uint64, bool) {
+	const (
+		approvedChunks      = uint64(4_000)
+		approvedUnreachable = uint64(42_587)
+		chunkFixedBytes     = uint64(len(`{"cidr":"127.0.0.1/32","cidr_name":"mixed-`) + len(`","ports":["80/tcp","443/tcp"],"next_index":0,"scanned_count":0,"total_count":2,"status":"pending"}`))
+		fixedBytes          = uint64(len(`{"chunks":[`) + len(`],"pre_scan_ping":{"enabled":true,"timeout_ms":0,"unreachable_ipv4_u32":[`) + len("]}}\n"))
+	)
+	if chunks == 0 || chunks > (math.MaxUint64-approvedChunks+1)/approvedUnreachable {
+		return 0, 0, false
+	}
+	unreachable := (chunks*approvedUnreachable + approvedChunks - 1) / approvedChunks
+	chunkBytes, ok := checkedMultiply(chunks, chunkFixedBytes+1)
+	if !ok {
+		return 0, 0, false
+	}
+	unreachableBytes, ok := checkedAdd(decimalSequenceBytes(unreachable), unreachable-1)
+	if !ok {
+		return 0, 0, false
+	}
+	size, ok := checkedAdd(fixedBytes-1, chunkBytes)
+	if !ok {
+		return 0, 0, false
+	}
+	size, ok = checkedAdd(size, decimalSequenceBytes(chunks))
+	if !ok {
+		return 0, 0, false
+	}
+	size, ok = checkedAdd(size, unreachableBytes)
+	return size, unreachable, ok
+}
+
+func decimalSequenceBytes(count uint64) uint64 {
+	var total uint64
+	start, boundary := uint64(0), uint64(10)
+	for width := uint64(1); start < count; width++ {
+		end := min(count, boundary)
+		total += (end - start) * width
+		start = end
+		boundary *= 10
+	}
+	return total
+}
+
+func checkedAdd(left, right uint64) (uint64, bool) {
+	if left > math.MaxUint64-right {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func checkedMultiply(left, right uint64) (uint64, bool) {
+	if left != 0 && right > math.MaxUint64/left {
+		return 0, false
+	}
+	return left * right, true
 }
 
 func writeChunkHeavySnapshot(ctx context.Context, buffer *bufio.Writer, written *countWriter, target uint64) error {

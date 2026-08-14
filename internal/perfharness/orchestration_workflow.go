@@ -178,7 +178,8 @@ func runOrchestrationWorkflow(ctx context.Context, spec WorkflowSpec, measure me
 	var scanPath, openPath string
 	stage, err := measure(ctx, fixtureBytes, spec.Items, func(runCtx context.Context) (uint64, error) {
 		if runErr := scanapp.Run(runCtx, boundedScanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
 			Dial: func(context.Context, string, string) (net.Conn, error) {
 				probes.Add(1)
 				return fakeOpenConn{}, nil

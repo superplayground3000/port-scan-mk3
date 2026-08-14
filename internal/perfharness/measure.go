@@ -19,6 +19,11 @@ func (Suite) Measure(ctx context.Context, inputBytes, units uint64, action Measu
 
 type processMetricSampler func() (processMetrics, error)
 
+const (
+	processSampleInterval = time.Millisecond
+	heapSampleInterval    = 100 * time.Millisecond
+)
+
 func measure(ctx context.Context, inputBytes, units uint64, action MeasuredAction, sampler processMetricSampler) (Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err
@@ -41,16 +46,19 @@ func measure(ctx context.Context, inputBytes, units uint64, action MeasuredActio
 	wait.Add(1)
 	go func() {
 		defer wait.Done()
-		ticker := time.NewTicker(time.Millisecond)
-		defer ticker.Stop()
+		processTicker := time.NewTicker(processSampleInterval)
+		defer processTicker.Stop()
+		heapTicker := time.NewTicker(heapSampleInterval)
+		defer heapTicker.Stop()
 		for {
 			select {
 			case <-stop:
 				return
-			case <-ticker.C:
+			case <-heapTicker.C:
 				var sample runtime.MemStats
 				runtime.ReadMemStats(&sample)
 				storeMaximum(&peak, sample.HeapInuse)
+			case <-processTicker.C:
 				if processSample, sampleErr := sampler(); sampleErr == nil {
 					processPeak.store(processSample)
 				} else {

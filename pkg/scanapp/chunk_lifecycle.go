@@ -13,8 +13,9 @@ import (
 )
 
 type runtimePolicy struct {
-	bucketRate     int
-	bucketCapacity int
+	bucketRate       int
+	bucketCapacity   int
+	disableRateLimit bool
 }
 
 func shouldSaveOnDispatchErr(err error) bool {
@@ -265,6 +266,9 @@ func selectRuntimeRecords(ctx context.Context, records []input.CIDRRecord, incom
 }
 
 func newRuntimeBucket(remaining int, policy runtimePolicy) *ratelimit.LeakyBucket {
+	if policy.disableRateLimit {
+		return nil
+	}
 	capacity := policy.bucketCapacity
 	if capacity < 1 {
 		capacity = 1

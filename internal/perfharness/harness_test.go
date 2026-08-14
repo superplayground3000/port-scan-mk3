@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +135,36 @@ func TestSnapshotHeavyShapesProduceDistinctValidSnapshots(t *testing.T) {
 	}
 }
 
+func TestMixedSnapshotUsesApprovedRealWorldRatio(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := perfharness.New().Generate(context.Background(), perfharness.FixtureSpec{
+		Family: perfharness.FamilySnapshotHeavy,
+		Shape:  "mixed",
+		Scale:  perfharness.Scale{TargetBytes: 1_000_000},
+		Seed:   perfharness.DefaultGeneratorSeed,
+	}, filepath.Join(t.TempDir(), "snapshot"))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	snapshot, err := state.LoadSnapshot(manifest.ArtifactPath)
+	if err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
+	chunks := int64(len(snapshot.Chunks))
+	unreachable := int64(len(snapshot.PreScanPing.UnreachableIPv4U32))
+	if chunks == 0 || unreachable == 0 {
+		t.Fatalf("mixed counts = %d chunks and %d unreachable addresses, want both positive", chunks, unreachable)
+	}
+	delta := unreachable*4_000 - chunks*42_587
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > 42_587 {
+		t.Fatalf("mixed counts = %d chunks and %d unreachable addresses, want the 4000:42587 ratio", chunks, unreachable)
+	}
+}
+
 func TestGenerateEveryFixtureFamilyProducesAValidManifest(t *testing.T) {
 	t.Parallel()
 
@@ -200,12 +231,16 @@ func TestContractListsEveryRequiredScaleCase(t *testing.T) {
 	}
 	recordScales := make(map[uint64]bool)
 	snapshotMixedScales := make(map[uint64]bool)
+	snapshotShapeScales := make(map[string][]uint64)
 	for _, spec := range contract.FullFixtures {
 		if spec.Family == perfharness.FamilyRecordHeavy && spec.Scale.TargetBytes > 0 {
 			recordScales[spec.Scale.TargetBytes] = true
 		}
 		if spec.Family == perfharness.FamilySnapshotHeavy && spec.Shape == "mixed" {
 			snapshotMixedScales[spec.Scale.TargetBytes] = true
+		}
+		if spec.Family == perfharness.FamilySnapshotHeavy && spec.Shape != "mixed" {
+			snapshotShapeScales[spec.Shape] = append(snapshotShapeScales[spec.Shape], spec.Scale.TargetBytes)
 		}
 	}
 	for _, size := range []uint64{1_000_000, 10_000_000, 100_000_000, 1_000_000_000} {
@@ -214,6 +249,11 @@ func TestContractListsEveryRequiredScaleCase(t *testing.T) {
 		}
 		if !snapshotMixedScales[size] {
 			t.Errorf("the mixed snapshot family lacks the %d-byte load and save fixture", size)
+		}
+	}
+	for _, shape := range []string{"chunk-heavy", "port-heavy", "unreachable-heavy"} {
+		if got, want := snapshotShapeScales[shape], []uint64{100_000_000}; !slices.Equal(got, want) {
+			t.Errorf("the %s snapshot sizes = %v, want %v", shape, got, want)
 		}
 	}
 	for family, found := range wantFamilies {

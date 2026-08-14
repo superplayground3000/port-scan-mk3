@@ -502,3 +502,10 @@ func TestBuildRuntime_DivergenceGuard_TotalCountMismatch(t *testing.T) {
 		t.Fatalf("expected an 'incompatible' resume-state error, got: %v", err)
 	}
 }
+
+func TestNewRuntimeBucketCanBeDisabledForTestAdapters(t *testing.T) {
+	if bucket := newRuntimeBucket(2, runtimePolicy{bucketRate: 1, bucketCapacity: 1, disableRateLimit: true}); bucket != nil {
+		bucket.Close()
+		t.Fatal("disabled rate limit created a runtime bucket")
+	}
+}

@@ -210,8 +210,8 @@ func buildRichGroupsWithPredicate(cidrRecords []input.CIDRRecord, reachable func
 func buildRichGroupsWithPredicateContext(ctx context.Context, cidrRecords []input.CIDRRecord, reachable func(string) bool) (map[string]cidrGroup, error) {
 	predicate := normalizeReachablePredicate(reachable)
 	deniedKeys := deniedRichExecutionKeys(cidrRecords)
-	builders := make(map[string]*richGroupBuilder)
-	ownerByExecutionKey := make(map[string]string)
+	groups := make(map[string]cidrGroup)
+	ownerByExecutionKey := make(map[string]richTargetLocation)
 	hasValidRichInput := false
 
 	for recordIndex, rec := range cidrRecords {
@@ -256,45 +256,36 @@ func buildRichGroupsWithPredicateContext(ctx context.Context, cidrRecords []inpu
 			if key == "" {
 				return nil, fmt.Errorf("rich record missing execution_key at row %d", rec.RowNumber)
 			}
-			// Cross-segment first-claim ownership: the first segment to produce a
-			// key owns it; a later, different segment's copy is redirected into
-			// the owner's group (preserved from the original linear-scan build).
-			ownerCIDR, ok := ownerByExecutionKey[key]
+			owner, ok := ownerByExecutionKey[key]
 			if !ok {
-				ownerCIDR = cidr
-				ownerByExecutionKey[key] = cidr
+				group := groups[cidr]
+				ownerByExecutionKey[key] = richTargetLocation{cidr: cidr, index: len(group.targets)}
+				group.targets = append(group.targets, target)
+				groups[cidr] = group
+				continue
 			}
-			b := builders[ownerCIDR]
-			if b == nil {
-				b = newRichGroupBuilder()
-				builders[ownerCIDR] = b
-			}
-			if err := b.mergeTarget(key, target); err != nil {
+			group := groups[owner.cidr]
+			if err := mergeRichTargetValues(&group.targets[owner.index], target); err != nil {
 				return nil, err
 			}
+			groups[owner.cidr] = group
 		}
 	}
 
-	if len(builders) == 0 {
+	if len(groups) == 0 {
 		if hasValidRichInput {
 			return make(map[string]cidrGroup), nil
 		}
 		return nil, fmt.Errorf("no usable input rows")
 	}
 
-	groups := make(map[string]cidrGroup, len(builders))
-	groupIndex := 0
-	for cidr, b := range builders {
-		if groupIndex%4096 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		groups[cidr] = cidrGroup{targets: b.targets}
-		groupIndex++
-	}
 	sortRichGroups(groups)
 	return groups, nil
+}
+
+type richTargetLocation struct {
+	cidr  string
+	index int
 }
 
 func deniedRichExecutionKeys(records []input.CIDRRecord) map[string]struct{} {

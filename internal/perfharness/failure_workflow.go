@@ -253,10 +253,11 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 		}
 		var failures atomic.Uint64
 		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
-			PressureSource:  failingPressureSource{failures: &failures},
-			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
-			SnapshotFailure: &state.SaveFailureInjection{Operation: state.SaveFailureReplace},
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
+			PressureSource:   failingPressureSource{failures: &failures},
+			Dial:             func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			SnapshotFailure:  &state.SaveFailureInjection{Operation: state.SaveFailureReplace},
 			SnapshotTelemetryObserver: func(telemetry scanapp.SnapshotTelemetry) {
 				stageState.snapshotTelemetry = telemetry
 			},
@@ -278,9 +279,10 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 		stageState.scanConfig = scanConfig
 		stageState.outputFailAt = max(uint64(1), spec.Items/2)
 		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
-			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
-			OutputFailure:   &scanapp.OutputFailureInjection{FailOnResult: stageState.outputFailAt},
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
+			Dial:             func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			OutputFailure:    &scanapp.OutputFailureInjection{FailOnResult: stageState.outputFailAt},
 			ProbeTelemetryObserver: func(telemetry scanapp.ProbeTelemetry) {
 				stageState.probeTelemetry = telemetry
 			},
@@ -310,8 +312,9 @@ func runFailureStage(ctx context.Context, spec FailureSpec, inputs failureInputs
 		stageState.scanConfig = scanConfig
 		var failures atomic.Uint64
 		runErr := scanapp.Run(ctx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
-			PressureSource:  failingPressureSource{failures: &failures},
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
+			PressureSource:   failingPressureSource{failures: &failures},
 			Dial: func(context.Context, string, string) (net.Conn, error) {
 				return fakeOpenConn{}, nil
 			},
@@ -365,8 +368,9 @@ func completeOutputFailureEvidence(ctx context.Context, spec FailureSpec, inputs
 	recoveryTasks := newOrderedTaskEvidence()
 	if remaining > 0 {
 		if err := scanapp.Run(ctx, stage.scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
-			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
+			Dial:             func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
 			TaskObserver: func(ip string, port int) {
 				recoveryTasks.Observe(net.JoinHostPort(ip, strconv.Itoa(port)) + "/tcp")
 			},
@@ -470,8 +474,9 @@ func completePressureFailureEvidence(ctx context.Context, spec FailureSpec, inpu
 	recoveryTasks := newOrderedTaskEvidence()
 	if remaining > 0 {
 		if err := scanapp.Run(ctx, recoveryConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
-			Dial:            func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
+			Dial:             func(context.Context, string, string) (net.Conn, error) { return fakeOpenConn{}, nil },
 			TaskObserver: func(ip string, port int) {
 				recoveryTasks.Observe(net.JoinHostPort(ip, strconv.Itoa(port)) + "/tcp")
 			},

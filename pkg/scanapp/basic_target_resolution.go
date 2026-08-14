@@ -93,6 +93,13 @@ func basicTargetIPsContext(ctx context.Context, record input.CIDRRecord) (string
 	if cidr == "" && record.Net != nil {
 		cidr = record.Net.String()
 	}
+	if record.Selector != nil {
+		ones, bits := record.Selector.Mask.Size()
+		raw := strings.TrimSpace(record.IPRaw)
+		if raw != "" && ones == 32 && bits == 32 && !strings.ContainsAny(raw, "/:") {
+			return cidr, task.FilterBoundaryBroadcast([]string{raw}, record.Net), nil
+		}
+	}
 
 	selector := ""
 	switch {
@@ -256,6 +263,7 @@ func buildBasicFallbackGroupsContext(ctx context.Context, records []input.CIDRRe
 	strategy := basicGroupStrategy{}
 	predicate := normalizeReachablePredicate(reachable)
 	groups := make(map[string]cidrGroup)
+	metadata := make(map[basicMetadataKey]*targetMeta)
 	for index, record := range records {
 		if index%4096 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -270,30 +278,31 @@ func buildBasicFallbackGroupsContext(ctx context.Context, records []input.CIDRRe
 		if err != nil {
 			return nil, err
 		}
-		meta := &targetMeta{fabName: record.FabName, cidrName: record.CIDRName}
-		targets := make([]basicScanTarget, 0, len(ips))
+		metaKey := basicMetadataKey{fabName: record.FabName, cidrName: record.CIDRName}
+		meta := metadata[metaKey]
+		if meta == nil {
+			meta = &targetMeta{fabName: record.FabName, cidrName: record.CIDRName}
+			if len(metadata) < 4_096 {
+				metadata[metaKey] = meta
+			}
+		}
+		group := groups[cidr]
+		if len(group.basicTargets) == 0 && len(ips) > 1 {
+			group.basicTargets = make([]basicScanTarget, 0, len(ips))
+		}
 		for ipIndex, ip := range ips {
 			if ipIndex%4096 == 0 {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
 			}
-			targets = append(targets, basicScanTarget{ip: ip, ipU32: ipv4ToUint32(ip), meta: meta})
+			if predicate(ip) {
+				group.basicTargets = append(group.basicTargets, basicScanTarget{ip: ip, ipU32: ipv4ToUint32(ip), meta: meta})
+			}
 		}
-		targets, err = filterBasicFallbackTargetsContext(ctx, targets, predicate)
-		if err != nil {
-			return nil, err
+		if len(group.basicTargets) > 0 {
+			groups[cidr] = group
 		}
-		if len(targets) == 0 {
-			continue
-		}
-		group, exists := groups[cidr]
-		if !exists {
-			group.basicTargets = targets
-		} else {
-			group.basicTargets = append(group.basicTargets, targets...)
-		}
-		groups[cidr] = group
 	}
 	for cidr, group := range groups {
 		sort.Slice(group.basicTargets, func(i, j int) bool {
@@ -302,6 +311,11 @@ func buildBasicFallbackGroupsContext(ctx context.Context, records []input.CIDRRe
 		groups[cidr] = group
 	}
 	return groups, nil
+}
+
+type basicMetadataKey struct {
+	fabName  string
+	cidrName string
 }
 
 func filterBasicFallbackTargetsContext(ctx context.Context, targets []basicScanTarget, reachable func(string) bool) ([]basicScanTarget, error) {

@@ -62,6 +62,9 @@ type OutputFailureInjection struct {
 // RunOptions customizes runtime behaviors that the CLI does not expose as flags.
 type RunOptions struct {
 	Dial DialFunc
+	// DisableRateLimit bypasses bucket acquisition for bounded test adapters.
+	// The CLI does not set this option.
+	DisableRateLimit bool
 	// TaskObserver receives tasks in dispatcher order.
 	// The observer must return quickly because it runs in the dispatcher.
 	TaskObserver func(ip string, port int)
@@ -165,6 +168,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		disableKeyboard:          opts.DisableKeyboard,
 		progressInterval:         opts.ProgressInterval,
 		outputFlushResults:       values.OutputFlushResults,
+		disableRateLimit:         opts.DisableRateLimit,
 		dashboardRefreshInterval: opts.dashboardRefreshInterval,
 	}, scanRuntimeAdapters{
 		deps:                      defaultRunDependencies(),

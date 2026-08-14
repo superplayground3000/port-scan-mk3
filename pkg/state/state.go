@@ -421,17 +421,24 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 		}
 		return snap, nil
 	case '{':
-		preScanPresent, err := validateSnapshotSchema(trimmed)
+		shape, err := validateSnapshotSchema(trimmed)
 		if err != nil {
 			return Snapshot{}, err
+		}
+		if limits.MaxChunks > 0 && shape.chunkCount > limits.MaxChunks {
+			return Snapshot{}, snapshotLimitError(path, "chunks", shape.chunkCount, limits.MaxChunks, "-snapshot-chunk-limit")
 		}
 		env := snapshotEnvelope{PreScanPing: &preScanPingEnvelope{
 			UnreachableIPv4U32: make([]uint32, 0, unreachableCapacityHint(uint64(len(trimmed)), limits.MaxUnreachableIPs)),
 		}}
+		if shape.chunksPresent {
+			chunks := make([]task.Chunk, 0, int(shape.chunkCount))
+			env.Chunks = &chunks
+		}
 		if err := json.Unmarshal(trimmed, &env); err != nil {
 			return Snapshot{}, err
 		}
-		if !preScanPresent {
+		if !shape.preScanPresent {
 			env.PreScanPing = nil
 		}
 		if env.Chunks == nil {

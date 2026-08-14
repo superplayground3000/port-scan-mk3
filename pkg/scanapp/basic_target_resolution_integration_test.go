@@ -81,3 +81,41 @@ func TestRun_CurrentBasicSnapshotUsesRecordedFallbackWithoutPortFile(t *testing.
 		t.Fatalf("dispatched tasks = %v, want %v", got, want)
 	}
 }
+
+func TestRun_DisableRateLimitBypassesBucketWait(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	snapshotFile := filepath.Join(tmp, "buckets.json")
+	if err := os.WriteFile(cidrFile, []byte("ip,ip_cidr\n192.0.2.1,192.0.2.0/24\n192.0.2.2,192.0.2.0/24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("443/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bucketCfg := mustGenerateBucketsConfig(t, config.GenerateBucketsValues{
+		CIDRFile: cidrFile, CIDRIPCol: "ip", CIDRIPCidrCol: "ip_cidr",
+		PortFile: portFile, SnapshotOutput: snapshotFile, Workers: 1,
+	})
+	if err := GenerateBuckets(context.Background(), bucketCfg, &bytes.Buffer{}, GenerateBucketsOptions{}); err != nil {
+		t.Fatalf("GenerateBuckets() error = %v", err)
+	}
+
+	scanCfg := scanConfigFixture{
+		CIDRFile: cidrFile, Output: filepath.Join(tmp, "results.csv"), Resume: snapshotFile,
+		Timeout: time.Second, BucketRate: 1, BucketCapacity: 1, Workers: 1,
+		Pressure: pressureConfigFixture{Disabled: true}, LogLevel: "error",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := Run(ctx, scanConfigurationFromFixture(t, scanCfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard:  true,
+		DisableRateLimit: true,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("closed")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}

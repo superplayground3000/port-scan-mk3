@@ -158,7 +158,8 @@ func (Suite) RunResumeSmoke(ctx context.Context, spec ResumeSpec) (WorkflowResul
 	taskEvidence := newOrderedTaskEvidence()
 	stage, err := New().Measure(ctx, manifest.ActualBytes, spec.Items-uint64(completed), func(runCtx context.Context) (uint64, error) {
 		runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
 			Dial: func(context.Context, string, string) (net.Conn, error) {
 				probes.Add(1)
 				return fakeOpenConn{}, nil
@@ -438,6 +439,7 @@ func runRichProductionWithLimits(ctx context.Context, outputDir string, items ui
 		if runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
 			Dial:                dial,
 			DisableKeyboard:     true,
+			DisableRateLimit:    true,
 			ReachabilityChecker: countingReachability{count: &reachability},
 			TaskObserver: func(ip string, taskPort int) {
 				taskEvidence.Observe(net.JoinHostPort(ip, strconv.Itoa(taskPort)) + "/tcp")
@@ -595,8 +597,9 @@ func runProductionWorkflow(ctx context.Context, spec WorkflowSpec, port int, dia
 			return 0, fmt.Errorf("run production bucket workflow: %w", runErr)
 		}
 		if runErr := scanapp.Run(runCtx, scanConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			Dial:            dial,
-			DisableKeyboard: true,
+			Dial:             dial,
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
 			TaskObserver: func(ip string, taskPort int) {
 				taskEvidence.Observe(net.JoinHostPort(ip, strconv.Itoa(taskPort)) + "/tcp")
 			},

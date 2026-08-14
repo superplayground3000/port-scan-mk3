@@ -17,16 +17,27 @@ const (
 	snapshotExpansionSchema
 )
 
-func validateSnapshotSchema(data []byte) (bool, error) {
-	preScanPresent := false
+type snapshotSchemaShape struct {
+	preScanPresent bool
+	chunksPresent  bool
+	chunkCount     uint64
+}
+
+func validateSnapshotSchema(data []byte) (snapshotSchemaShape, error) {
+	var shape snapshotSchemaShape
 	err := visitJSONObject(data, func(name string, value []byte) error {
 		switch name {
 		case "chunks":
-			return visitJSONArray(value, func(item []byte) error {
+			shape.chunksPresent = true
+			var chunkCount uint64
+			err := visitJSONArray(value, func(item []byte) error {
+				chunkCount++
 				return validateSnapshotObject(item, snapshotChunkSchema)
 			})
+			shape.chunkCount = chunkCount
+			return err
 		case "pre_scan_ping":
-			preScanPresent = true
+			shape.preScanPresent = true
 			return validateSnapshotObject(value, snapshotPreScanSchema)
 		case "output":
 			return validateSnapshotObject(value, snapshotOutputSchema)
@@ -38,7 +49,7 @@ func validateSnapshotSchema(data []byte) (bool, error) {
 			return fmt.Errorf("json: unknown field %q", name)
 		}
 	})
-	return preScanPresent, err
+	return shape, err
 }
 
 func validateSnapshotObject(data []byte, schema snapshotSchema) error {

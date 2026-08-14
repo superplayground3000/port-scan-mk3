@@ -25,6 +25,7 @@ type scanRuntimeInput struct {
 	disableKeyboard          bool
 	progressInterval         int
 	outputFlushResults       int
+	disableRateLimit         bool
 	dashboardRefreshInterval time.Duration
 }
 
@@ -193,8 +194,9 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	}
 
 	plan, err := prepareRuntimePlanContext(ctx, runtimePolicy{
-		bucketRate:     cfg.BucketRate,
-		bucketCapacity: cfg.BucketCapacity,
+		bucketRate:       cfg.BucketRate,
+		bucketCapacity:   cfg.BucketCapacity,
+		disableRateLimit: r.input.disableRateLimit,
 	}, inputs, reachable, snapshot.Chunks, parseReporter)
 	if err != nil {
 		return err
@@ -212,7 +214,6 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		"targets_generated": targetsGenerated,
 		"elapsed_ms":        time.Since(parseStart).Milliseconds(),
 	})
-
 	outputs, err := r.adapters.batchOutputsOpener(scanPath, openPath, appendMode)
 	if err != nil {
 		return err

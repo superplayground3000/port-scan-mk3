@@ -284,7 +284,8 @@ func prepareScanCancellation(ctx context.Context, spec CancellationSpec) (cancel
 
 func runScanCancellation(ctx context.Context, spec CancellationSpec, injector *CancellationInjector, trigger *cancellationTrigger, prepared cancellationScanRun, result *CancellationResult) error {
 	opts := scanapp.RunOptions{
-		DisableKeyboard: true,
+		DisableKeyboard:  true,
+		DisableRateLimit: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return fakeOpenConn{}, nil
 		},
@@ -330,7 +331,8 @@ func recoverCanceledScan(ctx context.Context, spec CancellationSpec, inputs canc
 			return nil, err
 		}
 		if err := scanapp.Run(ctx, recoveryConfig, io.Discard, io.Discard, scanapp.RunOptions{
-			DisableKeyboard: true,
+			DisableKeyboard:  true,
+			DisableRateLimit: true,
 			Dial: func(context.Context, string, string) (net.Conn, error) {
 				return fakeOpenConn{}, nil
 			},

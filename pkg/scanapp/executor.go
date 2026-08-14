@@ -4,71 +4,66 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
 )
 
 type scanExecutorTelemetry struct {
-	mu             sync.Mutex
+	gate           sync.RWMutex
 	stopping       bool
-	inFlight       int
+	inFlight       atomic.Int64
 	inFlightAtStop int
-	abandoned      int
+	abandoned      atomic.Int64
 	stopStartedAt  time.Time
-	totalStarted   uint64
+	totalStarted   atomic.Uint64
 	startedAtStop  uint64
 }
 
 func (t *scanExecutorTelemetry) markStopping() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.gate.Lock()
+	defer t.gate.Unlock()
 	if t.stopping {
 		return
 	}
 	t.stopping = true
-	t.inFlightAtStop = t.inFlight
-	t.startedAtStop = t.totalStarted
+	t.inFlightAtStop = int(t.inFlight.Load())
+	t.startedAtStop = t.totalStarted.Load()
 	t.stopStartedAt = time.Now()
 }
 
 func (t *scanExecutorTelemetry) startProbe(ctx context.Context) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.gate.RLock()
+	defer t.gate.RUnlock()
 	if t.stopping || ctx.Err() != nil {
 		return false
 	}
-	t.inFlight++
-	t.totalStarted++
+	t.inFlight.Add(1)
+	t.totalStarted.Add(1)
 	return true
 }
 
 func (t *scanExecutorTelemetry) finishProbe(ctx context.Context) {
-	t.mu.Lock()
-	if !t.stopping && ctx.Err() != nil {
-		t.stopping = true
-		t.inFlightAtStop = t.inFlight
-		t.startedAtStop = t.totalStarted
-		t.stopStartedAt = time.Now()
+	if ctx.Err() != nil {
+		t.markStopping()
 	}
-	t.inFlight--
-	t.mu.Unlock()
+	t.inFlight.Add(-1)
 }
 
 func (t *scanExecutorTelemetry) abandon() {
-	t.mu.Lock()
-	t.abandoned++
-	t.mu.Unlock()
+	t.abandoned.Add(1)
 }
 
 func (t *scanExecutorTelemetry) snapshot() (int, int, time.Time, uint64, uint64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.gate.RLock()
+	defer t.gate.RUnlock()
+	totalStarted := t.totalStarted.Load()
 	startsAfterStop := uint64(0)
-	if t.stopping && t.totalStarted > t.startedAtStop {
-		startsAfterStop = t.totalStarted - t.startedAtStop
+	if t.stopping && totalStarted > t.startedAtStop {
+		startsAfterStop = totalStarted - t.startedAtStop
 	}
-	return t.inFlightAtStop, t.abandoned, t.stopStartedAt, t.totalStarted, startsAfterStop
+	return t.inFlightAtStop, int(t.abandoned.Load()), t.stopStartedAt, totalStarted, startsAfterStop
 }
 
 // startScanExecutor launches worker goroutines that consume scanTask items from taskCh,
