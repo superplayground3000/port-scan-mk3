@@ -21,6 +21,22 @@ func (failingWriter) Write([]byte) (int, error) {
 	return 0, os.ErrClosed
 }
 
+type stubEvidenceRun struct {
+	exitCode int
+}
+
+func (run stubEvidenceRun) run() int {
+	return run.exitCode
+}
+
+func TestExecuteEvidenceRunUsesPrivateBoundary(t *testing.T) {
+	t.Parallel()
+
+	if code := executeEvidenceRun(stubEvidenceRun{exitCode: 7}); code != 7 {
+		t.Fatalf("exit code = %d, want 7", code)
+	}
+}
+
 func TestRunCommandRejectsInvalidInvocation(t *testing.T) {
 	t.Parallel()
 
@@ -65,10 +81,27 @@ func TestValidateGoVersionRequiresGo124(t *testing.T) {
 	}
 }
 
+func TestRunCommandRetainsOutputDirectoryWhenGoVersionIsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	outputDir := filepath.Join(t.TempDir(), "failed run")
+	var stderr bytes.Buffer
+	code := runCommandWithVersion([]string{"-profile", "smoke", "-output", outputDir}, io.Discard, &stderr, "go1.26.1")
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if info, err := os.Stat(outputDir); err != nil || !info.IsDir() {
+		t.Fatalf("output directory was not retained: info=%v err=%v", info, err)
+	}
+	if !strings.Contains(stderr.String(), "require Go 1.24.x") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestRunFailureCaseRetainsSixRunEvidence(t *testing.T) {
 	t.Parallel()
 
-	result, err := runFailureCase(context.Background(), perfharness.New(), t.TempDir(), 20, 1, "snapshot-save-failure")
+	result, err := runFailureCase(context.Background(), perfharness.New().RunFailureSmoke, t.TempDir(), 20, 1, "snapshot-save-failure")
 	if err != nil {
 		t.Fatalf("runFailureCase: %v", err)
 	}
@@ -99,7 +132,7 @@ func TestApplyAbsoluteThresholdsChecksColdAndSteadyObservations(t *testing.T) {
 		Budget:     perfharness.AbsoluteBudget{MaxWallTime: time.Second, MaxCommittedBytes: 100},
 	}}}
 
-	if applyAbsoluteThresholds(results, perfharness.New(), contract) {
+	if applyAbsoluteThresholds(results, perfharness.New().Evaluate, contract) {
 		t.Fatal("absolute thresholds accepted failed cold and median observations")
 	}
 	if !results[0].Verdict.HasFailure("absolute-wall-time") || !results[0].Verdict.HasFailure("absolute-committed-memory") {
@@ -115,7 +148,7 @@ func TestSnapshotLoadAndSaveEachUseTheAbsoluteMemoryBudget(t *testing.T) {
 		{Name: "snapshot-save/mixed/one-gigabyte", ColdStart: perfharness.Observation{PeakCommittedBytes: 6_000_000_001}, SteadyMedian: perfharness.Observation{PeakCommittedBytes: 6_000_000_001}, Verdict: perfharness.Verdict{Passed: true}},
 	}
 	contract := perfharness.DefaultContract()
-	if applyAbsoluteThresholds(results, perfharness.New(), contract) {
+	if applyAbsoluteThresholds(results, perfharness.New().Evaluate, contract) {
 		t.Fatal("absolute thresholds accepted an oversized snapshot save")
 	}
 	if !results[0].Verdict.Passed || !results[1].Verdict.HasFailure("absolute-committed-memory") {
@@ -171,7 +204,7 @@ func TestApplyAbsoluteThresholdsRejectsMissingBudget(t *testing.T) {
 	t.Parallel()
 
 	results := []perfharness.CaseResult{{Name: "snapshot-load/mixed/one-gigabyte", Verdict: perfharness.Verdict{Passed: true}}}
-	if applyAbsoluteThresholds(results, perfharness.New(), perfharness.Contract{}) {
+	if applyAbsoluteThresholds(results, perfharness.New().Evaluate, perfharness.Contract{}) {
 		t.Fatal("absolute thresholds accepted a snapshot case without a budget")
 	}
 	if !results[0].Verdict.HasFailure("absolute-budget-missing") {
@@ -201,7 +234,7 @@ func TestApplyGrowthThresholdBlocksNonlinearMedianGrowth(t *testing.T) {
 		{Name: "large", SteadyMedian: perfharness.Observation{WallTime: 13 * time.Second, GoAllocatedBytes: 1_101}, Verdict: perfharness.Verdict{Passed: true}},
 	}
 
-	if applyGrowthThreshold(results, perfharness.New(), "small", "large") {
+	if applyGrowthThreshold(results, perfharness.New().Evaluate, "small", "large") {
 		t.Fatal("growth threshold accepted nonlinear growth")
 	}
 	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[1].Verdict.HasFailure("growth-allocated-bytes") {
@@ -222,7 +255,7 @@ func TestApplyInputAndSnapshotGrowthThresholdsChecksEveryTenfoldStep(t *testing.
 		{Name: "snapshot-save/mixed/one-megabyte", SteadyMedian: perfharness.Observation{WallTime: time.Second, GoAllocatedBytes: 100}, Verdict: perfharness.Verdict{Passed: true}},
 		{Name: "snapshot-save/mixed/ten-megabytes", SteadyMedian: perfharness.Observation{WallTime: 10 * time.Second, GoAllocatedBytes: 1_200}, Verdict: perfharness.Verdict{Passed: true}},
 	}
-	if applyInputAndSnapshotGrowthThresholds(results, perfharness.New()) {
+	if applyInputAndSnapshotGrowthThresholds(results, perfharness.New().Evaluate) {
 		t.Fatal("scale thresholds accepted nonlinear CIDR time and snapshot allocation growth")
 	}
 	if !results[1].Verdict.HasFailure("growth-wall-time") || !results[5].Verdict.HasFailure("growth-allocated-bytes") || !results[7].Verdict.HasFailure("growth-allocated-bytes") {
@@ -353,7 +386,7 @@ func TestApplyOutputThresholdsBlocksGrowthAndFlushSpeedViolations(t *testing.T) 
 		outputThresholdCase(1_000_000, 0, 10*time.Second, 1_000),
 	}
 
-	if applyOutputThresholds(results, perfharness.New(), []uint64{100_000, 1_000_000}) {
+	if applyOutputThresholds(results, perfharness.New().Evaluate, []uint64{100_000, 1_000_000}) {
 		t.Fatal("output thresholds accepted slow flush=1000 cases")
 	}
 	large := findCase(results, "output-heavy/results-1000000/flush-1000")
@@ -392,7 +425,7 @@ func TestApplyWorkerParityBlocksTaskOrderDifference(t *testing.T) {
 		{Name: "scan-orchestration/workers-16", Semantic: &perfharness.SemanticArtifact{TaskOrder: []string{"b", "a"}}, Verdict: perfharness.Verdict{Passed: true}},
 	}
 
-	if applyWorkerParity(results, perfharness.New(), []int{1, 16}) {
+	if applyWorkerParity(results, perfharness.New().CompareSemantic, []int{1, 16}) {
 		t.Fatal("worker parity accepted different task order")
 	}
 	if !results[1].Verdict.HasFailure("semantic-parity") {
@@ -666,7 +699,7 @@ func TestApplyWorkerMemoryThresholdBlocksMoreThanTwentyFivePercentGrowth(t *test
 			Verdict:      perfharness.Verdict{Passed: true},
 		},
 	}
-	if applyWorkerMemoryThreshold(results, perfharness.New()) {
+	if applyWorkerMemoryThreshold(results, perfharness.New().Evaluate) {
 		t.Fatal("worker memory threshold accepted 26 percent growth")
 	}
 	if !results[1].Verdict.HasFailure("worker-memory") {

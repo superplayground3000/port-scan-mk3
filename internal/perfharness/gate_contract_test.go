@@ -32,6 +32,12 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	if !strings.Contains(linux, "matrix_status=$?") || !strings.Contains(linux, "exit \"$matrix_status\"") {
 		t.Fatal("Linux adapter does not preserve artifacts before it returns the matrix status")
 	}
+	linuxStdoutMove := strings.Index(linux, "mv \"$stdout_log\"")
+	linuxStderrMove := strings.Index(linux, "mv \"$stderr_log\"")
+	linuxExit := strings.Index(linux, "exit \"$matrix_status\"")
+	if linuxStdoutMove < 0 || linuxStderrMove < 0 || linuxExit < linuxStdoutMove || linuxExit < linuxStderrMove {
+		t.Fatal("Linux adapter does not preserve stdout and stderr before it returns the matrix status")
+	}
 	for _, forbidden := range []string{"12.5", "11.0", "1.25", "rm -rf"} {
 		if strings.Contains(linux, forbidden) || strings.Contains(windows, forbidden) {
 			t.Errorf("an OS adapter contains threshold or destructive cleanup text %q", forbidden)

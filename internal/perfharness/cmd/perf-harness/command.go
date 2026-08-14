@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"strings"
 
@@ -32,25 +33,49 @@ type commandOptions struct {
 	regressionBeforeB  float64
 }
 
+// evidenceRun is the command boundary for one complete matrix run.
+// The implementation owns fixture generation, metrics, evaluation, and reports.
+type evidenceRun interface {
+	run() int
+}
+
+func executeEvidenceRun(run evidenceRun) int {
+	return run.run()
+}
+
 func runCommand(args []string, stdout, stderr io.Writer) int {
+	return runCommandWithVersion(args, stdout, stderr, runtime.Version())
+}
+
+func runCommandWithVersion(args []string, stdout, stderr io.Writer, goVersion string) int {
 	options, code := parseCommandOptions(args, stderr)
 	if code != 0 {
 		return code
 	}
 	harness := perfharness.New()
 	if options.compareLeft != "" {
-		return compareReportFiles(options.compareLeft, options.compareRight, harness, stdout, stderr)
+		return compareReportFiles(options.compareLeft, options.compareRight, harness.CompareReports, stdout, stderr)
 	}
-	if err := validateGoVersion(runtime.Version()); err != nil {
-		_ = writeStatus(stderr, "%v\n", err)
+	if err := os.Mkdir(options.outputDir, 0o755); err != nil {
+		if writeErr := writeStatus(stderr, "create matrix directory: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	runner, err := newMatrixRunner(options, harness, stdout, stderr)
+	if err := validateGoVersion(goVersion); err != nil {
+		if writeErr := writeStatus(stderr, "%v\n", err); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
+	runner, err := newMatrixRunner(options, newMatrixOperations(harness), stdout, stderr)
 	if err != nil {
-		_ = writeStatus(stderr, "%v\n", err)
+		if writeErr := writeStatus(stderr, "%v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	return runner.run()
+	return executeEvidenceRun(runner)
 }
 
 func parseCommandOptions(args []string, stderr io.Writer) (commandOptions, int) {

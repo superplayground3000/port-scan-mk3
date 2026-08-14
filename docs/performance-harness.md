@@ -5,7 +5,9 @@ The complete matrix records scale-conformance results for issue 151.
 
 ## Module design
 
-The private `internal/perfharness` module provides the concrete `Suite` type.
+The command owns one private `evidenceRun` interface for a complete matrix run.
+Its single operation covers fixture generation, metrics, evaluation, and reports.
+The private `internal/perfharness` module provides the concrete `Suite` implementation.
 The command separates fixture, output, limit, workflow, recovery, rich-input, and platform phases.
 Each phase uses only the `Suite` operations that it needs.
 Production packages do not use the suite.
@@ -136,6 +138,7 @@ Each run writes these files:
 - `performance-report.md`
 - A raw OS-metrics file from the native adapter.
 - A raw native interrupt-test log.
+- Raw standard output and standard error logs.
 - One retained fixture and manifest for each fixture case.
 
 The OS adapters save raw logs before they return a failed matrix status.

@@ -15,7 +15,7 @@ import (
 
 type matrixRunner struct {
 	options      commandOptions
-	harness      perfharness.Suite
+	operations   matrixOperations
 	contract     perfharness.Contract
 	specs        []perfharness.FixtureSpec
 	outputMatrix []perfharness.OutputSpec
@@ -26,13 +26,117 @@ type matrixRunner struct {
 	stderr       io.Writer
 }
 
-func newMatrixRunner(options commandOptions, harness perfharness.Suite, stdout, stderr io.Writer) (*matrixRunner, error) {
+type matrixOperations struct {
+	fixtures     fixtureOperations
+	outputs      outputOperations
+	limits       limitOperations
+	workflows    workflowOperations
+	cancellation cancellationOperations
+	recovery     recoveryOperations
+	rich         richOperations
+	platform     platformOperations
+	evaluation   evaluationOperations
+}
+
+type fixtureOperations struct {
+	runSnapshot func(context.Context, string, perfharness.FixtureSpec) ([]perfharness.CaseResult, error)
+	runPrePing  func(context.Context, perfharness.ProductionStageSpec) (perfharness.CaseResult, error)
+	runBucket   func(context.Context, perfharness.ProductionStageSpec) (perfharness.CaseResult, error)
+	runFixture  func(context.Context, string, perfharness.FixtureSpec) (perfharness.CaseResult, error)
+}
+
+type outputOperations struct {
+	run func(context.Context, perfharness.OutputSpec) (perfharness.CaseResult, error)
+}
+
+type limitOperations struct {
+	runTarget   func(context.Context, perfharness.TargetLimitSpec) (perfharness.CaseResult, error)
+	runResource func(context.Context, perfharness.ResourceLimitSpec) (perfharness.CaseResult, error)
+}
+
+type workflowOperations struct {
+	runProduction    workflowRunner
+	runOrchestration workflowRunner
+	runRichDeny      richDenyRunner
+	compareSemantic  semanticComparator
+}
+
+type cancellationOperations struct {
+	run cancellationRunner
+}
+
+type recoveryOperations struct {
+	runRegression   func(context.Context, perfharness.RegressionBenchmarkSpec) (perfharness.CaseResult, error)
+	runResume       resumeRunner
+	runFailure      failureRunner
+	compareSemantic semanticComparator
+}
+
+type richOperations struct {
+	run             richRunner
+	runOversize     func(context.Context, perfharness.RichOversizeSpec) (perfharness.CaseResult, error)
+	compareSemantic semanticComparator
+}
+
+type platformOperations struct {
+	runProduction   workflowRunner
+	runLoopback     workflowRunner
+	compareSemantic semanticComparator
+}
+
+type evaluationOperations struct {
+	evaluate        evaluator
+	compareSemantic semanticComparator
+	writeReports    func(context.Context, string, perfharness.Report) (perfharness.ReportPaths, error)
+}
+
+func newMatrixOperations(suite perfharness.Suite) matrixOperations {
+	return matrixOperations{
+		fixtures: fixtureOperations{
+			runSnapshot: suite.RunSnapshotCases,
+			runPrePing:  suite.RunPrePingCase,
+			runBucket:   suite.RunBucketCase,
+			runFixture:  suite.RunFixtureCase,
+		},
+		outputs: outputOperations{run: suite.RunOutputCase},
+		limits: limitOperations{
+			runTarget:   suite.RunTargetLimitCase,
+			runResource: suite.RunResourceLimitCase,
+		},
+		workflows: workflowOperations{
+			runProduction:    suite.RunProductionSmoke,
+			runOrchestration: suite.RunOrchestrationSmoke,
+			runRichDeny:      suite.RunRichDenySmoke,
+			compareSemantic:  suite.CompareSemantic,
+		},
+		cancellation: cancellationOperations{run: suite.RunCancellationSmoke},
+		recovery: recoveryOperations{
+			runRegression:   suite.RunRegressionBenchmark,
+			runResume:       suite.RunResumeSmoke,
+			runFailure:      suite.RunFailureSmoke,
+			compareSemantic: suite.CompareSemantic,
+		},
+		rich: richOperations{
+			run:             suite.RunRichSmoke,
+			runOversize:     suite.RunRichOversizeCase,
+			compareSemantic: suite.CompareSemantic,
+		},
+		platform: platformOperations{
+			runProduction:   suite.RunProductionSmoke,
+			runLoopback:     suite.RunNativeLoopbackSmoke,
+			compareSemantic: suite.CompareSemantic,
+		},
+		evaluation: evaluationOperations{
+			evaluate:        suite.Evaluate,
+			compareSemantic: suite.CompareSemantic,
+			writeReports:    suite.WriteReports,
+		},
+	}
+}
+func newMatrixRunner(options commandOptions, operations matrixOperations, stdout, stderr io.Writer) (*matrixRunner, error) {
 	outputMatrix := outputSpecs(options.profile, options.smokeItems)
 	if required := requiredOutputBytes(outputMatrix); options.freeDiskBytes > 0 && options.freeDiskBytes < required {
 		return nil, fmt.Errorf("insufficient free space for output matrix: have %d bytes, require %d bytes", options.freeDiskBytes, required)
-	}
-	if err := os.Mkdir(options.outputDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create matrix directory: %w", err)
 	}
 	contract := perfharness.DefaultContract()
 	if options.regressionBeforeNS > 0 {
@@ -48,7 +152,7 @@ func newMatrixRunner(options commandOptions, harness perfharness.Suite, stdout, 
 	specs := fixtureSpecs(options.profile, options.smokeItems, options.smokeSnapshotBytes, contract)
 	return &matrixRunner{
 		options:      options,
-		harness:      harness,
+		operations:   operations,
 		contract:     contract,
 		specs:        specs,
 		outputMatrix: outputMatrix,
@@ -73,7 +177,9 @@ func (runner *matrixRunner) run() int {
 	}
 	for _, phase := range phases {
 		if err := phase(); err != nil {
-			_ = writeStatus(runner.stderr, "%v\n", err)
+			if writeErr := writeStatus(runner.stderr, "%v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -93,7 +199,7 @@ func (runner *matrixRunner) runFixtures() error {
 			return fmt.Errorf("route fixture %s: %w", spec.Family, err)
 		}
 		if route == fixtureRouteSnapshot {
-			results, runErr := runner.harness.RunSnapshotCases(context.Background(), caseDir, spec)
+			results, runErr := runner.operations.fixtures.runSnapshot(context.Background(), caseDir, spec)
 			if runErr != nil {
 				return fmt.Errorf("run snapshot fixture %s: %w", spec.Shape, runErr)
 			}
@@ -120,15 +226,15 @@ func (runner *matrixRunner) runFixtures() error {
 func (runner *matrixRunner) runFixtureRoute(route fixtureRoute, caseDir string, spec perfharness.FixtureSpec) (perfharness.CaseResult, bool, error) {
 	switch route {
 	case fixtureRoutePrePing:
-		result, err := runner.harness.RunPrePingCase(context.Background(), perfharness.ProductionStageSpec{OutputDir: caseDir, Items: spec.Scale.CandidateAddresses, Workers: 16})
+		result, err := runner.operations.fixtures.runPrePing(context.Background(), perfharness.ProductionStageSpec{OutputDir: caseDir, Items: spec.Scale.CandidateAddresses, Workers: 16})
 		return result, false, err
 	case fixtureRouteBuckets:
-		result, err := runner.harness.RunBucketCase(context.Background(), perfharness.ProductionStageSpec{OutputDir: caseDir, Items: spec.Scale.ProbeTasks, Workers: 16})
+		result, err := runner.operations.fixtures.runBucket(context.Background(), perfharness.ProductionStageSpec{OutputDir: caseDir, Items: spec.Scale.ProbeTasks, Workers: 16})
 		return result, false, err
 	case fixtureRouteOutput, fixtureRouteResume:
 		return perfharness.CaseResult{}, true, nil
 	case fixtureRouteValidate, fixtureRoutePort, fixtureRouteRich, fixtureRouteRichDeny:
-		result, err := runner.harness.RunFixtureCase(context.Background(), caseDir, spec)
+		result, err := runner.operations.fixtures.runFixture(context.Background(), caseDir, spec)
 		return result, false, err
 	default:
 		return perfharness.CaseResult{}, false, fmt.Errorf("fixture family %q resolved to invalid production route %d", spec.Family, route)
@@ -138,7 +244,7 @@ func (runner *matrixRunner) runFixtureRoute(route fixtureRoute, caseDir string, 
 func (runner *matrixRunner) runOutputs() error {
 	for index, spec := range runner.outputMatrix {
 		spec.OutputDir = filepath.Join(runner.casesDir, fmt.Sprintf("output-%02d-results-%d-flush-%d", index, spec.Results, spec.FlushResults))
-		result, err := runner.harness.RunOutputCase(context.Background(), spec)
+		result, err := runner.operations.outputs.run(context.Background(), spec)
 		if err != nil {
 			return fmt.Errorf("run output results=%d flush=%d: %w", spec.Results, spec.FlushResults, err)
 		}
@@ -169,19 +275,19 @@ func (runner *matrixRunner) runLimits() error {
 
 func (runner *matrixRunner) runLimit(flag string, bypass perfharness.BypassCase) (perfharness.CaseResult, error) {
 	if flag == "-target-count-limit" || flag == "-target-memory-limit-gb" {
-		return runner.harness.RunTargetLimitCase(context.Background(), perfharness.TargetLimitSpec{
+		return runner.operations.limits.runTarget(context.Background(), perfharness.TargetLimitSpec{
 			OutputDir: filepath.Join(runner.casesDir, "limit-"+strings.TrimPrefix(flag, "-")+"-"+string(bypass.Kind)),
 			Flag:      flag,
 			Case:      bypass,
 		})
 	}
-	return runner.harness.RunResourceLimitCase(context.Background(), perfharness.ResourceLimitSpec{Flag: flag, Case: bypass})
+	return runner.operations.limits.runResource(context.Background(), perfharness.ResourceLimitSpec{Flag: flag, Case: bypass})
 }
 
 func (runner *matrixRunner) runWorkflows() error {
 	items := profileItemCount(runner.options.profile, runner.options.smokeItems)
 	for _, workers := range runner.contract.FakeWorkers {
-		result, err := runOrchestrationCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "orchestration-workers-"+strconv.Itoa(workers)), items, workers)
+		result, err := runOrchestrationCase(context.Background(), runner.operations.workflows.compareSemantic, filepath.Join(runner.casesDir, "orchestration-workers-"+strconv.Itoa(workers)), items, workers, runner.operations.workflows.runOrchestration)
 		if err != nil {
 			return fmt.Errorf("run workflow workers=%d: %w", workers, err)
 		}
@@ -193,7 +299,7 @@ func (runner *matrixRunner) runWorkflows() error {
 		return err
 	}
 	for _, shape := range []string{"deny-only", "accept-deny-conflict"} {
-		result, err := runRichDenyCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "rich-deny-"+shape), items, 16, shape)
+		result, err := runRichDenyCase(context.Background(), runner.operations.workflows.runRichDeny, filepath.Join(runner.casesDir, "rich-deny-"+shape), items, 16, shape)
 		if err != nil {
 			return fmt.Errorf("run rich-deny shape=%s: %w", shape, err)
 		}
@@ -205,7 +311,7 @@ func (runner *matrixRunner) runWorkflows() error {
 }
 
 func (runner *matrixRunner) runCompleteWorkflows(items uint64) error {
-	result, err := runWorkflowCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "workflow-complete-workers-16"), items, 16, "")
+	result, err := runWorkflowCase(context.Background(), runner.operations.workflows.compareSemantic, filepath.Join(runner.casesDir, "workflow-complete-workers-16"), items, 16, "", runner.operations.workflows.runProduction)
 	if err != nil {
 		return fmt.Errorf("run complete workflow: %w", err)
 	}
@@ -215,7 +321,7 @@ func (runner *matrixRunner) runCompleteWorkflows(items uint64) error {
 	if items < 10 {
 		return nil
 	}
-	result, err = runWorkflowCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "workflow-growth-1x-workers-16"), items/10, 16, "")
+	result, err = runWorkflowCase(context.Background(), runner.operations.workflows.compareSemantic, filepath.Join(runner.casesDir, "workflow-growth-1x-workers-16"), items/10, 16, "", runner.operations.workflows.runProduction)
 	if err != nil {
 		return fmt.Errorf("run workflow 1x growth case: %w", err)
 	}
@@ -225,7 +331,7 @@ func (runner *matrixRunner) runCompleteWorkflows(items uint64) error {
 
 func (runner *matrixRunner) runCancellations() error {
 	for _, cancellation := range cancellationCaseSpecs(runner.options.profile, runner.contract) {
-		result, err := runCancellationCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, fmt.Sprintf("cancel-%s-%d", cancellation.Stage, cancellation.Percent)), cancellation.Items, cancellation.Workers, cancellation.Stage, cancellation.Percent, runner.contract.StopWithin)
+		result, err := runCancellationCase(context.Background(), runner.operations.cancellation.run, filepath.Join(runner.casesDir, fmt.Sprintf("cancel-%s-%d", cancellation.Stage, cancellation.Percent)), cancellation.Items, cancellation.Workers, cancellation.Stage, cancellation.Percent, runner.contract.StopWithin)
 		if err != nil {
 			return fmt.Errorf("run cancellation stage=%s percent=%d: %w", cancellation.Stage, cancellation.Percent, err)
 		}
@@ -237,7 +343,7 @@ func (runner *matrixRunner) runCancellations() error {
 }
 
 func (runner *matrixRunner) runRecoveryAndFailures() error {
-	result, err := runner.harness.RunRegressionBenchmark(context.Background(), runner.contract.RegressionBenchmark)
+	result, err := runner.operations.recovery.runRegression(context.Background(), runner.contract.RegressionBenchmark)
 	if err != nil {
 		return fmt.Errorf("run regression benchmark: %w", err)
 	}
@@ -246,7 +352,7 @@ func (runner *matrixRunner) runRecoveryAndFailures() error {
 	}
 	items := profileItemCount(runner.options.profile, runner.options.smokeItems)
 	for _, percent := range []int{0, 50, 99} {
-		result, err := runResumeCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, fmt.Sprintf("resume-%d", percent)), items, 16, percent)
+		result, err := runResumeCase(context.Background(), runner.operations.recovery.runResume, runner.operations.recovery.compareSemantic, filepath.Join(runner.casesDir, fmt.Sprintf("resume-%d", percent)), items, 16, percent)
 		if err != nil {
 			return fmt.Errorf("run resume percent=%d: %w", percent, err)
 		}
@@ -255,7 +361,7 @@ func (runner *matrixRunner) runRecoveryAndFailures() error {
 		}
 	}
 	for _, scenario := range []string{"output-failure", "snapshot-save-failure", "pressure-fatal-error"} {
-		result, err := runFailureCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "failure-"+scenario), fullOrBoundedItems(runner.options.profile, 100), 16, scenario)
+		result, err := runFailureCase(context.Background(), runner.operations.recovery.runFailure, filepath.Join(runner.casesDir, "failure-"+scenario), fullOrBoundedItems(runner.options.profile, 100), 16, scenario)
 		if err != nil {
 			return fmt.Errorf("run failure scenario=%s: %w", scenario, err)
 		}
@@ -268,7 +374,7 @@ func (runner *matrixRunner) runRecoveryAndFailures() error {
 
 func (runner *matrixRunner) runRichCases() error {
 	for _, family := range []perfharness.Family{perfharness.FamilyRichRecordMixed, perfharness.FamilyRichUniqueKey, perfharness.FamilyRichHotKey, perfharness.FamilyRichPrecheck} {
-		result, err := runAcceptedRichCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "rich-"+string(family)), fullOrBoundedItems(runner.options.profile, 100), 16, family)
+		result, err := runAcceptedRichCase(context.Background(), runner.operations.rich.run, runner.operations.rich.compareSemantic, filepath.Join(runner.casesDir, "rich-"+string(family)), fullOrBoundedItems(runner.options.profile, 100), 16, family)
 		if err != nil {
 			return fmt.Errorf("run rich family=%s: %w", family, err)
 		}
@@ -280,7 +386,7 @@ func (runner *matrixRunner) runRichCases() error {
 		return nil
 	}
 	for _, caseName := range runner.contract.RichOversizeCases {
-		result, err := runner.harness.RunRichOversizeCase(context.Background(), perfharness.RichOversizeSpec{
+		result, err := runner.operations.rich.runOversize(context.Background(), perfharness.RichOversizeSpec{
 			OutputDir:   filepath.Join(runner.casesDir, "rich-oversize-"+caseName),
 			Items:       perfharness.FullItemCount,
 			Workers:     16,
@@ -300,7 +406,7 @@ func (runner *matrixRunner) runRichCases() error {
 
 func (runner *matrixRunner) runPlatformCases() error {
 	items := profileItemCount(runner.options.profile, runner.options.smokeItems)
-	result, err := runWorkflowCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "workflow-crlf-workers-16"), items, 16, "CRLF")
+	result, err := runWorkflowCase(context.Background(), runner.operations.platform.compareSemantic, filepath.Join(runner.casesDir, "workflow-crlf-workers-16"), items, 16, "CRLF", runner.operations.platform.runProduction)
 	if err != nil {
 		return fmt.Errorf("run CRLF workflow: %w", err)
 	}
@@ -308,7 +414,7 @@ func (runner *matrixRunner) runPlatformCases() error {
 		return err
 	}
 	for _, workers := range runner.contract.LoopbackWorkers {
-		result, err := runLoopbackCase(context.Background(), runner.harness, filepath.Join(runner.casesDir, "loopback-workers-"+strconv.Itoa(workers)), workers)
+		result, err := runLoopbackCase(context.Background(), runner.operations.platform.runLoopback, filepath.Join(runner.casesDir, "loopback-workers-"+strconv.Itoa(workers)), workers)
 		if err != nil {
 			return fmt.Errorf("run loopback workers=%d: %w", workers, err)
 		}
@@ -341,13 +447,17 @@ func (runner *matrixRunner) evaluateAndWriteReport() int {
 		},
 		Cases: runner.results,
 	}
-	paths, err := runner.harness.WriteReports(context.Background(), filepath.Join(runner.options.outputDir, "report"), report)
+	paths, err := runner.operations.evaluation.writeReports(context.Background(), filepath.Join(runner.options.outputDir, "report"), report)
 	if err != nil {
-		_ = writeStatus(runner.stderr, "write reports: %v\n", err)
+		if writeErr := writeStatus(runner.stderr, "write reports: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if !passed {
-		_ = writeStatus(runner.stderr, "performance matrix failed one or more thresholds: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown)
+		if writeErr := writeStatus(runner.stderr, "performance matrix failed one or more thresholds: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if err := writeStatus(runner.stdout, "performance matrix passed: JSON=%s Markdown=%s\n", paths.JSON, paths.Markdown); err != nil {
@@ -357,20 +467,20 @@ func (runner *matrixRunner) evaluateAndWriteReport() int {
 }
 
 func (runner *matrixRunner) evaluate() bool {
-	passed := applyAbsoluteThresholds(runner.results, runner.harness, runner.contract)
+	passed := applyAbsoluteThresholds(runner.results, runner.operations.evaluation.evaluate, runner.contract)
 	if runner.options.profile == "full" {
 		passed = applyFixtureCaseContract(runner.results, runner.contract.FixtureCases) && passed
 	} else {
 		passed = applySnapshotCaseContract(runner.results, runner.specs) && passed
 	}
-	passed = applyWorkerParity(runner.results, runner.harness, runner.contract.FakeWorkers) && passed
+	passed = applyWorkerParity(runner.results, runner.operations.evaluation.compareSemantic, runner.contract.FakeWorkers) && passed
 	items := profileItemCount(runner.options.profile, runner.options.smokeItems)
 	if items >= 10 {
-		passed = applyGrowthThreshold(runner.results, runner.harness, "production-workflow/complete/growth-1x/workers-16", "production-workflow/complete/workers-16") && passed
+		passed = applyGrowthThreshold(runner.results, runner.operations.evaluation.evaluate, "production-workflow/complete/growth-1x/workers-16", "production-workflow/complete/workers-16") && passed
 	}
 	if items >= runner.contract.SmokeItems {
-		passed = applyWorkerMemoryThreshold(runner.results, runner.harness) && passed
+		passed = applyWorkerMemoryThreshold(runner.results, runner.operations.evaluation.evaluate) && passed
 	}
-	passed = applyOutputThresholds(runner.results, runner.harness, runner.outputScales) && passed
-	return applyInputAndSnapshotGrowthThresholds(runner.results, runner.harness) && passed
+	passed = applyOutputThresholds(runner.results, runner.operations.evaluation.evaluate, runner.outputScales) && passed
+	return applyInputAndSnapshotGrowthThresholds(runner.results, runner.operations.evaluation.evaluate) && passed
 }

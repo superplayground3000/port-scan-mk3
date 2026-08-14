@@ -69,7 +69,11 @@ func fixtureLogicalItems(spec perfharness.FixtureSpec) uint64 {
 	return 0
 }
 
-func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, harness perfharness.Suite) bool {
+type evaluator func(perfharness.EvaluationInput) perfharness.Verdict
+type semanticComparator func(perfharness.SemanticArtifact, perfharness.SemanticArtifact) []string
+type reportComparator func(perfharness.Report, perfharness.Report) []string
+
+func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, evaluate evaluator) bool {
 	sequences := [][]string{
 		{
 			"record-heavy/one-megabyte",
@@ -96,7 +100,7 @@ func applyInputAndSnapshotGrowthThresholds(results []perfharness.CaseResult, har
 			if findCase(results, sequence[index-1]) == nil || findCase(results, sequence[index]) == nil {
 				continue
 			}
-			if !applyGrowthThreshold(results, harness, sequence[index-1], sequence[index]) {
+			if !applyGrowthThreshold(results, evaluate, sequence[index-1], sequence[index]) {
 				passed = false
 			}
 		}
@@ -129,13 +133,13 @@ func requiredOutputBytes(specs []perfharness.OutputSpec) uint64 {
 	return largest * estimatedBytesPerResultForBothFiles
 }
 
-func applyOutputThresholds(results []perfharness.CaseResult, harness perfharness.Suite, scales []uint64) bool {
+func applyOutputThresholds(results []perfharness.CaseResult, evaluate evaluator, scales []uint64) bool {
 	passed := true
 	for _, interval := range []int{1, 1000, 0} {
 		for index := 1; index < len(scales); index++ {
 			smallName := fmt.Sprintf("output-heavy/results-%d/flush-%d", scales[index-1], interval)
 			largeName := fmt.Sprintf("output-heavy/results-%d/flush-%d", scales[index], interval)
-			if !applyGrowthThreshold(results, harness, smallName, largeName) {
+			if !applyGrowthThreshold(results, evaluate, smallName, largeName) {
 				passed = false
 			}
 		}
@@ -171,7 +175,7 @@ func applyOutputThresholds(results []perfharness.CaseResult, harness perfharness
 	return passed
 }
 
-func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfharness.Suite) bool {
+func applyWorkerMemoryThreshold(results []perfharness.CaseResult, evaluate evaluator) bool {
 	workers16 := findCase(results, "scan-orchestration/workers-16")
 	workers256 := findCase(results, "scan-orchestration/workers-256")
 	if workers16 == nil || workers256 == nil {
@@ -182,7 +186,7 @@ func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfha
 		{Workers16Bytes: workerMemory(workers16.SteadyMedian), Workers256Bytes: workerMemory(workers256.SteadyMedian)},
 	}
 	for _, comparison := range comparisons {
-		verdict := harness.Evaluate(perfharness.EvaluationInput{Workers: &comparison})
+		verdict := evaluate(perfharness.EvaluationInput{Workers: &comparison})
 		if !verdict.Passed {
 			workers256.Verdict.Passed = false
 			workers256.Verdict.Failures = append(workers256.Verdict.Failures, verdict.Failures...)
@@ -191,7 +195,7 @@ func applyWorkerMemoryThreshold(results []perfharness.CaseResult, harness perfha
 	return workers256.Verdict.Passed
 }
 
-func applyAbsoluteThresholds(results []perfharness.CaseResult, harness perfharness.Suite, contract perfharness.Contract) bool {
+func applyAbsoluteThresholds(results []perfharness.CaseResult, evaluate evaluator, contract perfharness.Contract) bool {
 	passed := true
 	for index := range results {
 		budget, ok := absoluteBudgetFor(results[index].Name, contract.AbsoluteBudgets)
@@ -205,7 +209,7 @@ func applyAbsoluteThresholds(results []perfharness.CaseResult, harness perfharne
 			continue
 		}
 		for _, observation := range []perfharness.Observation{results[index].ColdStart, results[index].SteadyMedian} {
-			verdict := harness.Evaluate(perfharness.EvaluationInput{Observation: observation, Absolute: budget})
+			verdict := evaluate(perfharness.EvaluationInput{Observation: observation, Absolute: budget})
 			if !verdict.Passed {
 				results[index].Verdict.Passed = false
 				results[index].Verdict.Failures = append(results[index].Verdict.Failures, verdict.Failures...)
@@ -219,13 +223,13 @@ func applyAbsoluteThresholds(results []perfharness.CaseResult, harness perfharne
 	return passed
 }
 
-func applyGrowthThreshold(results []perfharness.CaseResult, harness perfharness.Suite, smallName, largeName string) bool {
+func applyGrowthThreshold(results []perfharness.CaseResult, evaluate evaluator, smallName, largeName string) bool {
 	small := findCase(results, smallName)
 	large := findCase(results, largeName)
 	if small == nil || large == nil {
 		return false
 	}
-	verdict := harness.Evaluate(perfharness.EvaluationInput{Growth: &perfharness.GrowthComparison{
+	verdict := evaluate(perfharness.EvaluationInput{Growth: &perfharness.GrowthComparison{
 		Small: small.SteadyMedian,
 		Large: large.SteadyMedian,
 	}})
@@ -236,7 +240,7 @@ func applyGrowthThreshold(results []perfharness.CaseResult, harness perfharness.
 	return verdict.Passed
 }
 
-func applyWorkerParity(results []perfharness.CaseResult, harness perfharness.Suite, workers []int) bool {
+func applyWorkerParity(results []perfharness.CaseResult, compareSemantic semanticComparator, workers []int) bool {
 	if len(workers) == 0 {
 		return false
 	}
@@ -251,7 +255,7 @@ func applyWorkerParity(results []perfharness.CaseResult, harness perfharness.Sui
 			passed = false
 			continue
 		}
-		differences := harness.CompareSemantic(*baseline.Semantic, *candidate.Semantic)
+		differences := compareSemantic(*baseline.Semantic, *candidate.Semantic)
 		if len(differences) == 0 {
 			continue
 		}
@@ -307,7 +311,7 @@ func writeStatus(output io.Writer, format string, values ...any) error {
 	return err
 }
 
-func compareReportFiles(leftPath, rightPath string, harness perfharness.Suite, stdout, stderr io.Writer) int {
+func compareReportFiles(leftPath, rightPath string, compareReports reportComparator, stdout, stderr io.Writer) int {
 	read := func(path string) (perfharness.Report, error) {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -321,17 +325,23 @@ func compareReportFiles(leftPath, rightPath string, harness perfharness.Suite, s
 	}
 	left, err := read(leftPath)
 	if err != nil {
-		_ = writeStatus(stderr, "%v\n", err)
+		if writeErr := writeStatus(stderr, "%v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	right, err := read(rightPath)
 	if err != nil {
-		_ = writeStatus(stderr, "%v\n", err)
+		if writeErr := writeStatus(stderr, "%v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	differences := harness.CompareReports(left, right)
+	differences := compareReports(left, right)
 	if len(differences) != 0 {
-		_ = writeStatus(stderr, "semantic parity failed: %s\n", strings.Join(differences, ", "))
+		if writeErr := writeStatus(stderr, "semantic parity failed: %s\n", strings.Join(differences, ", ")); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if err := writeStatus(stdout, "semantic parity passed\n"); err != nil {
@@ -407,21 +417,21 @@ func fixtureRouteFor(spec perfharness.FixtureSpec) (fixtureRoute, error) {
 	}
 }
 
-func runWorkflowCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int, lineEnding string) (perfharness.CaseResult, error) {
+func runWorkflowCase(ctx context.Context, compareSemantic semanticComparator, outputDir string, items uint64, workers int, lineEnding string, runWorkflow workflowRunner) (perfharness.CaseResult, error) {
 	name := fmt.Sprintf("production-workflow/complete/workers-%d", workers)
 	if lineEnding == "CRLF" {
 		name = fmt.Sprintf("production-workflow/complete/crlf/workers-%d", workers)
 	}
-	return runRepeatedWorkflowCase(ctx, harness, outputDir, items, workers, lineEnding, name, harness.RunProductionSmoke)
+	return runRepeatedWorkflowCase(ctx, compareSemantic, outputDir, items, workers, lineEnding, name, runWorkflow)
 }
 
-func runOrchestrationCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int) (perfharness.CaseResult, error) {
-	return runRepeatedWorkflowCase(ctx, harness, outputDir, items, workers, "", fmt.Sprintf("scan-orchestration/workers-%d", workers), harness.RunOrchestrationSmoke)
+func runOrchestrationCase(ctx context.Context, compareSemantic semanticComparator, outputDir string, items uint64, workers int, runWorkflow workflowRunner) (perfharness.CaseResult, error) {
+	return runRepeatedWorkflowCase(ctx, compareSemantic, outputDir, items, workers, "", fmt.Sprintf("scan-orchestration/workers-%d", workers), runWorkflow)
 }
 
 type workflowRunner func(context.Context, perfharness.WorkflowSpec) (perfharness.WorkflowResult, error)
 
-func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int, lineEnding, name string, runWorkflow workflowRunner) (perfharness.CaseResult, error) {
+func runRepeatedWorkflowCase(ctx context.Context, compareSemantic semanticComparator, outputDir string, items uint64, workers int, lineEnding, name string, runWorkflow workflowRunner) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create workflow case directory: %w", err)
 	}
@@ -445,7 +455,7 @@ func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Suite, out
 		if run == 0 {
 			semantic = workflow.Semantic
 			expansionOverride = workflow.ExpansionOverride
-		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
+		} else if differences := compareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
 			return perfharness.CaseResult{}, fmt.Errorf("workflow run parity differs in %s", strings.Join(differences, ", "))
 		} else if !reflect.DeepEqual(expansionOverride, workflow.ExpansionOverride) {
 			return perfharness.CaseResult{}, fmt.Errorf("workflow expansion override changed between runs")
@@ -474,7 +484,7 @@ func runRepeatedWorkflowCase(ctx context.Context, harness perfharness.Suite, out
 	return result, nil
 }
 
-func runLoopbackCase(ctx context.Context, harness perfharness.Suite, outputDir string, workers int) (perfharness.CaseResult, error) {
+func runLoopbackCase(ctx context.Context, runLoopback workflowRunner, outputDir string, workers int) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create loopback case directory: %w", err)
 	}
@@ -482,7 +492,7 @@ func runLoopbackCase(ctx context.Context, harness perfharness.Suite, outputDir s
 	fixtureObservations := make([]perfharness.Observation, 0, 6)
 	for run := 0; run < 6; run++ {
 		runDir := filepath.Join(outputDir, fmt.Sprintf("run-%d", run))
-		workflow, err := harness.RunNativeLoopbackSmoke(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: 1, Workers: workers})
+		workflow, err := runLoopback(ctx, perfharness.WorkflowSpec{OutputDir: runDir, Items: 1, Workers: workers})
 		if err != nil {
 			return perfharness.CaseResult{}, err
 		}
@@ -510,14 +520,16 @@ func runLoopbackCase(ctx context.Context, harness perfharness.Suite, outputDir s
 	return result, nil
 }
 
-func runRichDenyCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int, shape string) (perfharness.CaseResult, error) {
+type richDenyRunner func(context.Context, perfharness.RichDenySpec) (perfharness.WorkflowResult, error)
+
+func runRichDenyCase(ctx context.Context, runRichDeny richDenyRunner, outputDir string, items uint64, workers int, shape string) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create rich-deny case directory: %w", err)
 	}
 	observations := make([]perfharness.Observation, 0, 6)
 	fixtureObservations := make([]perfharness.Observation, 0, 6)
 	for run := 0; run < 6; run++ {
-		workflow, err := harness.RunRichDenySmoke(ctx, perfharness.RichDenySpec{
+		workflow, err := runRichDeny(ctx, perfharness.RichDenySpec{
 			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
 			Items:     items,
 			Workers:   workers,
@@ -550,7 +562,9 @@ func runRichDenyCase(ctx context.Context, harness perfharness.Suite, outputDir s
 	return result, nil
 }
 
-func runCancellationCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int, stage perfharness.CancellationStage, percent int, stopWithin time.Duration) (perfharness.CaseResult, error) {
+type cancellationRunner func(context.Context, perfharness.CancellationSpec) (perfharness.CancellationResult, error)
+
+func runCancellationCase(ctx context.Context, runCancellation cancellationRunner, outputDir string, items uint64, workers int, stage perfharness.CancellationStage, percent int, stopWithin time.Duration) (perfharness.CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		return perfharness.CaseResult{}, fmt.Errorf("create cancellation case directory: %w", err)
 	}
@@ -559,7 +573,7 @@ func runCancellationCase(ctx context.Context, harness perfharness.Suite, outputD
 	evidence := make([]perfharness.CancellationResult, 0, 6)
 	correct := true
 	for run := 0; run < 6; run++ {
-		cancellation, runErr := harness.RunCancellationSmoke(ctx, perfharness.CancellationSpec{
+		cancellation, runErr := runCancellation(ctx, perfharness.CancellationSpec{
 			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
 			Items:     items,
 			Workers:   workers,
@@ -630,12 +644,14 @@ func cancellationThresholdForCase(total uint64, percent int) uint64 {
 	return (total*uint64(percent) + 99) / 100
 }
 
-func runResumeCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers, percent int) (perfharness.CaseResult, error) {
+type resumeRunner func(context.Context, perfharness.ResumeSpec) (perfharness.WorkflowResult, error)
+
+func runResumeCase(ctx context.Context, runResume resumeRunner, compareSemantic semanticComparator, outputDir string, items uint64, workers, percent int) (perfharness.CaseResult, error) {
 	observations := make([]perfharness.Observation, 0, 6)
 	var semantic perfharness.SemanticArtifact
 	wantRemaining := items - items*uint64(percent)/100
 	for run := 0; run < 6; run++ {
-		workflow, err := harness.RunResumeSmoke(ctx, perfharness.ResumeSpec{
+		workflow, err := runResume(ctx, perfharness.ResumeSpec{
 			OutputDir:        filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
 			Items:            items,
 			Workers:          workers,
@@ -649,7 +665,7 @@ func runResumeCase(ctx context.Context, harness perfharness.Suite, outputDir str
 		}
 		if run == 0 {
 			semantic = workflow.Semantic
-		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
+		} else if differences := compareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
 			return perfharness.CaseResult{}, fmt.Errorf("resume run parity differs in %s", strings.Join(differences, ", "))
 		}
 		observations = append(observations, workflow.Stage)
@@ -668,13 +684,15 @@ func runResumeCase(ctx context.Context, harness perfharness.Suite, outputDir str
 	return result, nil
 }
 
-func runFailureCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int, scenario string) (perfharness.CaseResult, error) {
+type failureRunner func(context.Context, perfharness.FailureSpec) (perfharness.FailureResult, error)
+
+func runFailureCase(ctx context.Context, runFailure failureRunner, outputDir string, items uint64, workers int, scenario string) (perfharness.CaseResult, error) {
 	observations := make([]perfharness.Observation, 0, 6)
 	preparations := make([]perfharness.Observation, 0, 6)
 	evidence := make([]perfharness.FailureResult, 0, 6)
 	correct := true
 	for run := 0; run < 6; run++ {
-		failure, err := harness.RunFailureSmoke(ctx, perfharness.FailureSpec{
+		failure, err := runFailure(ctx, perfharness.FailureSpec{
 			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
 			Items:     items,
 			Workers:   workers,
@@ -709,7 +727,9 @@ func runFailureCase(ctx context.Context, harness perfharness.Suite, outputDir st
 	return result, nil
 }
 
-func runAcceptedRichCase(ctx context.Context, harness perfharness.Suite, outputDir string, items uint64, workers int, family perfharness.Family) (perfharness.CaseResult, error) {
+type richRunner func(context.Context, perfharness.RichSpec) (perfharness.WorkflowResult, error)
+
+func runAcceptedRichCase(ctx context.Context, runRich richRunner, compareSemantic semanticComparator, outputDir string, items uint64, workers int, family perfharness.Family) (perfharness.CaseResult, error) {
 	observations := make([]perfharness.Observation, 0, 6)
 	fixtureObservations := make([]perfharness.Observation, 0, 6)
 	want := items
@@ -718,7 +738,7 @@ func runAcceptedRichCase(ctx context.Context, harness perfharness.Suite, outputD
 	}
 	var semantic perfharness.SemanticArtifact
 	for run := 0; run < 6; run++ {
-		workflow, err := harness.RunRichSmoke(ctx, perfharness.RichSpec{
+		workflow, err := runRich(ctx, perfharness.RichSpec{
 			OutputDir: filepath.Join(outputDir, fmt.Sprintf("run-%d", run)),
 			Items:     items,
 			Workers:   workers,
@@ -732,7 +752,7 @@ func runAcceptedRichCase(ctx context.Context, harness perfharness.Suite, outputD
 		}
 		if run == 0 {
 			semantic = workflow.Semantic
-		} else if differences := harness.CompareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
+		} else if differences := compareSemantic(semantic, workflow.Semantic); len(differences) != 0 {
 			return perfharness.CaseResult{}, fmt.Errorf("rich run parity differs in %s", strings.Join(differences, ", "))
 		}
 		fixtureObservations = append(fixtureObservations, workflow.FixtureGeneration)

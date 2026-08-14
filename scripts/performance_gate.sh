@@ -36,6 +36,8 @@ fi
 adapter_tmp="$(mktemp -d)"
 time_log="$adapter_tmp/matrix-os-metrics.txt"
 signal_log="$adapter_tmp/signal-cases.txt"
+stdout_log="$adapter_tmp/stdout.log"
+stderr_log="$adapter_tmp/stderr.log"
 go test ./cmd/port-scan -run '^TestScanInterruptContext_OnLinux_' -count=1 -timeout=30s >"$signal_log" 2>&1
 cpu="$(lscpu | awk -F: '/Model name/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
 physical_cores="$(lscpu -p=CORE,SOCKET | awk '!/^#/ {seen[$1 ":" $2]=1} END {print length(seen)}')"
@@ -70,12 +72,21 @@ set +e
     -disk "${disk:-unknown}" \
     -free-disk-bytes "$free_disk_bytes" \
     -constraints "$constraints" \
-    -commit "$commit"
+    -commit "$commit" \
+    > >(tee "$stdout_log") \
+    2> >(tee "$stderr_log" >&2)
 matrix_status=$?
+stream_status=0
+wait || stream_status=$?
+if (( matrix_status == 0 && stream_status != 0 )); then
+  matrix_status=$stream_status
+fi
 set -e
 
 mv "$time_log" "$output_dir/matrix-os-metrics.txt"
 mv "$signal_log" "$output_dir/signal-cases.txt"
+mv "$stdout_log" "$output_dir/stdout.log"
+mv "$stderr_log" "$output_dir/stderr.log"
 rmdir "$adapter_tmp"
 echo "Performance matrix artifacts: $output_dir"
 exit "$matrix_status"
