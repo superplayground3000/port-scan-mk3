@@ -38,7 +38,7 @@ func TestCancellationInjectorCoversEveryStageAndProgressPoint(t *testing.T) {
 func TestRunCancellationSmokeInjectsEveryProductionStage(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	contract := perfharness.DefaultContract()
 	for _, stage := range contract.CancelStages {
 		for _, percent := range contract.CancelProgress {

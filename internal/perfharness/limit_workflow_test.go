@@ -13,7 +13,7 @@ import (
 func TestRunTargetLimitCaseExecutesEveryRequiredBypassKind(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	for _, flagName := range []string{"-target-count-limit", "-target-memory-limit-gb"} {
 		for _, bypass := range []perfharness.BypassCase{
 			{Kind: perfharness.BypassExactDefault, Multiplier: 1},

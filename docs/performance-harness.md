@@ -5,10 +5,10 @@ The complete matrix records scale-conformance results for issue 151.
 
 ## Module design
 
-The private `internal/perfharness` module owns one interface named `Harness`.
-This interface covers fixture generation, metrics, evaluation, normalization, and reports.
-The issue 150 contract requires this single evidence-run boundary.
-Production packages do not use this interface.
+The private `internal/perfharness` module provides the concrete `Suite` type.
+The command separates fixture, output, limit, workflow, recovery, rich-input, and platform phases.
+Each phase uses only the `Suite` operations that it needs.
+Production packages do not use the suite.
 
 The module calls the production preparation, snapshot, resume, scan, and writer paths.
 The fake-probe adapter uses the existing `scanapp.RunOptions.Dial` seam.
@@ -23,6 +23,7 @@ They start the process, collect OS metrics, prepare paths, and remove specific t
 The Go module owns all threshold formulas.
 Build-tagged process samplers record OS metrics for each case.
 The scripts also keep raw metrics for the complete matrix process.
+The command rejects a matrix run when the runtime is not Go 1.24.x.
 
 ## Matrix profiles
 

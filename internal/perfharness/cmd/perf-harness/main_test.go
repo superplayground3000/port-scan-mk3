@@ -50,6 +50,21 @@ func TestRunCommandRejectsInvalidInvocation(t *testing.T) {
 	}
 }
 
+func TestValidateGoVersionRequiresGo124(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []string{"go1.24", "go1.24.4", "devel go1.24-abcdef"} {
+		if err := validateGoVersion(version); err != nil {
+			t.Errorf("validateGoVersion(%q): %v", version, err)
+		}
+	}
+	for _, version := range []string{"go1.23.12", "go1.26.1", "unknown"} {
+		if err := validateGoVersion(version); err == nil {
+			t.Errorf("validateGoVersion(%q) accepted an unsupported version", version)
+		}
+	}
+}
+
 func TestRunFailureCaseRetainsSixRunEvidence(t *testing.T) {
 	t.Parallel()
 

@@ -13,37 +13,6 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
-// Harness is the approved boundary for one complete performance evidence run.
-// The matrix runner owns this private interface. Production packages do not use it.
-type Harness interface {
-	Generate(context.Context, FixtureSpec, string) (Manifest, error)
-	Validate(Manifest) error
-	Measure(context.Context, uint64, uint64, MeasuredAction) (Observation, error)
-	Evaluate(EvaluationInput) Verdict
-	CompareSemantic(SemanticArtifact, SemanticArtifact) []string
-	CompareReports(Report, Report) []string
-	WriteReports(context.Context, string, Report) (ReportPaths, error)
-	RunProductionSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
-	RunOrchestrationSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
-	RunRichDenySmoke(context.Context, RichDenySpec) (WorkflowResult, error)
-	RunCancellationSmoke(context.Context, CancellationSpec) (CancellationResult, error)
-	RunRegressionBenchmark(context.Context, RegressionBenchmarkSpec) (CaseResult, error)
-	RunResumeSmoke(context.Context, ResumeSpec) (WorkflowResult, error)
-	RunFailureSmoke(context.Context, FailureSpec) (FailureResult, error)
-	RunRichSmoke(context.Context, RichSpec) (WorkflowResult, error)
-	RunRichOversizeCase(context.Context, RichOversizeSpec) (CaseResult, error)
-	RunTargetLimitCase(context.Context, TargetLimitSpec) (CaseResult, error)
-	RunResourceLimitCase(context.Context, ResourceLimitSpec) (CaseResult, error)
-	RunNativeLoopbackSmoke(context.Context, WorkflowSpec) (WorkflowResult, error)
-	RunFixtureCase(context.Context, string, FixtureSpec) (CaseResult, error)
-	RunSnapshotCases(context.Context, string, FixtureSpec) ([]CaseResult, error)
-	RunOutputCase(context.Context, OutputSpec) (CaseResult, error)
-	RunPrePingCase(context.Context, ProductionStageSpec) (CaseResult, error)
-	RunBucketCase(context.Context, ProductionStageSpec) (CaseResult, error)
-}
-
-var _ Harness = Suite{}
-
 // RunFixtureCase generates and verifies one cold run and five steady runs.
 func (suite Suite) RunFixtureCase(ctx context.Context, outputDir string, spec FixtureSpec) (CaseResult, error) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {

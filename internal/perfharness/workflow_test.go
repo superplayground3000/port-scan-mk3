@@ -127,7 +127,7 @@ func TestProductionCandidateAndBucketCasesUseExactDeclaredCounts(t *testing.T) {
 func TestRunResumeSmokeRebuildsRemainingProductionWork(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	for _, percent := range []int{0, 50, 99} {
 		result, err := harness.RunResumeSmoke(context.Background(), perfharness.ResumeSpec{
 			OutputDir:        filepath.Join(t.TempDir(), "resume"),
@@ -154,7 +154,7 @@ func TestRunResumeSmokeRebuildsRemainingProductionWork(t *testing.T) {
 func TestRunFailureSmokeExecutesProductionSnapshotAndPressureFailures(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	for _, scenario := range []string{"output-failure", "snapshot-save-failure", "pressure-fatal-error"} {
 		result, err := harness.RunFailureSmoke(context.Background(), perfharness.FailureSpec{
 			OutputDir: filepath.Join(t.TempDir(), scenario),
@@ -399,7 +399,7 @@ func TestRunNativeLoopbackSmokeSupportsRequiredWorkerProfiles(t *testing.T) {
 func TestRunRichDenySmokeUsesProductionPathsWithoutProbes(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	for _, shape := range []string{"deny-only", "accept-deny-conflict"} {
 		result, err := harness.RunRichDenySmoke(context.Background(), perfharness.RichDenySpec{
 			OutputDir: filepath.Join(t.TempDir(), "rich deny", shape),
@@ -422,7 +422,7 @@ func TestRunRichDenySmokeUsesProductionPathsWithoutProbes(t *testing.T) {
 func TestRunRichSmokeUsesProductionPathsForEveryAcceptedFamily(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	for _, family := range []perfharness.Family{
 		perfharness.FamilyRichRecordMixed,
 		perfharness.FamilyRichUniqueKey,

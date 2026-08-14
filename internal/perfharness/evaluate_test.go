@@ -42,7 +42,7 @@ func TestEvaluateAppliesAbsoluteGrowthRegressionAndWorkerBudgets(t *testing.T) {
 func TestRunRegressionBenchmarkExecutesSixRunsAndEvaluatesBaseline(t *testing.T) {
 	t.Parallel()
 
-	var harness perfharness.Harness = perfharness.New()
+	harness := perfharness.New()
 	result, err := harness.RunRegressionBenchmark(context.Background(), perfharness.RegressionBenchmarkSpec{
 		TargetBytes:   4_096,
 		BeforeNSPerOp: 1e12,
