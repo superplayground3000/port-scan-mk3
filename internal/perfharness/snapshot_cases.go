@@ -205,6 +205,14 @@ func (suite Suite) prepareSnapshotSaveFixture(ctx context.Context, outputDir str
 		next := compactTarget * target / actual
 		if actual < target {
 			next++
+			if next <= manifest.ActualBytes {
+				advance := max(uint64(1), tolerance/4)
+				if manifest.ActualBytes > ^uint64(0)-advance {
+					calibrationErr := fmt.Errorf("snapshot size calibration cannot advance target %d", target)
+					return Manifest{}, state.Snapshot{}, cleanupSnapshotCalibrationAttempt(attemptDir, calibrationErr)
+				}
+				next = manifest.ActualBytes + advance
+			}
 		}
 		if err := os.RemoveAll(attemptDir); err != nil {
 			return Manifest{}, state.Snapshot{}, fmt.Errorf("remove rejected snapshot calibration attempt: %w", err)
