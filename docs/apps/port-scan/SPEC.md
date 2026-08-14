@@ -337,6 +337,7 @@ data endpoints. Each data response is an array:
 ```
 
 Each source returns the maximum `Percent` value across its entries.
+Every present `Percent` value must be finite. One non-finite value makes its source and the complete poll fail.
 
 ### Multi-source result
 
@@ -350,7 +351,19 @@ factory maps the opaque pressure policy to a `pkg/pressure` adapter.
 
 ### Pressure Response Parsing
 
-`pressure` field accepts: number, numeric string, or JSON number types. Values are normalized to one decimal place.
+The `pressure` field accepts a number or a numeric string. Finite values are normalized to one decimal place when this calculation cannot overflow.
+
+`NaN`, positive infinity, and negative infinity are errors. This rule applies to all letter cases and to values from custom `PressureSource` implementations.
+
+Finite zero, negative values, and values more than 100 remain valid.
+
+### Pressure Failure Streak
+
+The monitor uses one failure streak for all pressure errors. The first two failures do not change the pressure-control state.
+
+After the third consecutive failure, the scan uses the existing fatal pressure-error path. One complete successful poll resets the overall streak.
+
+Each OAuth source has an independent health streak. A source failure retains its last finite dashboard value and does not display a non-finite percentage.
 
 ### Pause Behavior
 

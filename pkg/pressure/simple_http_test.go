@@ -55,6 +55,45 @@ func TestSimpleHTTPAcceptsNumericString(t *testing.T) {
 	}
 }
 
+func TestSimpleHTTPRejectsNonFiniteNumericStrings(t *testing.T) {
+	tests := []struct {
+		value    string
+		wantKind string
+	}{
+		{value: "NaN", wantKind: "NaN"},
+		{value: "nan", wantKind: "NaN"},
+		{value: "+Inf", wantKind: "positive infinity"},
+		{value: "-inf", wantKind: "negative infinity"},
+		{value: "Infinity", wantKind: "positive infinity"},
+		{value: "+infinity", wantKind: "positive infinity"},
+		{value: "-Infinity", wantKind: "negative infinity"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"pressure":%q}`, tt.value)
+			}))
+			defer server.Close()
+
+			source, err := pressure.NewSimpleHTTP(server.URL, server.Client())
+			if err != nil {
+				t.Fatalf("NewSimpleHTTP() error = %v", err)
+			}
+			sample, err := source.Sample(context.Background())
+			if err == nil {
+				t.Fatalf("Sample() = %#v, want a non-finite pressure error", sample)
+			}
+			for _, detail := range []string{"pressure", tt.wantKind} {
+				if !strings.Contains(err.Error(), detail) {
+					t.Errorf("Sample() error = %q, want detail %q", err, detail)
+				}
+			}
+		})
+	}
+}
+
 func TestSimpleHTTPReturnsResponseErrors(t *testing.T) {
 	for _, test := range []struct {
 		name       string

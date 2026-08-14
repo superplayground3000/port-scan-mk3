@@ -52,7 +52,12 @@ More information:
 - The CLI can control the polling interval: `-pressure-interval`
 - The CLI can disable this layer completely: `-disable-api=true`
 - The threshold is not a CLI flag now. The runtime default value is `60`
-- If the API fails 3 times in sequence, the scan fails fast and stops
+- The adapters and monitor reject `NaN`, positive infinity, and negative infinity.
+- The first two pressure failures keep the current API pause state.
+- If the API fails 3 times in sequence, the scan fails fast and stops.
+- One complete successful poll resets the failure streak.
+
+For OAuth, each source keeps an independent health streak. A failed source retains its last finite pressure value on the dashboard.
 
 ### 2.2 What the global gate actually blocks
 

@@ -3,8 +3,10 @@ package scanapp
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 )
 
@@ -58,6 +60,10 @@ func pollPressureAPI(ctx context.Context, interval time.Duration, source Pressur
 			if ctx.Err() != nil {
 				return
 			}
+			sample, validationErr := validatePressureSample(sample)
+			if err == nil {
+				err = validationErr
+			}
 			pressureValue := sample.Maximum
 			failureCount := 0
 			if err != nil {
@@ -97,5 +103,38 @@ func pollPressureAPI(ctx context.Context, interval time.Duration, source Pressur
 				prevPaused = paused
 			}
 		}
+	}
+}
+
+func validatePressureSample(sample pressure.Sample) (pressure.Sample, error) {
+	var firstError error
+	for index := range sample.Sources {
+		source := &sample.Sources[index]
+		if source.Err != nil {
+			continue
+		}
+		if err := nonFinitePressureError("Pressure", source.Pressure); err != nil {
+			source.Err = fmt.Errorf("%s: %w", source.Name, err)
+			if firstError == nil {
+				firstError = source.Err
+			}
+		}
+	}
+	if err := nonFinitePressureError("Maximum", sample.Maximum); err != nil && firstError == nil {
+		firstError = err
+	}
+	return sample, firstError
+}
+
+func nonFinitePressureError(field string, value float64) error {
+	switch {
+	case math.IsNaN(value):
+		return fmt.Errorf("pressure sample %s is NaN", field)
+	case math.IsInf(value, 1):
+		return fmt.Errorf("pressure sample %s is positive infinity", field)
+	case math.IsInf(value, -1):
+		return fmt.Errorf("pressure sample %s is negative infinity", field)
+	default:
+		return nil
 	}
 }

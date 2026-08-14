@@ -135,6 +135,98 @@ func TestOAuthMultiReturnsMaximumPressure(t *testing.T) {
 	}
 }
 
+func TestOAuthMultiRejectsNonFinitePercentWithinOneSource(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer authServer.Close()
+	dataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"data":{"Percent":42},"private":"do-not-report-complete-response"},{"data":{"Percent":"NaN"}},{"data":{"Percent":99}}]`)
+	}))
+	defer dataServer.Close()
+
+	source, err := pressure.NewOAuthMulti(pressure.OAuthConfig{
+		AuthEndpoint:  authServer.URL,
+		DataEndpoints: []string{dataServer.URL},
+		ClientID:      "client",
+		ClientSecret:  "secret",
+	}, authServer.Client())
+	if err != nil {
+		t.Fatalf("NewOAuthMulti() error = %v", err)
+	}
+
+	sample, err := source.Sample(context.Background())
+	if err == nil {
+		t.Fatalf("Sample() = %#v, want a non-finite Percent error", sample)
+	}
+	for _, detail := range []string{"src1", "Percent", "NaN"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Errorf("Sample() error = %q, want detail %q", err, detail)
+		}
+	}
+	if strings.Contains(err.Error(), "do-not-report-complete-response") {
+		t.Errorf("Sample() error exposes the complete response: %q", err)
+	}
+	if sample.Maximum != 0 {
+		t.Errorf("Sample().Maximum = %v, want zero after source failure", sample.Maximum)
+	}
+	if len(sample.Sources) != 1 || sample.Sources[0].Err == nil {
+		t.Errorf("Sample().Sources = %#v, want a failed source result", sample.Sources)
+	}
+}
+
+func TestOAuthMultiRetainsFiniteSourceWhenAnotherSourceIsNonFinite(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer authServer.Close()
+	finiteServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"data":{"Percent":55}}]`)
+	}))
+	defer finiteServer.Close()
+	nonFiniteServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"data":{"Percent":10}},{"data":{"Percent":"+Inf"}}]`)
+	}))
+	defer nonFiniteServer.Close()
+
+	source, err := pressure.NewOAuthMulti(pressure.OAuthConfig{
+		AuthEndpoint:  authServer.URL,
+		DataEndpoints: []string{finiteServer.URL, nonFiniteServer.URL},
+		ClientID:      "client",
+		ClientSecret:  "secret",
+	}, authServer.Client())
+	if err != nil {
+		t.Fatalf("NewOAuthMulti() error = %v", err)
+	}
+
+	sample, err := source.Sample(context.Background())
+	if err == nil {
+		t.Fatalf("Sample() = %#v, want a failed complete poll", sample)
+	}
+	for _, detail := range []string{"src2", "Percent", "positive infinity"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Errorf("Sample() error = %q, want detail %q", err, detail)
+		}
+	}
+	if sample.Maximum != 0 {
+		t.Errorf("Sample().Maximum = %v, want zero after source failure", sample.Maximum)
+	}
+	if len(sample.Sources) != 2 {
+		t.Fatalf("Sample().Sources = %#v, want two source results", sample.Sources)
+	}
+	if first := sample.Sources[0]; first.Name != "src1" || first.Pressure != 55 || first.Err != nil {
+		t.Errorf("Sample().Sources[0] = %#v, want retained finite source", first)
+	}
+	if second := sample.Sources[1]; second.Name != "src2" || second.Err == nil {
+		t.Errorf("Sample().Sources[1] = %#v, want non-finite source failure", second)
+	}
+}
+
 func TestOAuthMultiReturnsIndependentResultSlices(t *testing.T) {
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

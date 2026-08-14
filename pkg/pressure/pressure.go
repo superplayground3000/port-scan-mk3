@@ -23,6 +23,8 @@ const (
 	DefaultResponseEntryLimit uint64 = 10_000
 )
 
+var errNonFinitePressure = errors.New("non-finite pressure value")
+
 // ResponseLimits controls the byte count for each HTTP response and the entry count for each OAuth data array.
 // A zero maximum disables only that limit.
 type ResponseLimits struct {
@@ -310,6 +312,9 @@ func (s *oauthSource) sample(ctx context.Context) (float64, error) {
 		}
 		pressure, err := parseValue(value)
 		if err != nil {
+			if errors.Is(err, errNonFinitePressure) {
+				return 0, fmt.Errorf("Percent field: %w", err)
+			}
 			continue
 		}
 		if !found || pressure > maximum {
@@ -461,5 +466,27 @@ func parseValue(raw any) (float64, error) {
 	default:
 		return 0, fmt.Errorf("unsupported pressure field type: %T", raw)
 	}
-	return math.Round(value*10) / 10, nil
+	if err := validateFinitePressure(value); err != nil {
+		return 0, err
+	}
+	if math.Abs(value) <= math.MaxFloat64/10 {
+		value = math.Round(value*10) / 10
+	}
+	if err := validateFinitePressure(value); err != nil {
+		return 0, fmt.Errorf("normalize pressure value: %w", err)
+	}
+	return value, nil
+}
+
+func validateFinitePressure(value float64) error {
+	switch {
+	case math.IsNaN(value):
+		return fmt.Errorf("%w: NaN", errNonFinitePressure)
+	case math.IsInf(value, 1):
+		return fmt.Errorf("%w: positive infinity", errNonFinitePressure)
+	case math.IsInf(value, -1):
+		return fmt.Errorf("%w: negative infinity", errNonFinitePressure)
+	default:
+		return nil
+	}
 }

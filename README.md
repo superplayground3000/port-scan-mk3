@@ -594,6 +594,8 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - IPv4 only (selectors, CIDR parsing, and expansion paths).
 - Port input accepts `<port>/tcp` only.
 - Pressure API polling fails hard after 3 consecutive failures.
+- Non-finite pressure values count as pressure API failures.
+- The first two pressure failures keep the current API pause state.
 - The pressure threshold defaults to `60`. No CLI flag exposes it.
 - The pause gate blocks new dispatch only. In-flight worker probes continue.
 - Dispatch order is chunk-serial (not cross-CIDR fair round-robin).

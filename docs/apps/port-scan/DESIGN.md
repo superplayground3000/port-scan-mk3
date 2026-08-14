@@ -343,6 +343,9 @@ Manages pause gate:
 configured endpoints concurrently and keeps source results in configuration
 order. A failed source makes the aggregate value zero and returns an error.
 
+The adapters reject non-finite values before they return a successful sample.
+One non-finite OAuth entry makes its source and the complete poll fail.
+
 Both constructors require an explicit `http.Client` and valid HTTP endpoints.
 Each OAuth endpoint owns a separate token cache and mutex. Each sample returns
 a new source-result slice.
@@ -357,6 +360,7 @@ variants or create HTTP clients.
 ```
 every PressureInterval:
     sample, err := PressureSource.Sample(ctx)
+    reject non-finite aggregate and successful source values
     record every source result
     if err != nil:
         record failure
@@ -375,6 +379,10 @@ The pressure monitor sends one `pressurePoll` to
 `pressureTelemetryObserver.OnPressurePoll`. The poll contains the sample,
 aggregate error, failure count, and sample time. The dashboard records source
 results before aggregate status.
+
+A failed source retains its last finite dashboard value. A finite source resets only its source health streak during a failed complete poll.
+
+Only a successful complete poll resets the overall failure streak. The monitor does not change the controller state after the first two failures.
 
 The controller observer receives manual and API pause changes separately.
 
