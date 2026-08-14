@@ -55,7 +55,9 @@ Both flags are required. Pass them as CLI flags, or set the equivalent environme
 
 ### Deny CSV
 
-`cidr-compare` expects a CSV with a header row. It matches the columns by name. If the name is absent, it uses the column index:
+`cidr-compare` requires a CSV header record. If both official headers exist, the tool locates both columns by name.
+
+If neither official header exists, the tool uses columns 0 and 1. If only one official header exists, the tool stops with an error.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -73,7 +75,9 @@ dst_network_segment,decision
 
 ### Open CSV
 
-`cidr-compare` expects a CSV with a header row. It matches the columns by name. If the name is absent, it uses the column index:
+`cidr-compare` requires a CSV header record. If both official headers exist, the tool locates both columns by name.
+
+If neither official header exists, the tool uses columns 0 and 1. If only one official header exists, the tool stops with an error.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -154,8 +158,12 @@ cidr-compare -deny-file policy_deny.csv -open-file open_results.csv
 - Missing `-deny-file` or `-open-file` (flags or env vars not set): prints usage to stderr, exits 1
 - Deny file does not exist or cannot be opened: exits 1 with message
 - Open file does not exist or cannot be opened: exits 1 with message
-- `cidr-compare` skips malformed CSV rows with a warning. They do not cause exit 1
-- `cidr-compare` skips invalid CIDR values with a warning. They do not cause exit 1
+- An empty file, a missing header, or a partial official header causes exit 1.
+- A malformed CSV record, a short record, or an invalid CIDR causes exit 1.
+
+The tool ignores blank lines and whitespace-only lines. It stops at the first other invalid record.
+
+For an input error, stdout stays empty. Stderr contains one error with the input role, file path, and available CSV location.
 
 ## Building
 

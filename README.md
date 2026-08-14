@@ -502,9 +502,11 @@ cidr-compare -deny-file <file> -open-file <file>
 | `-deny-file` | string | required | Path to deny CSV file (or CIDR_COMPARE_DENY_FILE env var) |
 | `-open-file` | string | required | Path to open CSV file (or CIDR_COMPARE_OPEN_FILE env var) |
 
-**Input format (deny CSV):** CSV with columns `dst_network_segment` (CIDR notation, for example `10.0.0.0/24`) and `decision`. If headers are missing, the tool reads columns 0 and 1.
+**Input format (deny CSV):** CSV with official columns `dst_network_segment` and `decision`. If neither header exists, the tool reads columns 0 and 1.
 
-**Input format (open CSV):** CSV with columns `segment` (CIDR notation) and `status`. If headers are missing, the tool reads columns 0 and 1.
+**Input format (open CSV):** CSV with official columns `segment` and `status`. If neither header exists, the tool reads columns 0 and 1.
+
+If only one official header exists, the tool stops with exit code 1. Invalid nonblank records also cause exit code 1 and empty stdout.
 
 **Output format:** CSV with header `deny_cidr,open_cidr` followed by matching pairs where the deny CIDR contains the open CIDR.
 

@@ -1,6 +1,6 @@
 # cidr-compare Design Document
 
-**Tool**: `cmd/cidr-compare` | **Revised**: 2026-05-03
+**Tool**: `cmd/cidr-compare` | **Revised**: 2026-08-14
 
 ## Architecture
 
@@ -9,9 +9,9 @@
                     │          cidr-compare                │
                     └──────────────────────────────────────┘
 
-  Deny CSV ──► DenyCSVReader ──► ParseCIDR ──► IntervalTree.Insert()
+  Deny CSV ──► DenyCSVReader ──► parseCSV ──► ParseCIDR ──► IntervalTree.Insert()
                                                            │
-  Open CSV ──► OpenCSVReader ──► ParseCIDR ──► IntervalTree.Query()
+  Open CSV ──► OpenCSVReader ──► parseCSV ──► ParseCIDR ──► IntervalTree.Query()
                                                            │
                                                            ▼
                                                    Matching pairs
@@ -25,25 +25,31 @@
 
 ### DenyCSVReader (`pkg/cidrutil/parser.go`)
 
-Streams deny CSV rows, filters `decision=deny` rows, parses CIDR to `CIDREntry`.
+This compatibility adapter passes its `io.Reader` and the deny policy to `parseCSV`.
 
 ```go
 type DenyCSVReader struct {
     // ...
 }
-func (r *DenyCSVReader) Read() (CIDREntry, error)
+func (r *DenyCSVReader) ReadAll() ([]CIDREntry, error)
 ```
 
 ### OpenCSVReader (`pkg/cidrutil/parser.go`)
 
-Streams open CSV rows, filters `status=open` rows, parses CIDR to `CIDREntry`.
+This compatibility adapter passes its `io.Reader` and the open policy to `parseCSV`.
 
 ```go
 type OpenCSVReader struct {
     // ...
 }
-func (r *OpenCSVReader) Read() (CIDREntry, error)
+func (r *OpenCSVReader) ReadAll() ([]CIDREntry, error)
 ```
+
+### parseCSV (`pkg/cidrutil/parser.go`)
+
+The unexported parser uses `encoding/csv.Reader`. It accepts an `io.Reader` and a small role-specific policy.
+
+The string adapters use `strings.NewReader`. Thus, all four public entry points use the same parser and error contract.
 
 ### IntervalTree (`pkg/cidrutil/tree.go`)
 
@@ -91,16 +97,19 @@ type MatchResult struct {
 
 ## Processing Flow
 
-1. Load all deny CIDRs into `IntervalTree` via `Insert()`
-2. Stream open CIDRs via `OpenCSVReader`
-3. For each open CIDR entry, call `tree.Query(entry)`
-4. For each match, output a row: `deny_cidr,open_cidr`
+1. Parse both CSV inputs before stdout receives data.
+2. Load all deny CIDRs into `IntervalTree` with `Insert()`.
+3. For each open CIDR entry, call `tree.Query(entry)`.
+4. For each match, write a `deny_cidr,open_cidr` row.
 
 ## Implementation Notes
 
-- Streaming parsers avoid loading entire file into memory
-- Column matching by name with positional fallback for robustness
-- Malformed/invalid rows are skipped with warnings, not errors
+- The canonical parser reads complete CSV records without another full-file copy.
+- Both official headers select name-based columns. No official headers select legacy columns 0 and 1.
+- One official header is an error. Empty input and a missing header are errors.
+- Blank lines are valid. The parser stops at the first other invalid record.
+- The parser returns errors to its caller. It does not write to the global logger.
+- The command writes no stdout data until both inputs are valid.
 - The interval tree uses a **linear O(n) scan** over all entries on each query
 
 ## File Structure
