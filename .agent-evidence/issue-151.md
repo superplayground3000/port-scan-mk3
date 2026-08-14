@@ -778,3 +778,40 @@ Its final result was:
 ```text
 All selected quality gates passed.
 ```
+
+## Full matrix result after the snapshot limit correction
+
+The full Linux matrix tested commit `686408b5a183759985508471304985999f15cd62`.
+It ran for `7:36:24` and exited with status 2.
+The process used no swap and reached a maximum RSS of 33,569,424 KiB.
+
+All functional cases printed a case-level pass result.
+The accepted rich precheck wrote a 2,204,185,907-byte snapshot in each of its six observations.
+This result confirms that the bounded 4 GB override removed the earlier 2 GB save failure.
+
+The final aggregate evaluator still failed five performance cases.
+Three fixture-only rich cases exceeded their 8 GB committed-memory limit:
+
+```text
+rich-record-mixed: 11,635,814,400 / 11,669,544,960 bytes
+rich-unique-key: 11,796,602,880 / 11,810,217,984 bytes
+rich-hot-key: 11,858,558,976 / 11,658,543,104 bytes
+```
+
+`production-workflow/complete/workers-16` failed its growth rule.
+Its ten-fold wall-time growth exceeded the allowed 12.5-fold ratio.
+
+`production-rich/rich-precheck` completed in less than five minutes per observation.
+However, its committed-memory values exceeded the unchanged 24 GB limit:
+
+```text
+cold: 30,149,410,816 bytes
+steady median: 30,377,390,080 bytes
+```
+
+The generated reports are here:
+
+```text
+/media/hp/secondary/issue151-performance-f35cfa9-root/run-20260813T211538Z-1692500/report/performance-report.json
+/media/hp/secondary/issue151-performance-f35cfa9-root/run-20260813T211538Z-1692500/report/performance-report.md
+```
