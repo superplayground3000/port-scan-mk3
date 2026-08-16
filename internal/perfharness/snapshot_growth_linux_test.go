@@ -1,4 +1,11 @@
-//go:build linux && !race
+//go:build linux && !race && perfqualified
+
+// The growth budget in this file is a hardware-qualified threshold. It compares
+// wall time between two scales, so it measures the host storage and CPU as much
+// as the code. A shared CI runner cannot hold that ratio: its durable-write
+// latency is not linear in bytes. The build tag keeps the case in the
+// performance gate, which runs on qualified hardware and records the hardware
+// profile with the result. See docs/performance-harness.md.
 
 package perfharness
 

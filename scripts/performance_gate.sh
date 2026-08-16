@@ -38,6 +38,7 @@ time_log="$adapter_tmp/matrix-os-metrics.txt"
 signal_log="$adapter_tmp/signal-cases.txt"
 stdout_log="$adapter_tmp/stdout.log"
 stderr_log="$adapter_tmp/stderr.log"
+qualified_log="$adapter_tmp/hardware-qualified-cases.txt"
 go test ./cmd/port-scan -run '^TestScanInterruptContext_OnLinux_' -count=1 -timeout=30s >"$signal_log" 2>&1
 cpu="$(lscpu | awk -F: '/Model name/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
 physical_cores="$(lscpu -p=CORE,SOCKET | awk '!/^#/ {seen[$1 ":" $2]=1} END {print length(seen)}')"
@@ -81,10 +82,24 @@ wait || stream_status=$?
 if (( matrix_status == 0 && stream_status != 0 )); then
   matrix_status=$stream_status
 fi
+# The hardware-qualified cases hold only on the certified profile. The smoke
+# profile runs on shared hardware, so it records why it skipped them. This runs
+# after the matrix so the log reaches the run directory either way.
+if [[ "$profile" == "full" ]]; then
+  go test -tags perfqualified ./internal/perfharness -count=1 -timeout=30m >"$qualified_log" 2>&1
+  qualified_status=$?
+  cat "$qualified_log"
+  if (( matrix_status == 0 )); then
+    matrix_status=$qualified_status
+  fi
+else
+  echo "hardware-qualified cases skipped: profile $profile is not the certified profile" >"$qualified_log"
+fi
 set -e
 
 mv "$time_log" "$output_dir/matrix-os-metrics.txt"
 mv "$signal_log" "$output_dir/signal-cases.txt"
+mv "$qualified_log" "$output_dir/hardware-qualified-cases.txt"
 mv "$stdout_log" "$output_dir/stdout.log"
 mv "$stderr_log" "$output_dir/stderr.log"
 rmdir "$adapter_tmp"

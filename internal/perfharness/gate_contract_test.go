@@ -29,6 +29,20 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	if !strings.Contains(linux, "TestScanInterruptContext_OnLinux_") {
 		t.Fatal("Linux adapter does not run automated SIGINT cases")
 	}
+	// The hardware-qualified thresholds leave the correctness gate only because
+	// this adapter still runs them. Dropping the step retires them in silence.
+	// The certified profile must guard the step: the smoke profile runs on
+	// shared CI hardware, which cannot hold these thresholds.
+	qualifiedCases := strings.Index(linux, "-tags perfqualified")
+	if qualifiedCases < 0 {
+		t.Fatal("Linux adapter does not run the hardware-qualified cases")
+	}
+	if !strings.Contains(linux[:qualifiedCases], `"$profile" == "full"`) {
+		t.Fatal("Linux adapter does not limit the hardware-qualified cases to the certified profile")
+	}
+	if strings.Index(linux, "mv \"$qualified_log\"") < qualifiedCases {
+		t.Fatal("Linux adapter does not preserve the hardware-qualified log after the cases run")
+	}
 	if !strings.Contains(linux, "matrix_status=$?") || !strings.Contains(linux, "exit \"$matrix_status\"") {
 		t.Fatal("Linux adapter does not preserve artifacts before it returns the matrix status")
 	}

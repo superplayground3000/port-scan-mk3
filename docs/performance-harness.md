@@ -198,6 +198,20 @@ At those scales, interval `1000` cannot be more than 15% slower than interval `0
 An OOM, panic, corruption, missing result, or incomplete case fails immediately.
 Paging is permitted, and its time stays in the wall-time result.
 
+These thresholds hold on the qualified hardware profile. A shared CI runner is
+not that profile. Its durable-write latency is not linear in bytes. A wall-time
+ratio measured there records the storage and not the code.
+
+The Go cases that assert a growth ratio therefore build under the
+`perfqualified` tag. `make verify` and the CI correctness gate do not build
+them. Only `scripts/performance_gate.sh full` runs them. The `smoke` profile
+runs on shared CI hardware and records the skip instead.
+
+Both profiles write `hardware-qualified-cases.txt` to the run directory. A
+failure in these cases fails the gate.
+`internal/perfharness/gate_contract_test.go` keeps the step, its profile guard,
+and its artifact in the adapter.
+
 ## Normalization and parity
 
 Semantic comparison normalizes only declared volatile fields.
