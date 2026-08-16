@@ -240,6 +240,32 @@ non-blocking. They also fail if the job no longer provisions the 64-bit MinGW-w6
 compiler and ASCII temp before the gate (that is, it depends on the runner image
 again).
 
+### 2.2 Native Windows validation (`scripts/windows_pressure_validation.ps1`)
+
+The gate answers "is this change safe to merge". It cannot answer "does this
+test flake on Windows", because a gate runs each test one time and a flake needs
+repetition. `scripts/windows_pressure_validation.ps1` is that second question,
+and `.github/workflows/windows-validation.yml` dispatches it by hand.
+
+This is **not** a gate, and it must never become one. It repeats the pressure API
+family 100 times by default (issue #79) and then runs the full Windows gate. A
+run that fails is the point: the failure log is the evidence that issue #99
+tracks. That is why the workflow uploads its artifact with `if: always()` and
+why the script writes its log and its environment record before it returns a
+status.
+
+Dispatch it from the Actions tab, or with
+`gh workflow run windows-validation.yml -f count=100`. Use `-f skip_gate=true`
+to run only the family loop. On your own Windows machine, run the script
+directly; it falls back to the system temp directory when `RUNNER_TEMP` is
+absent.
+
+`internal/ciguard/windows_pressure_validation_test.go` pins the contract, so
+`make verify` catches drift on Linux before a dispatch spends a Windows runner.
+It fails if the run loses `-race`, `-shuffle=on`, the repetition count, or the
+`if: always()` upload, and it fails if the workflow starts reacting to `push` or
+`pull_request`.
+
 ### Line endings are owned by the repository, not by your git config
 
 `.gitattributes` at the repository root pins what lands on disk, so a checkout
