@@ -93,6 +93,9 @@ The parser ignores blank lines and whitespace-only lines. It accepts quoted fiel
 
 The parser stops at the first other invalid record. The command writes no stdout data for an input error.
 
+The diagnostic gives the input role and the input path. It prints the path
+without quotation marks. A Windows path thus keeps its single backslashes.
+
 ## Building and Testing
 
 ```bash

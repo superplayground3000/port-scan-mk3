@@ -67,30 +67,30 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) error {
 
 	denyF, err := os.Open(*denyFile)
 	if err != nil {
-		return fmt.Errorf("open deny CSV %q: %w", *denyFile, err)
+		return fmt.Errorf("open deny CSV %s: %w", *denyFile, err)
 	}
 	denyReader := cidrutil.NewDenyCSVReader(denyF)
 	denyEntries, err := denyReader.ReadAll()
 	closeErr := denyF.Close()
 	if err != nil {
-		return fmt.Errorf("read deny CSV %q: %w", *denyFile, err)
+		return fmt.Errorf("read deny CSV %s: %w", *denyFile, err)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close deny CSV %q: %w", *denyFile, closeErr)
+		return fmt.Errorf("close deny CSV %s: %w", *denyFile, closeErr)
 	}
 
 	openF, err := os.Open(*openFile)
 	if err != nil {
-		return fmt.Errorf("open open CSV %q: %w", *openFile, err)
+		return fmt.Errorf("open open CSV %s: %w", *openFile, err)
 	}
 	openReader := cidrutil.NewOpenCSVReader(openF)
 	openEntries, err := openReader.ReadAll()
 	closeErr = openF.Close()
 	if err != nil {
-		return fmt.Errorf("read open CSV %q: %w", *openFile, err)
+		return fmt.Errorf("read open CSV %s: %w", *openFile, err)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close open CSV %q: %w", *openFile, closeErr)
+		return fmt.Errorf("close open CSV %s: %w", *openFile, closeErr)
 	}
 
 	tree := &cidrutil.IntervalTree{}
