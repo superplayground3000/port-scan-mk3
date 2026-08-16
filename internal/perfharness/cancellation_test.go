@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -57,7 +58,13 @@ func TestRunCancellationSmokeInjectsEveryProductionStage(t *testing.T) {
 				if !result.Injected || result.StopDuration > contract.StopWithin {
 					t.Fatalf("result=%+v", result)
 				}
-				if result.FinalizationDuration < result.StopDuration || result.FinalizationDuration <= 0 {
+				// The Go monotonic clock on Windows reads the shared
+				// interrupt-time counter. That counter advances in coarse
+				// steps. A finalization inside one step therefore measures
+				// exactly zero, and only Windows loses the lower bound.
+				measuresShortDurations := runtime.GOOS != "windows"
+				if result.FinalizationDuration < result.StopDuration ||
+					(measuresShortDurations && result.FinalizationDuration <= 0) {
 					t.Fatalf("stage=%s percent=%d finalization evidence=%+v", stage, percent, result)
 				}
 				wantThreshold := (items*uint64(percent) + 99) / 100
