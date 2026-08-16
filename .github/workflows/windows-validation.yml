@@ -1,0 +1,59 @@
+# Native Windows validation — dispatched by hand, never on push or pull request.
+#
+# This workflow produces the evidence that issue #99 tracks for issue #79. The
+# pressure API test family is reported to flake on a Windows host, so this run
+# is EXPECTED to fail sometimes. That failing run is the evidence, which is why
+# the artifact upload carries `if: always()`.
+#
+# It is deliberately not part of CI: repeating a test 100 times must not gate
+# every change. The gate itself stays in .github/workflows/ci.yml.
+#
+# All the logic lives in scripts/windows_pressure_validation.ps1 so it is
+# reproducible on a developer's Windows machine. internal/ciguard pins the
+# contract, so `make verify` catches drift on Linux before a dispatch spends a
+# Windows runner.
+name: Native Windows validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Repetitions of the pressure API family
+        required: false
+        default: "100"
+      skip_gate:
+        description: Skip the full Windows gate after the family loop
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  pressure-family:
+    name: Pressure API family (Native Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The race detector needs a 64-bit MinGW-w64 and an ASCII temp path. The
+      # same script the gate uses provisions them, so this run cannot silently
+      # degrade to a non-race run.
+      - name: provision race prerequisites (64-bit MinGW-w64 + ASCII temp)
+        shell: pwsh
+        run: ./scripts/windows_setup_mingw.ps1
+      - name: pressure API family validation
+        shell: pwsh
+        run: >
+          ./scripts/windows_pressure_validation.ps1
+          -Count ${{ inputs.count }}
+          -OutputDir "$env:RUNNER_TEMP\windows pressure validation"
+          ${{ inputs.skip_gate && '-SkipGate' || '' }}
+      - name: upload Windows validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-pressure-validation
+          path: ${{ runner.temp }}\windows pressure validation\
+          if-no-files-found: error
