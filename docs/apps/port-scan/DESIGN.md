@@ -32,7 +32,7 @@ CLI entry point (main.go)
     │       config.ParseGenerateBuckets() → config.GenerateBucketsConfig
     │           └── scanapp.GenerateBuckets(GenerateBucketsConfiguration)
     │           ├── load records + ports; parse -unreachable-file blocklist
-    │           ├── subtract blocklist; group per CIDR; build chunks (parallel over -workers)
+    │           ├── resolve basic row ports or rich targets → build chunks (parallel over -workers)
     │           ├── stamp pre_scan_ping.enabled=true and timeout_ms=0
     │           └── state.SaveSnapshot(-buckets-out)   (== resume Snapshot JSON)
     │
@@ -133,29 +133,39 @@ runtime control without adding CLI flags.
 
 ### Stage 1: Input Loading (`input_loader.go`)
 
-`loadRunInputs(inputConfiguration, deps)` returns
+`loadRunInputsContext(ctx, inputConfiguration, deps)` returns
 `runInputs{cidrRecords, portSpecs}`. `inputConfiguration` is private and
 contains only paths, column names, and the missing-port rule.
 
-1. `readCIDRFile(cidrFile)` → `input.LoadCIDRsWithColumns()` — auto-detects basic or rich mode
-2. `readPortFile(portFile)` → `input.LoadPorts()` when a port file is present
+1. `readCIDRFileContext` calls `input.LoadCIDRsWithColumnsContext`.
+2. `readPortFileContext` calls `input.LoadPortsContext` when a port file is present.
 
 ### Stage 2: Plan Building (`runtime_builder.go`, `group_builder.go`, `chunk_lifecycle.go`)
 
 `scanRuntime.execute` loads the required bucket snapshot before it builds the
 runtime plan. The scan workflow does not build fresh chunks.
 
-`prepareRuntimePlan` rebuilds each incomplete snapshot chunk. Each
+`prepareRuntimePlanContext` rebuilds each incomplete snapshot chunk. Each
 `chunkRuntime` contains targets, a state tracker, and a leaky-bucket rate
 limiter. A completed chunk does not produce runtime work.
+
+The rebuild reads the context during record filters, expansion, grouping,
+deduplication, and target filters. Inner loops read it within 4,096 items.
 
 The snapshot can contain prior output paths. The runtime uses these paths in
 append mode. Otherwise, it creates new timestamped paths.
 
-**CIDR Grouping Strategies:**
+**Target resolution:**
 
-- **Basic mode** (`basicGroupStrategy`): groups records by `ip_cidr` boundary, expands IP selectors within each CIDR
-- **Rich mode** (`richGroupStrategy`): groups by `dst_network_segment`, implements CIDR-scoped rate control with global execution-key deduplication
+- **Basic mode** (`basic_target_resolution.go`): expands selectors, applies row-port overrides, applies fallback ports, and removes duplicate tasks.
+- The basic module groups only IPs with the same port set into one Cartesian chunk. This rule prevents ports from leaking between rows.
+- Bucket generation and resume rebuild use the same basic resolution result and exact counts.
+- **Rich mode** (`richGroupStrategy`): groups by `dst_network_segment` and keeps global execution-key deduplication.
+
+New snapshots contain `target_semantics_version=1`. Basic snapshots also
+contain `basic_port_fallback` for blank row ports. If basic input contains a
+row port, the runtime rejects a legacy unversioned snapshot before output or
+network work. Run `generate-buckets` to create a new snapshot.
 
 ### Stage 3: Output Setup (`batch_output.go`, `output_files.go`)
 
@@ -169,12 +179,17 @@ selected run error.
 
 ### Stage 4: Executor (`executor.go`)
 
-`startScanExecutor(workers, timeout, dial, taskCh)` creates a goroutine pool:
+`startCancellableScanExecutor(ctx, workers, timeout, dial, taskCh)` creates a
+goroutine pool. The context controls queued work but not a started dial.
 
 ```go
 for w := 0; w < workers; w++ {
     go func() {
         for task := range taskCh {
+            if canceled {
+                abandon(task)
+                continue
+            }
             r := scanner.ScanTCP(dial, task.ip, task.port, timeout)
             result := scanResult{chunkIdx: task.chunkIdx, record: ...}
             resultCh <- result
@@ -183,8 +198,11 @@ for w := 0; w < workers; w++ {
 }
 ```
 
-Workers share a bounded task channel. The executor closes its result and error
-channels after all workers stop. The runtime result loop serializes output.
+Workers share a bounded task channel. A worker does not start a probe after
+cancellation. It reports each abandoned task to the result loop.
+
+An in-flight probe finishes with its original timeout. The executor closes its
+result, error, and abandoned-task channels after all workers stop.
 
 ### Stage 5: Dispatch (`task_dispatcher.go`)
 
@@ -194,7 +212,7 @@ channels after all workers stop. The runtime result loop serializes output.
 - Acquires rate limit token from leaky bucket
 - Blocks on pause gate (`<-ctrl.Gate()`)
 - Creates `scanTask{chunkIdx, ipCidr, ip, port, meta}` and sends to task channel
-- Updates tracker and applies configured delay
+- Updates the tracker and waits for the cancellable configured delay
 
 The runtime starts dispatch in one goroutine. This goroutine closes the task
 channel after `dispatchTasks` returns.
@@ -209,14 +227,16 @@ cancellation.
 - `applyScanResult()` — updates runtime tracker and summary counters
 - `emitScanResultEvents()` — logs to stdout/logger at progress intervals
 
-A result is committed only after all required writes succeed. After an output
-error, the loop marks each later result as unwritten.
+A result is committed only after all required writes succeed. The loop writes
+late in-flight results after cancellation or a non-output runtime error.
+
+After an output error, the loop marks each later result as unwritten. It also
+marks every abandoned queued task as unwritten.
 
 ### Stage 7: Resume (`resume_manager.go`)
 
-`persistResumeSnapshot` rewinds each affected chunk after an output error. It
-then saves incomplete work, canceled work, or fatal work. A clean completed run
-does not save a snapshot.
+`persistResumeSnapshot` rewinds every chunk with unwritten work. It then saves
+incomplete, canceled, or fatal work. A clean completed run saves no snapshot.
 
 The configured `-resume` path is the only snapshot path. The runtime loads the
 snapshot from this path. It saves updated state to the same path when the run
@@ -225,6 +245,9 @@ does not finish cleanly.
 The runtime saves the snapshot before it selects the final error. A snapshot
 save error replaces a runtime error. A runtime error replaces a dispatcher
 error.
+
+The runtime logs `probe_drain_complete` and `snapshot_save_complete` separately.
+These events include in-flight, abandoned, rewind, and duration values.
 
 ### Stage 8: Finalize (`output_files.go`)
 
@@ -307,7 +330,7 @@ Per-chunk leaky bucket token refill:
 ### Speed Controller (`speedctrl/controller.go`)
 
 Manages pause gate:
-- Keyboard `p`/`r` toggles manual pause
+- The space bar toggles manual pause
 - Pressure API toggles API-based pause
 - Gate blocks dispatch when either condition is active
 
@@ -319,6 +342,9 @@ Manages pause gate:
 `SimpleHTTP` returns one normalized aggregate value. `OAuthMulti` polls all
 configured endpoints concurrently and keeps source results in configuration
 order. A failed source makes the aggregate value zero and returns an error.
+
+The adapters reject non-finite values before they return a successful sample.
+One non-finite OAuth entry makes its source and the complete poll fail.
 
 Both constructors require an explicit `http.Client` and valid HTTP endpoints.
 Each OAuth endpoint owns a separate token cache and mutex. Each sample returns
@@ -334,6 +360,7 @@ variants or create HTTP clients.
 ```
 every PressureInterval:
     sample, err := PressureSource.Sample(ctx)
+    reject non-finite aggregate and successful source values
     record every source result
     if err != nil:
         record failure
@@ -352,6 +379,10 @@ The pressure monitor sends one `pressurePoll` to
 `pressureTelemetryObserver.OnPressurePoll`. The poll contains the sample,
 aggregate error, failure count, and sample time. The dashboard records source
 results before aggregate status.
+
+A failed source retains its last finite dashboard value. A finite source resets only its source health streak during a failed complete poll.
+
+Only a successful complete poll resets the overall failure streak. The monitor does not change the controller state after the first two failures.
 
 The controller observer receives manual and API pause changes separately.
 
@@ -407,3 +438,21 @@ Quality gates:
 - `go test ./...` must pass
 - `bash scripts/coverage_gate.sh` must pass with >= 85% coverage
 - `bash e2e/run_e2e.sh` must pass for scan pipeline changes
+
+## Resource-limit ownership
+
+The configuration passes `input.CIDRLimits` and `input.PortLimits` to the file adapters.
+The input module owns byte and record counting.
+This seam keeps the workflow free of parser policy.
+
+The CIDR file adapter counts records with a streaming pass.
+It then rewinds the file and allocates the exact result capacity.
+The parser converts each CSV row directly to one domain record.
+The adapter returns an error if the record count changes between the two passes.
+The reader interface cannot rewind and uses incremental result growth.
+
+`state.SnapshotLimits` owns snapshot byte and object counts.
+The state module checks a replacement before it creates the temporary file.
+
+`pressure.ResponseLimits` owns HTTP byte limits and OAuth entry counts.
+The pressure module decodes OAuth data arrays one entry at a time.

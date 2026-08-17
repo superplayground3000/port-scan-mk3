@@ -76,6 +76,9 @@ func (l *scanLogger) errorf(format string, args ...any) {
 }
 
 func (l *scanLogger) eventf(msg, target string, port int, transition, errCause string, extra map[string]any) {
+	if !l.enabledEvent(msg) {
+		return
+	}
 	fields := map[string]any{
 		"target":           target,
 		"port":             port,
@@ -89,10 +92,7 @@ func (l *scanLogger) eventf(msg, target string, port int, transition, errCause s
 }
 
 func (l *scanLogger) logWithFields(level int, levelName, msg string, fields map[string]any) {
-	if l == nil || level < l.level {
-		return
-	}
-	if l.quiet && !isPressureLog(msg) {
+	if !l.enabled(level, msg) {
 		return
 	}
 	if fields == nil {
@@ -111,6 +111,14 @@ func (l *scanLogger) logWithFields(level int, levelName, msg string, fields map[
 		return
 	}
 	_, _ = fmt.Fprintf(l.out, "[%s] %s\n", strings.ToUpper(levelName), msg)
+}
+
+func (l *scanLogger) enabledEvent(msg string) bool {
+	return l.enabled(1, msg)
+}
+
+func (l *scanLogger) enabled(level int, msg string) bool {
+	return l != nil && level >= l.level && (!l.quiet || isPressureLog(msg))
 }
 
 func isPressureLog(msg string) bool {

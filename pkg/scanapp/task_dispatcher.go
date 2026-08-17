@@ -9,8 +9,9 @@ import (
 )
 
 type dispatchPolicy struct {
-	delay    time.Duration
-	observer dispatchObserver
+	delay        time.Duration
+	observer     dispatchObserver
+	taskObserver func(ip string, port int)
 }
 
 // dispatchTasks iterates over runtimes and dispatches scan tasks through taskCh.
@@ -46,13 +47,18 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 		// Active scan — advance index and transition tracker to "scanning" state.
 		rt.tracker.AdvanceNextIndex(snap.NextIndex)
 		for i := snap.NextIndex; i < snap.TotalCount; i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			obs.OnBucketWaitStart(ch.CIDR, i)
 			// Note: target/port use ch.CIDR and 0 because actual target/port are not yet
 			// determined at bucket wait; they are derived from index after gate release.
 			logger.eventf(LogEventBucketWaitStart, ch.CIDR, 0, LogEventBucketWaitStart, LogEventNone, nil)
-			if err := rt.bkt.Acquire(ctx); err != nil {
-				logger.eventf(LogEventBucketAcquireError, ch.CIDR, 0, LogEventBucketAcquireError, err.Error(), nil)
-				return err
+			if rt.bkt != nil {
+				if err := rt.bkt.Acquire(ctx); err != nil {
+					logger.eventf(LogEventBucketAcquireError, ch.CIDR, 0, LogEventBucketAcquireError, err.Error(), nil)
+					return err
+				}
 			}
 			obs.OnBucketAcquired(ch.CIDR, i)
 			logger.eventf(LogEventBucketAcquired, ch.CIDR, 0, LogEventBucketAcquired, LogEventNone, nil)
@@ -67,7 +73,7 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 			obs.OnGateReleased(ch.CIDR, i)
 			logger.eventf(LogEventGateReleased, ch.CIDR, 0, LogEventGateReleased, LogEventNone, nil)
 
-			target, port, err := indexToRuntimeTarget(rt.targets, rt.ports, i)
+			target, port, err := indexToChunkRuntimeTarget(rt, i)
 			if err != nil {
 				return err
 			}
@@ -84,10 +90,21 @@ func dispatchTasks(ctx context.Context, policy dispatchPolicy, ctrl *speedctrl.C
 			}:
 			}
 			obs.OnTaskEnqueued(ch.CIDR, i)
+			if policy.taskObserver != nil {
+				policy.taskObserver(target.ip, port)
+			}
 			rt.tracker.AdvanceNextIndex(i + 1)
 			logger.debugf("dispatch cidr=%s target=%s:%d next_index=%d/%d", ch.CIDR, target.ip, port, i+1, snap.TotalCount)
 			if policy.delay > 0 {
-				time.Sleep(policy.delay)
+				timer := time.NewTimer(policy.delay)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+					return ctx.Err()
+				case <-timer.C:
+				}
 			}
 		}
 	}

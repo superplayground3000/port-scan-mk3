@@ -41,6 +41,8 @@ type Record struct {
 
 ```go
 func NewCSVWriter(out io.Writer) *CSVWriter
+func NewBufferedCSVWriter(out io.Writer) *CSVWriter
+func NewBufferedCSVWriterAppending(out io.Writer) *CSVWriter
 ```
 
 ### Write Method
@@ -52,7 +54,9 @@ func (w *CSVWriter) Write(r Record) error
 **Behavior:**
 1. If header not written: call `WriteHeader()` first
 2. Write record as CSV row
-3. Flush underlying writer
+3. Flush the underlying writer for the existing constructors.
+
+The buffered constructors keep complete CSV records until `Flush` runs.
 
 ### WriteHeader Method
 
@@ -163,13 +167,18 @@ scan_results-20240318T123456Z-2.csv
 
 Scan and open-only results are written DIRECTLY to their final paths — there is
 no `.tmp` intermediate and no rename-on-success step. This makes results durable
-on a graceful Ctrl+C (every already-scanned row survives) and lets `-resume`
+on a graceful Ctrl+C (every committed batch survives) and lets `-resume`
 reopen the same file in append mode:
 
-- Fresh run: `os.Create` + `NewCSVWriter` (header written on first `Write`).
-- Resume (append): `O_APPEND|O_CREATE` + `NewCSVWriterAppending` (header assumed
-  present); if the file is missing/empty, fall back to `NewCSVWriter` so the
-  header is recreated.
+- A fresh scan uses `NewBufferedCSVWriter`.
+- A resumed scan uses `NewBufferedCSVWriterAppending`.
+- Existing public constructors keep their per-record flush behavior.
+
+`pkg/scanapp` treats both result writers as one commit batch. It updates
+progress only after both writers flush.
+
+A controlled stop flushes the final batch. A write or flush failure rewinds
+the complete current batch.
 
 (The `unreachable_results` writer used by `pre-ping` still uses the `.tmp` +
 rename pattern; only the scan/open result files changed.)
@@ -190,7 +199,7 @@ file that already contains the canonical header.
 |------|-------------|
 | Header first | Automatically written on first `Write()` |
 | One-time header | Subsequent `WriteHeader()` calls are no-ops |
-| Auto-flush | Each `Write()` flushes underlying writer |
+| Auto-flush | Existing constructors flush each `Write()`. Buffered constructors require `Flush()`. |
 | IPCidr fallback | If `IPCidr` empty, falls back to `CIDR` field |
 | Nil-safe | OpenOnlyWriter handles nil gracefully |
 

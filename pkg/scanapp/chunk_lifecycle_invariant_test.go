@@ -12,7 +12,7 @@ import (
 //	the TotalCount stamped onto a chunk by the bucket-generation path is exactly
 //	the value scan's runtime
 //	re-derivation (buildRuntimeWithPredicate) expects
-//	(len(group.targets) * len(ports)).
+//	(group target count * len(ports)).
 //
 // If the two ever diverge, buildRuntimeWithPredicate returns the mismatch
 // error at chunk_lifecycle.go:151 and every scan of a generated bucket file
@@ -78,12 +78,12 @@ func assertBuildRuntimeParity(
 		if !ok {
 			t.Fatalf("runtime references CIDR %q absent from fresh build", rt.ipCidr)
 		}
-		expected := len(rt.targets) * len(rt.ports)
+		expected := rt.targetCount() * len(rt.ports)
 		if rt.state.TotalCount != built {
 			t.Fatalf("runtime TotalCount for %s = %d, fresh build = %d", rt.ipCidr, rt.state.TotalCount, built)
 		}
 		if rt.state.TotalCount != expected {
-			t.Fatalf("runtime TotalCount for %s = %d, but len(targets)*len(ports) = %d", rt.ipCidr, rt.state.TotalCount, expected)
+			t.Fatalf("runtime TotalCount for %s = %d, but targetCount*len(ports) = %d", rt.ipCidr, rt.state.TotalCount, expected)
 		}
 	}
 }

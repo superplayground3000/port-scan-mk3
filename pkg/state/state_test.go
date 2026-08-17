@@ -71,3 +71,19 @@ func TestSaveAndLoadSnapshot_WhenPreScanPingStatePresent_RoundTrips(t *testing.T
 		t.Fatalf("snapshot mismatch: got %+v want %+v", got, want)
 	}
 }
+
+func TestSaveSnapshot_WhenRichDenyWasExcluded_PreservesAuthorizationMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	want := Snapshot{Chunks: []task.Chunk{}, RichDenyExcluded: true}
+
+	if err := SaveSnapshot(path, want); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+	got, err := LoadSnapshot(path)
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if !got.RichDenyExcluded {
+		t.Fatal("LoadSnapshot() lost the rich-deny authorization marker")
+	}
+}

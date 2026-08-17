@@ -14,6 +14,8 @@ docker compose up -d --wait
 docker compose exec -T scanner bash /lab/scripts/run-matrix.sh   # 38-case matrix
 ```
 
+Set `MATRIX_CASES=B4` to run only the rich deny authorization case.
+
 Or run the full validated cycle from the repo root:
 
 ```bash
@@ -49,6 +51,10 @@ smoke test PASSED — all 38 CLI matrix cases observed expected output.
 | G | `enrich-targets` | 2 |
 | H | `cidr-compare` (flag + env forms) | 3 |
 | I | `csv-transform` (custom cols + env forms) | 4 |
+
+Case B4 verifies that accepted rich rows are scanned. A dedicated target counter proves that denied rich rows receive no TCP connection.
+
+The counter target is isolated at `172.30.0.13`. No other matrix case uses this target.
 
 ## Notes
 

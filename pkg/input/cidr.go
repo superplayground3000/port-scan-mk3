@@ -40,10 +40,12 @@
 package input
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -70,7 +72,7 @@ import (
 //	defer f.Close()
 //	records, err := input.LoadCIDRs(f)
 func LoadCIDRs(r io.Reader) ([]CIDRRecord, error) {
-	return LoadCIDRsWithColumns(r, "ip", "ip_cidr")
+	return LoadCIDRsWithColumnsContextAndLimits(context.Background(), r, "ip", "ip_cidr", DefaultCIDRLimits(""))
 }
 
 // LoadCIDRsWithColumns loads CIDR records from a CSV reader. The caller gives the
@@ -97,12 +99,44 @@ func LoadCIDRs(r io.Reader) ([]CIDRRecord, error) {
 //
 //	records, err := input.LoadCIDRsWithColumns(os.Stdin, "ip", "ip_cidr")
 func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
+	return LoadCIDRsWithColumnsContextAndLimits(context.Background(), r, ipCol, ipCidrCol, DefaultCIDRLimits(""))
+}
+
+// LoadCIDRsWithColumnsContext loads CIDR records and stops at a row transition
+// when ctx is canceled. The function reads the context before each CSV row,
+// parse step, and validation step.
+func LoadCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, error) {
+	return LoadCIDRsWithColumnsContextAndLimits(ctx, r, ipCol, ipCidrCol, DefaultCIDRLimits(""))
+}
+
+// LoadCIDRsWithColumnsContextAndLimits reads r and returns CIDR records.
+// The column names select basic input fields. The limits apply to bytes and data records.
+// A zero limit disables only that limit. It returns a context, parse, validation, or limit error.
+func LoadCIDRsWithColumnsContextAndLimits(ctx context.Context, r io.Reader, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
+	if seeker, ok := r.(io.ReadSeeker); ok {
+		return loadCIDRsSeekable(ctx, limits.Path, seeker, ipCol, ipCidrCol, limits)
+	}
+	limited := limitInputReader(r, limits.Path, "CIDR", "-cidr-input-size-limit-gb", limits.MaxBytes)
+	return parseCIDRsWithColumnsContext(ctx, limited, ipCol, ipCidrCol, limits)
+}
+
+func parseCIDRsWithColumnsContext(ctx context.Context, r io.Reader, ipCol, ipCidrCol string, limits CIDRLimits) ([]CIDRRecord, error) {
 	cr := csv.NewReader(r)
-	rows, err := cr.ReadAll()
+	header, err := readCSVRecordContext(ctx, cr)
 	if err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("cidr csv must include header and at least one row")
+		}
 		return nil, err
 	}
-	if len(rows) < 2 {
+	first, err := readCIDRDataRecord(ctx, cr, limits, 0)
+	if err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("cidr csv must include header and at least one row")
+		}
+		return nil, err
+	}
+	if first == nil {
 		return nil, fmt.Errorf("cidr csv must include header and at least one row")
 	}
 
@@ -112,38 +146,42 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 		return nil, fmt.Errorf("ip and ip_cidr column names must be non-empty")
 	}
 
-	if richIdx, ok := detectRichHeaderIndices(rows[0]); ok {
-		records, _, err := ParseRichRows(rows, richIdx)
-		if err != nil {
-			return nil, err
-		}
-		return records, nil
+	if richIdx, ok := detectRichHeaderIndices(header); ok {
+		return parseRichCSVContext(ctx, cr, first, richIdx, limits)
 	}
 
-	header := normalizeHeader(rows[0])
-	ipIdx := headerIndex(header, ipCol)
+	normalizedHeader := normalizeHeader(header)
+	ipIdx := headerIndex(normalizedHeader, ipCol)
 	if ipIdx < 0 {
 		return nil, fmt.Errorf("cidr csv missing required ip column %q", ipCol)
 	}
-	ipCidrIdx := headerIndex(header, ipCidrCol)
+	ipCidrIdx := headerIndex(normalizedHeader, ipCidrCol)
 	if ipCidrIdx < 0 {
 		return nil, fmt.Errorf("cidr csv missing required ip_cidr column %q", ipCidrCol)
 	}
-	fabIdx := headerIndex(header, "fab_name")
-	cidrNameIdx := headerIndex(header, "cidr_name")
-	portIdx := headerIndex(header, "port")
+	fabIdx := headerIndex(normalizedHeader, "fab_name")
+	cidrNameIdx := headerIndex(normalizedHeader, "cidr_name")
+	portIdx := headerIndex(normalizedHeader, "port")
 
-	out := make([]CIDRRecord, 0, len(rows)-1)
-	for i := 1; i < len(rows); i++ {
-		row := rows[i]
+	out, err := makeCIDRRecordBuffer(limits.capacity)
+	if err != nil {
+		return nil, err
+	}
+	pool := newBasicRecordPool()
+	row := first
+	for recordCount := uint64(1); ; recordCount++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rowNumber := int(recordCount + 1)
 		if len(row) <= max(ipIdx, ipCidrIdx) {
-			return nil, fmt.Errorf("invalid cidr row %d", i+1)
+			return nil, fmt.Errorf("invalid cidr row %d", rowNumber)
 		}
 
 		rec := CIDRRecord{
 			IPRaw:     strings.TrimSpace(row[ipIdx]),
 			IPCidrRaw: strings.TrimSpace(row[ipCidrIdx]),
-			RowNumber: i + 1,
+			RowNumber: rowNumber,
 			IPColName: ipCol,
 			IPCidrCol: ipCidrCol,
 		}
@@ -155,26 +193,179 @@ func LoadCIDRsWithColumns(r io.Reader, ipCol, ipCidrCol string) ([]CIDRRecord, e
 		}
 		if portIdx >= 0 {
 			if portIdx >= len(row) {
-				return nil, fmt.Errorf("invalid cidr row %d", i+1)
+				return nil, fmt.Errorf("invalid cidr row %d", rowNumber)
 			}
 			portRaw := strings.TrimSpace(row[portIdx])
 			if portRaw != "" {
 				port, err := strconv.Atoi(portRaw)
 				if err != nil || port < 1 || port > 65535 {
-					return nil, fmt.Errorf("invalid cidr row %d: invalid port %q", i+1, portRaw)
+					return nil, fmt.Errorf("invalid cidr row %d: invalid port %q", rowNumber, portRaw)
 				}
 				rec.Port = port
 			}
 		}
-		if err := rec.Parse(); err != nil {
-			return nil, fmt.Errorf("invalid cidr row %d: %w", i+1, err)
+		if err := pool.parse(&rec); err != nil {
+			return nil, fmt.Errorf("invalid cidr row %d: %w", rowNumber, err)
 		}
 		out = append(out, rec)
+		next, err := readCIDRDataRecord(ctx, cr, limits, recordCount)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		row = next
 	}
-	if err := ValidateIPRows(out); err != nil {
+	if err := ValidateIPRowsContext(ctx, out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+const basicRecordPoolCapacity = 4_096
+
+type basicBoundary struct {
+	raw       string
+	canonical string
+	network   *net.IPNet
+}
+
+type basicRecordPool struct {
+	strings    map[string]string
+	boundaries map[string]basicBoundary
+}
+
+func newBasicRecordPool() *basicRecordPool {
+	return &basicRecordPool{
+		strings:    make(map[string]string),
+		boundaries: make(map[string]basicBoundary),
+	}
+}
+
+func (pool *basicRecordPool) parse(record *CIDRRecord) error {
+	record.FabName = pool.intern(record.FabName)
+	record.CIDRName = pool.intern(record.CIDRName)
+	rawBoundary := strings.TrimSpace(record.IPCidrRaw)
+	if boundary, ok := pool.boundaries[rawBoundary]; ok {
+		if err := parseSelectorIntoRecord(record); err != nil {
+			return err
+		}
+		record.IPCidrRaw = boundary.raw
+		record.CIDR = boundary.canonical
+		record.Net = boundary.network
+	} else {
+		if err := record.Parse(); err != nil {
+			return err
+		}
+		record.IPCidrRaw = pool.intern(record.IPCidrRaw)
+		record.CIDR = pool.intern(record.CIDR)
+		if len(pool.boundaries) < basicRecordPoolCapacity {
+			pool.boundaries[record.IPCidrRaw] = basicBoundary{
+				raw: record.IPCidrRaw, canonical: record.CIDR, network: record.Net,
+			}
+		}
+	}
+	record.IPRaw = pool.intern(record.IPRaw)
+	return nil
+}
+
+func (pool *basicRecordPool) intern(value string) string {
+	if value == "" {
+		return ""
+	}
+	if interned, ok := pool.strings[value]; ok {
+		return interned
+	}
+	owned := strings.Clone(value)
+	if len(pool.strings) < basicRecordPoolCapacity {
+		pool.strings[owned] = owned
+	}
+	return owned
+}
+
+func parseSelectorIntoRecord(record *CIDRRecord) error {
+	if strings.TrimSpace(record.IPRaw) == "" {
+		return fmt.Errorf("empty ip")
+	}
+	selector, err := parseSelector(strings.TrimSpace(record.IPRaw))
+	if err != nil {
+		return fmt.Errorf("invalid ip %q: %w", record.IPRaw, err)
+	}
+	record.Selector = selector
+	record.IPRaw = strings.TrimSpace(record.IPRaw)
+	return nil
+}
+
+func readCSVRecordContext(ctx context.Context, reader *csv.Reader) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return reader.Read()
+}
+
+func readCIDRDataRecord(ctx context.Context, reader *csv.Reader, limits CIDRLimits, count uint64) ([]string, error) {
+	row, err := readCSVRecordContext(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+	if count == ^uint64(0) {
+		return nil, fmt.Errorf("CIDR input %s record count overflows the supported range", displayPath(limits.Path))
+	}
+	next := count + 1
+	if limits.MaxRecords > 0 && next > limits.MaxRecords {
+		return nil, fmt.Errorf("CIDR input %s record %d makes count %d exceed limit %d; use -cidr-input-record-limit to override it", displayPath(limits.Path), next+1, next, limits.MaxRecords)
+	}
+	return row, nil
+}
+
+func parseRichCSVContext(ctx context.Context, reader *csv.Reader, first []string, indices map[string]int, limits CIDRLimits) ([]CIDRRecord, error) {
+	out, err := makeCIDRRecordBuffer(limits.capacity)
+	if err != nil {
+		return nil, err
+	}
+	validRows := 0
+	row := first
+	pool := newRichStringPool()
+	for recordCount := uint64(1); ; recordCount++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rowNumber := int(recordCount + 1)
+		record, code, err := parseRichRow(row, rowNumber, indices, pool)
+		if err != nil {
+			out = append(out, CIDRRecord{
+				RowNumber:       rowNumber,
+				IsRich:          true,
+				IsValid:         false,
+				ValidationCode:  code,
+				ValidationError: err.Error(),
+			})
+		} else {
+			validRows++
+			out = append(out, record)
+		}
+		next, readErr := readCIDRDataRecord(ctx, reader, limits, recordCount)
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		row = next
+	}
+	if validRows == 0 {
+		return nil, fmt.Errorf("no usable input rows")
+	}
+	return out, nil
+}
+
+func makeCIDRRecordBuffer(capacity uint64) ([]CIDRRecord, error) {
+	maximumInt := uint64(^uint(0) >> 1)
+	if capacity > maximumInt {
+		return nil, fmt.Errorf("CIDR input record count %d exceeds the addressable index range", capacity)
+	}
+	return make([]CIDRRecord, 0, int(capacity)), nil
 }
 
 // Parse validates and normalizes a CIDRRecord. It parses the IPRaw selector and
@@ -232,14 +423,15 @@ func (r *CIDRRecord) Parse() error {
 }
 
 func parseSelector(raw string) (*net.IPNet, error) {
-	if ip := net.ParseIP(raw); ip != nil {
-		v4 := ip.To4()
-		if v4 == nil {
+	if address, err := netip.ParseAddr(raw); err == nil {
+		address = address.Unmap()
+		if !address.Is4() {
 			return nil, fmt.Errorf("only ipv4 is supported")
 		}
+		v4 := address.As4()
 		return &net.IPNet{
-			IP:   v4,
-			Mask: net.CIDRMask(32, 32),
+			IP:   net.IP{v4[0], v4[1], v4[2], v4[3]},
+			Mask: net.IPMask{0xff, 0xff, 0xff, 0xff},
 		}, nil
 	}
 	_, sel, err := net.ParseCIDR(raw)

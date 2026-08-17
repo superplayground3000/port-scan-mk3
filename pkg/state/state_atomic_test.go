@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,6 +79,53 @@ func TestSaveSnapshot_WhenWriteFails_PreservesPreviousSnapshot(t *testing.T) {
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "write")
 }
 
+func TestSaveSnapshot_WhenBufferedWriteFails_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+	snapshot := replacementSnapshot()
+	snapshot.PreScanPing = PreScanPingState{Enabled: true, UnreachableIPv4U32: make([]uint32, 100_000)}
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		realWrite := ops.write
+		writes := 0
+		ops.write = func(file *os.File, data []byte) (int, error) {
+			writes++
+			if writes == 2 {
+				return 0, errInjected
+			}
+			return realWrite(file, data)
+		}
+	})
+
+	err := SaveSnapshot(path, snapshot)
+	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "write")
+}
+
+func TestSaveSnapshot_WhenWriterReturnsShortCount_PreservesPreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	withFileOps(t, func(ops *snapshotFileOps) {
+		ops.write = func(*os.File, []byte) (int, error) { return 1, nil }
+	})
+
+	err := SaveSnapshot(path, replacementSnapshot())
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("SaveSnapshot() error = %v, want short write", err)
+	}
+	if !strings.Contains(err.Error(), "previous snapshot remains usable") {
+		t.Fatalf("SaveSnapshot() error = %v, want old-file guarantee", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("short write changed the previous snapshot")
+	}
+	assertNoTempFilesBesideSnapshot(t, path)
+}
+
 // TestSaveSnapshot_WhenSyncFails_PreservesPreviousSnapshot proves the temp file
 // is flushed to disk before it is promoted: a sync failure means the temp file
 // contents are not durable, so the previous snapshot must stay in place.
@@ -128,6 +176,49 @@ func TestSaveSnapshot_WhenReplaceFails_PreservesPreviousSnapshot(t *testing.T) {
 
 	err := SaveSnapshot(path, replacementSnapshot())
 	assertFailedSaveLeftSnapshotIntact(t, path, before, err, "replace")
+}
+
+func TestSaveSnapshotWithFailureInjectionPreservesThePreviousSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	before := writeInitialSnapshot(t, path)
+
+	err := SaveSnapshotWithFailureInjection(path, replacementSnapshot(), DefaultSnapshotLimits(), SaveFailureInjection{
+		Operation: SaveFailureReplace,
+	})
+	if !errors.Is(err, ErrInjectedSnapshotSaveFailure) {
+		t.Fatalf("SaveSnapshotWithFailureInjection() error = %v, want injected failure", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read previous snapshot: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("failure injection changed the previous snapshot")
+	}
+	if _, loadErr := LoadSnapshot(path); loadErr != nil {
+		t.Fatalf("load previous snapshot: %v", loadErr)
+	}
+	assertNoTempFilesBesideSnapshot(t, path)
+	moved := path + ".handle-check"
+	if err := os.Rename(path, moved); err != nil {
+		t.Fatalf("previous snapshot handle was not released: %v", err)
+	}
+	if err := os.Rename(moved, path); err != nil {
+		t.Fatalf("restore previous snapshot: %v", err)
+	}
+}
+
+func TestSaveSnapshotWithFailureInjectionRejectsUnknownOperation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume_state.json")
+	err := SaveSnapshotWithFailureInjection(path, replacementSnapshot(), DefaultSnapshotLimits(), SaveFailureInjection{
+		Operation: "unknown",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported snapshot save failure operation") {
+		t.Fatalf("SaveSnapshotWithFailureInjection() error = %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid injection wrote a snapshot: %v", statErr)
+	}
 }
 
 // TestSaveSnapshot_WhenTempCreateFails_PreservesPreviousSnapshot covers the
@@ -330,6 +421,9 @@ func assertFailedSaveLeftSnapshotIntact(t *testing.T, path string, before []byte
 		}
 		if !strings.Contains(err.Error(), stage) {
 			t.Errorf("expected the error to identify the %q stage, got %v", stage, err)
+		}
+		if !strings.Contains(err.Error(), "previous snapshot remains usable") {
+			t.Errorf("expected the error to state that the previous snapshot remains usable, got %v", err)
 		}
 	}
 

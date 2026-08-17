@@ -16,7 +16,46 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/scanapp"
 )
 
-func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPreservesContext(t *testing.T) {
+func TestRichInputPipelineBoundary_WhenAcceptedRowsShareExecutionKey_DispatchesOnceAndPreservesContext(t *testing.T) {
+	rows, openPort := runRichInputPipelineBoundary(t, "accept")
+	if len(rows) != 3 {
+		t.Fatalf("expected header + 2 result rows (dedup), got %d", len(rows))
+	}
+
+	idx := richPipelineColumnIndexes(t, rows[0])
+	mergedSeen := false
+	for _, row := range rows[1:] {
+		if row[idx["port"]] == strconv.Itoa(openPort) {
+			if row[idx["matched_policy_id"]] != "P-1|P-2" {
+				t.Fatalf("expected merged matched_policy_id, got %q", row[idx["matched_policy_id"]])
+			}
+			mergedSeen = true
+		}
+	}
+	if !mergedSeen {
+		t.Fatalf("expected row for open port %d", openPort)
+	}
+}
+
+func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DenySuppressesSharedTarget(t *testing.T) {
+	rows, openPort := runRichInputPipelineBoundary(t, "deny")
+	if len(rows) != 2 {
+		t.Fatalf("expected header + one accepted result row, got %d", len(rows))
+	}
+
+	idx := richPipelineColumnIndexes(t, rows[0])
+	for _, row := range rows[1:] {
+		if row[idx["port"]] == strconv.Itoa(openPort) {
+			t.Fatalf("denied execution key reached TCP output: %v", row)
+		}
+		if row[idx["port"]] != "1" {
+			t.Fatalf("unexpected accepted result row: %v", row)
+		}
+	}
+}
+
+func runRichInputPipelineBoundary(t *testing.T, duplicateDecision string) ([][]string, int) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +81,8 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 
 	csvData := fmt.Sprintf("src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n"+
 		"10.0.0.10,10.0.0.0/24,127.0.0.1,127.0.0.0/24,web,tcp,%d,accept,P-1,allow\n"+
-		"10.0.0.11,10.0.0.0/24,127.0.0.1,127.0.0.0/24,web,tcp,%d,deny,P-2,audit\n"+
-		"10.0.0.12,10.0.0.0/24,127.0.0.1,127.0.0.0/24,web,tcp,1,accept,P-3,secondary\n", openPort, openPort)
+		"10.0.0.11,10.0.0.0/24,127.0.0.1,127.0.0.0/24,web,tcp,%d,%s,P-2,audit\n"+
+		"10.0.0.12,10.0.0.0/24,127.0.0.1,127.0.0.0/24,web,tcp,1,accept,P-3,secondary\n", openPort, openPort, duplicateDecision)
 	if err := os.WriteFile(cidrFile, []byte(csvData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -107,11 +146,11 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 3 {
-		t.Fatalf("expected header + 2 result rows (dedup), got %d", len(rows))
-	}
+	return rows, openPort
+}
 
-	header := rows[0]
+func richPipelineColumnIndexes(t *testing.T, header []string) map[string]int {
+	t.Helper()
 	idx := map[string]int{}
 	for i, h := range header {
 		idx[h] = i
@@ -122,17 +161,5 @@ func TestRichInputPipelineBoundary_WhenRowsShareExecutionKey_DispatchesOnceAndPr
 	if _, ok := idx["execution_key"]; !ok {
 		t.Fatalf("missing execution_key column in header: %v", header)
 	}
-
-	mergedSeen := false
-	for _, row := range rows[1:] {
-		if row[idx["port"]] == strconv.Itoa(openPort) {
-			if row[idx["matched_policy_id"]] != "P-1|P-2" {
-				t.Fatalf("expected merged matched_policy_id, got %q", row[idx["matched_policy_id"]])
-			}
-			mergedSeen = true
-		}
-	}
-	if !mergedSeen {
-		t.Fatalf("expected row for open port %d", openPort)
-	}
+	return idx
 }

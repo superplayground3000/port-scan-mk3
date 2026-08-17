@@ -11,7 +11,7 @@ FIX=/lab/fixtures
 OUT=/lab/out
 rm -rf "$OUT"; mkdir -p "$OUT"
 
-OPEN=172.30.0.10; CLOSED=172.30.0.11; FILTERED=172.30.0.12; UNREACH=172.30.0.99
+OPEN=172.30.0.10; CLOSED=172.30.0.11; FILTERED=172.30.0.12; DENIED=172.30.0.13; UNREACH=172.30.0.99
 POK=pressure-ok; PHI=pressure-high; P5=pressure-5xx; PTO=pressure-timeout
 PA1=pressure-auth-1; PA2=pressure-auth-2
 
@@ -43,13 +43,16 @@ B_states() { local d="$OUT/B_states"; mkdir -p "$d"
   assert_contains    "B2 closed in scan_results"  "$sr" "^$CLOSED,$CLOSED/32,8080,close,"
   assert_contains    "B3 filtered close(timeout)" "$sr" "^$FILTERED,$FILTERED/32,8080,close\\(timeout\\),"; }
 B4() { local d="$OUT/B4"; mkdir -p "$d"
-  port-scan scan -cidr-file "$FIX/rich.csv" -disable-api -disable-pre-scan-ping -timeout 300ms -output "$d/s.csv" >"$d/o" 2>"$d/e"
+  wget -qO- "http://target-denied:19998/reset" >"$d/counter-reset"
+  port-scan generate-buckets -cidr-file "$FIX/rich.csv" -buckets-out "$d/buckets.json" -workers 1 >"$d/generate.o" 2>"$d/generate.e"
+  assert_eq "B4 rich bucket generation exit0" 0 "$?"
+  port-scan scan -cidr-file "$FIX/rich.csv" -resume "$d/buckets.json" -disable-api -timeout 300ms -output "$d/s.csv" >"$d/o" 2>"$d/e"
   assert_eq "B4 rich scan exit0" 0 "$?"
-  local sr; sr="$(latest "$d" scan_results)"
-  # Rich mode scans every tcp row regardless of decision and carries the
-  # decision through as metadata; only non-tcp rows are filtered out.
+  local sr denied_probes; sr="$(latest "$d" scan_results)"; denied_probes="$(wget -qO- "http://target-denied:19998/count")"
+  # Rich mode scans accepted TCP rows. Denied rows produce no network work.
   assert_contains     "B4 rich accept .10 scanned open (decision preserved)" "$sr" "^$OPEN,$OPEN/32,8080,open,.*,accept,"
-  assert_contains     "B4 rich deny .11 scanned (decision preserved)"        "$sr" "^$CLOSED,$CLOSED/32,8080,close,.*,deny,"
+  assert_not_contains "B4 rich deny .13 not written"                         "$sr" "^$DENIED,"
+  assert_eq           "B4 rich deny .13 sends zero TCP probes"               0 "$denied_probes"
   assert_not_contains "B4 rich udp .12 not scanned (protocol filter)"        "$sr" "$FILTERED"; }
 B5() { local d="$OUT/B5"; mkdir -p "$d"
   port-scan scan -cidr-file "$FIX/basic-custom-headers.csv" -port-file "$FIX/ports.csv" \
@@ -237,8 +240,8 @@ I4() { local d="$OUT/I4"; mkdir -p "$d"
   assert_contains     "I4 env-form .10 included" "$d/t.csv" "$OPEN"
   assert_not_contains "I4 env-form .11 skipped"  "$d/t.csv" "$CLOSED"; }
 
-for c in A1 A2 A3 A4 B_states B4 B5 B6 B7 B8 B9 C1 C2 C3 C4 \
-         D1 D2 D3 D4 D5 D6 D7 D8 E1 E2 F1 F2 G1 G2 H1 H2 H3 I1 I2 I3 I4; do
+MATRIX_CASES="${MATRIX_CASES:-A1 A2 A3 A4 B_states B4 B5 B6 B7 B8 B9 C1 C2 C3 C4 D1 D2 D3 D4 D5 D6 D7 D8 E1 E2 F1 F2 G1 G2 H1 H2 H3 I1 I2 I3 I4}"
+for c in $MATRIX_CASES; do
   "$c"
 done
 

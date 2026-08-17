@@ -8,12 +8,14 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 type runtimePolicy struct {
-	bucketRate     int
-	bucketCapacity int
+	bucketRate       int
+	bucketCapacity   int
+	disableRateLimit bool
 }
 
 func shouldSaveOnDispatchErr(err error) bool {
@@ -41,23 +43,17 @@ func collectChunkStates(runtimes []*chunkRuntime) []task.Chunk {
 	return out
 }
 
-// basicChunkFromGroup builds the basic-mode chunk for a single CIDR group. Each
-// target is scanned across every rawPort, so TotalCount == len(targets) *
-// len(rawPorts). This is the single source of truth for basic-mode counting;
-// both fresh scan builds and generate-buckets route through it so the
-// total_count invariant (buildRuntimeWithPredicate) holds by construction.
-func basicChunkFromGroup(cidr string, g cidrGroup, rawPorts []string) task.Chunk {
-	cidrName := ""
-	if len(g.targets) > 0 {
-		cidrName = g.targets[0].meta.cidrName
-	}
+// basicChunkFromGroup builds a basic chunk from one resolved target group.
+// The resolution module supplies its ports and exact task count.
+func basicChunkFromGroup(g cidrGroup) task.Chunk {
+	cidrName := g.firstTargetMeta().cidrName
 	return task.Chunk{
-		CIDR:         cidr,
+		CIDR:         g.cidr,
 		CIDRName:     cidrName,
-		Ports:        rawPorts,
+		Ports:        append([]string(nil), g.ports...),
 		NextIndex:    0,
 		ScannedCount: 0,
-		TotalCount:   len(g.targets) * len(rawPorts),
+		TotalCount:   g.totalCount,
 		Status:       "pending",
 	}
 }
@@ -107,12 +103,28 @@ func countIncompleteChunks(chunks []task.Chunk) int {
 // Intentional, benign behavior change: a completed chunk whose CIDR was removed
 // from the CSV no longer errors, because completed chunks are never looked up.
 func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy, reachable func(string) bool, report chunkExpandReporter) ([]*chunkRuntime, error) {
+	return buildRuntimeWithPredicateContext(context.Background(), chunks, cidrRecords, defaultPorts, policy, reachable, report)
+}
+
+func buildRuntimeWithPredicateContext(ctx context.Context, chunks []task.Chunk, cidrRecords []input.CIDRRecord, defaultPorts []input.PortSpec, policy runtimePolicy, reachable func(string) bool, report chunkExpandReporter) ([]*chunkRuntime, error) {
+	if len(defaultPorts) == 0 && !hasBasicRowPorts(cidrRecords) {
+		var err error
+		defaultPorts, err = basicFallbackFromChunks(chunks)
+		if err != nil {
+			return nil, fmt.Errorf("derive basic port fallback from chunks: %w", err)
+		}
+	}
 	incompleteKeys := make(map[string]struct{}, len(chunks))
 	allIncompleteHaveTotal := true
+	incompleteChunkCount := 0
 	for i := range chunks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if chunkIsCompleted(&chunks[i]) {
 			continue
 		}
+		incompleteChunkCount++
 		incompleteKeys[chunks[i].CIDR] = struct{}{}
 		if chunks[i].TotalCount == 0 {
 			allIncompleteHaveTotal = false
@@ -127,23 +139,26 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 	// omitted (legacy snapshots decode it to 0) that guard is disabled, so filtering
 	// would silently change the incomplete target set; fall back to the whole-input
 	// build to reproduce ownership exactly.
-	records := cidrRecords
-	if len(incompleteKeys) > 0 && allIncompleteHaveTotal {
-		records = filterRecordsByChunkKey(cidrRecords, incompleteKeys)
+	records, err := selectRuntimeRecords(ctx, cidrRecords, incompleteKeys, allIncompleteHaveTotal, incompleteChunkCount, len(chunks))
+	if err != nil {
+		return nil, err
 	}
 	// Decide richMode on exactly the records the build consumes, so the group
 	// builder and the port-defaulting branch below agree on the mode.
 	richMode := hasRichRecords(records)
 
 	var (
-		groups map[string]cidrGroup
-		err    error
+		groups          map[string]cidrGroup
+		basicResolution basicTargetResolution
 	)
 	if len(incompleteKeys) > 0 {
 		if richMode {
-			groups, err = buildRichGroupsWithPredicate(records, reachable)
+			groups, err = buildRichGroupsWithPredicateContext(ctx, records, reachable)
 		} else {
-			groups, err = buildCIDRGroupsWithPredicate(records, reachable)
+			basicResolution, err = resolveBasicTargetsContext(ctx, records, defaultPorts, reachable)
+			if err != nil {
+				return nil, fmt.Errorf("rebuild basic target resolution: %w", err)
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -152,6 +167,9 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 
 	runtimes := make([]*chunkRuntime, 0, len(chunks))
 	for i := range chunks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		ch := &chunks[i]
 		if chunkIsCompleted(ch) {
 			// Lightweight runtime: no expansion, no leaky-bucket goroutine. Match
@@ -165,9 +183,24 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 			continue
 		}
 
-		group, ok := groups[ch.CIDR]
-		if !ok {
-			return nil, fmt.Errorf("resume state references %s, which has no scannable targets in the current input (it may have been removed from the CSV, or all of its targets are now excluded such as broadcast addresses); start a fresh scan (remove -resume or delete the resume file)", ch.CIDR)
+		var group cidrGroup
+		if richMode {
+			var ok bool
+			group, ok = groups[ch.CIDR]
+			if !ok {
+				return nil, fmt.Errorf("resume state references %s, which has no scannable targets in the current input (it may have been removed from the CSV, or all of its targets are now excluded such as broadcast addresses); start a fresh scan (remove -resume or delete the resume file)", ch.CIDR)
+			}
+		} else {
+			if len(ch.Ports) == 0 {
+				ch.Ports = formatInputPortRows(defaultPorts)
+			}
+			group, err = basicResolution.groupForChunk(*ch)
+			if err != nil {
+				return nil, fmt.Errorf("rebuild basic chunk targets: %w", err)
+			}
+		}
+		if err := group.validateTargetStorage(); err != nil {
+			return nil, err
 		}
 
 		portRows := ch.Ports
@@ -186,12 +219,15 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 			}
 			ch.Ports = append(ch.Ports, portRows...)
 		}
-		ports, err := parsePortRows(portRows)
+		ports, err := parsePortRowsContext(ctx, portRows)
 		if err != nil {
 			return nil, err
 		}
 
-		expectedTotal := len(group.targets) * len(ports)
+		expectedTotal := group.targetCount() * len(ports)
+		if !richMode {
+			expectedTotal = group.totalCount
+		}
 		if ch.TotalCount == 0 {
 			ch.TotalCount = expectedTotal
 		}
@@ -204,12 +240,13 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 			ch.Status = "pending"
 		}
 		rt := &chunkRuntime{
-			ipCidr:  ch.CIDR,
-			ports:   ports,
-			targets: group.targets,
-			state:   ch,
-			tracker: newChunkStateTracker(ch),
-			bkt:     ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity),
+			ipCidr:       ch.CIDR,
+			ports:        ports,
+			targets:      group.targets,
+			basicTargets: group.basicTargets,
+			state:        ch,
+			tracker:      newChunkStateTracker(ch),
+			bkt:          newRuntimeBucket(ch.TotalCount-ch.NextIndex, policy),
 		}
 		runtimes = append(runtimes, rt)
 		// One progress tick per incomplete chunk actually expanded (Phase 5). The
@@ -219,6 +256,69 @@ func buildRuntimeWithPredicate(chunks []task.Chunk, cidrRecords []input.CIDRReco
 		}
 	}
 	return runtimes, nil
+}
+
+func selectRuntimeRecords(ctx context.Context, records []input.CIDRRecord, incompleteKeys map[string]struct{}, allIncompleteHaveTotal bool, incompleteChunkCount, totalChunkCount int) ([]input.CIDRRecord, error) {
+	if len(incompleteKeys) == 0 || !allIncompleteHaveTotal || incompleteChunkCount == totalChunkCount {
+		return records, nil
+	}
+	return filterRecordsByChunkKeyContext(ctx, records, incompleteKeys)
+}
+
+func newRuntimeBucket(remaining int, policy runtimePolicy) *ratelimit.LeakyBucket {
+	if policy.disableRateLimit {
+		return nil
+	}
+	capacity := policy.bucketCapacity
+	if capacity < 1 {
+		capacity = 1
+	}
+	if capacity > ratelimit.MaxCapacity {
+		capacity = ratelimit.MaxCapacity
+	}
+	if remaining <= capacity {
+		return nil
+	}
+	return ratelimit.NewLeakyBucket(policy.bucketRate, policy.bucketCapacity)
+}
+
+func hasBasicRowPorts(records []input.CIDRRecord) bool {
+	for _, record := range records {
+		if !record.IsRich && record.Port > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func basicFallbackFromChunks(chunks []task.Chunk) ([]input.PortSpec, error) {
+	seen := make(map[int]struct{})
+	numbers := make([]int, 0)
+	for _, chunk := range chunks {
+		ports, err := parsePortRows(chunk.Ports)
+		if err != nil {
+			return nil, err
+		}
+		for _, port := range ports {
+			if _, exists := seen[port]; !exists {
+				seen[port] = struct{}{}
+				numbers = append(numbers, port)
+			}
+		}
+	}
+	ports := make([]input.PortSpec, 0, len(numbers))
+	for _, number := range numbers {
+		ports = append(ports, input.PortSpec{Number: number, Proto: "tcp", Raw: fmt.Sprintf("%d/tcp", number)})
+	}
+	return ports, nil
+}
+
+func formatInputPortRows(ports []input.PortSpec) []string {
+	rows := make([]string, 0, len(ports))
+	for _, port := range ports {
+		rows = append(rows, port.Raw)
+	}
+	return rows
 }
 
 // chunkIsCompleted reports whether a chunk is already fully scanned and needs no
@@ -239,11 +339,27 @@ func chunkIsCompleted(ch *task.Chunk) bool {
 // keyable segment/CIDR cannot belong to any chunk (chunk keys are always valid
 // CIDR strings), so it is skipped rather than erroring.
 func filterRecordsByChunkKey(records []input.CIDRRecord, keys map[string]struct{}) []input.CIDRRecord {
+	out, _ := filterRecordsByChunkKeyContext(context.Background(), records, keys)
+	return out
+}
+
+func filterRecordsByChunkKeyContext(ctx context.Context, records []input.CIDRRecord, keys map[string]struct{}) ([]input.CIDRRecord, error) {
 	if len(keys) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]input.CIDRRecord, 0, len(records))
-	for _, rec := range records {
+	for i, rec := range records {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		// Deny rows apply to execution keys across group keys. Keep them so an
+		// incomplete chunk cannot regain work that another group denies.
+		if richRecordDenied(rec) {
+			out = append(out, rec)
+			continue
+		}
 		key, err := chunkKeyForRecord(rec)
 		if err != nil {
 			continue
@@ -252,7 +368,7 @@ func filterRecordsByChunkKey(records []input.CIDRRecord, keys map[string]struct{
 			out = append(out, rec)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // chunkKeyForRecord returns the group key a record contributes to: the rich
@@ -273,6 +389,29 @@ func hasRichRecords(cidrRecords []input.CIDRRecord) bool {
 		}
 	}
 	return false
+}
+
+func validateSnapshotAuthorization(snapshot state.Snapshot, records []input.CIDRRecord) error {
+	if snapshot.RichDenyExcluded || len(snapshot.Chunks) == 0 || len(deniedRichExecutionKeys(records)) == 0 {
+		return nil
+	}
+
+	// A legacy snapshot has target counts but no execution keys. A matching
+	// count cannot prove that the snapshot excluded a denied key.
+	return fmt.Errorf("resume snapshot does not prove rich deny exclusion for %s; run generate-buckets to create a new snapshot", snapshot.Chunks[0].CIDR)
+}
+
+func validateSnapshotTargetSemantics(snapshot state.Snapshot, records []input.CIDRRecord) error {
+	if snapshot.TargetSemanticsVersion == state.CurrentTargetSemanticsVersion {
+		return nil
+	}
+	if snapshot.TargetSemanticsVersion != 0 {
+		return fmt.Errorf("resume snapshot uses unsupported target-semantics version %d; run generate-buckets to create a new snapshot", snapshot.TargetSemanticsVersion)
+	}
+	if hasRichRecords(records) || !hasBasicRowPorts(records) {
+		return nil
+	}
+	return fmt.Errorf("resume snapshot has no target-semantics version for basic row ports; run generate-buckets to create a new snapshot")
 }
 
 func buildRichChunks(cidrRecords []input.CIDRRecord) ([]task.Chunk, error) {

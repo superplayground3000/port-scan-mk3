@@ -138,6 +138,10 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 - `port-scan` selects rich CSV mode automatically when all rich fields exist:
   - `src_ip`, `src_network_segment`, `dst_ip`, `dst_network_segment`
   - `service_label`, `protocol`, `port`, `decision`, `policy_id`, `reason`
+  - A valid `decision=deny` row never becomes a network target.
+  - A deny row overrides an accept row with the same normalized `execution_key`.
+  - The authorization rule applies before ICMP, bucket generation, resume rebuild, and TCP dispatch.
+  - `validate` still rejects each malformed deny row.
 - Port file format: one line per port in `<port>/tcp` (for example `443/tcp`)
   - Required in default CIDR mode
   - Optional in rich CSV mode
@@ -149,12 +153,67 @@ go run ./cmd/port-scan scan -cidr-file "$IN" -resume out/buckets.json -output ou
 - `scan`: pure TCP scan of a bucket snapshot (`-resume` required. It dispatches, probes, writes output, and persists resume state in place)
 - `validate`: parse and validate input files only
 
+## Scan Output Batches
+
+`scan` writes both result files as one commit batch. The
+`-output-flush-results` flag sets the number of probe results in each batch.
+
+The default is `1000`. A value of `1` flushes each result. A value of `0`
+disables periodic flushes and keeps the final flush.
+
+Positive values have no fixed maximum. A resumed run uses its current flag
+value because the snapshot does not store this value.
+
+The scan updates progress after both writers flush. If output fails, a resumed
+scan repeats the complete uncommitted batch.
+
+## Target Expansion Limits
+
+All four commands verify the complete target expansion before network or output work.
+
+- `-target-count-limit` has a default value of `10000000` candidate addresses.
+- `-target-memory-limit-gb` has a default value of `16` decimal GB.
+- The memory estimate is `1000000000 + candidate count * 1500` bytes.
+- Set either flag to `0` to disable that limit.
+- A negative value is an error before the command reads an input file.
+
+The count includes each authorized input row before de-duplication, broadcast removal, and blocklist filtering.
+Rich deny rows contribute zero candidates. With default limits, an IPv4 `/9` is permitted and an IPv4 `/8` is rejected.
+
+`generate-buckets` stores the effective limits and candidate count in the snapshot.
+`scan` uses these stored limits unless an explicit scan flag replaces one limit.
+A legacy snapshot uses the new defaults.
+
+CAUTION: If both flags are `0`, the command has no target expansion limit.
+
+## Input, Snapshot, and Pressure Limits
+
+`port-scan` applies independent limits to files and HTTP responses.
+
+| Data | Default byte limit | Default item limit | Commands |
+|---|---:|---:|---|
+| CIDR CSV | `1` decimal GB | `10000000` records | All commands |
+| Port file | `1` decimal MB | `65535` records | `validate`, `generate-buckets`, `scan` |
+| Snapshot | `2` decimal GB | `10000000` chunks, ports, and unreachable IPs | `generate-buckets`, `scan` |
+| Pressure response | `1` decimal MB | `10000` OAuth data entries | `scan` |
+
+The related flags end in `-limit-gb`, `-limit-mb`, or `-limit`.
+A positive value replaces its default. A negative value is an error.
+
+Set one flag to `0` to disable only that limit.
+The command does not apply a hidden replacement limit.
+
+CAUTION: A disabled limit can exhaust memory or terminate the process.
+The operating system can terminate the process when the available memory is not sufficient.
+
+`generate-buckets` marks snapshots that exclude rich deny rows. If an unmarked snapshot has rich deny input, `scan` stops before TCP dispatch.
+
 Exit code behavior:
 
 - `0`: success
 - `1`: validation failed (`validate`) or scan runtime error (`scan`)
 - `2`: CLI parsing/config error
-- `130`: scan canceled by `SIGINT` (`Ctrl+C`)
+- `130`: command canceled by Ctrl+C or Windows Ctrl+Break
 
 ## Version Contract
 
@@ -322,6 +381,8 @@ any TCP dial" guarantee — `pre-ping` completes before `scan` runs.
 - To skip the reachability gate, skip the `pre-ping` step and run `generate-buckets` without `-unreachable-file`.
 - The bucket snapshot **is** the resume state: `scan` requires `-resume <bucket file>`, reads it at start, and on cancel or error saves progress back to that exact path (in place). A re-run of the same `scan` command continues from there.
 - The snapshot's `pre_scan_ping` envelope carries the unreachable blocklist, so `scan` reuses the same filtering decision without a ping.
+- Resume reads and parses the current input. It rebuilds only incomplete chunks and does not revalidate completed chunks.
+- Completed chunks can come from an earlier input revision. If all results must use one input revision, start a fresh run.
 - **If an output write fails, `scan` saves corrected resume progress.** Each result carries its zero-based task index. `scan` rewinds each affected chunk to its first dispatched task that did not reach all required writers. A chunk with no unwritten result keeps its cursor. The command logs `resume_state_rewound`, saves the corrected snapshot, and exits with the write error.
 
   Recovery: run the same `scan -resume` command. The resumed run covers every target and appends to the recorded output files. It can write some persisted rows again because results finish out of order. Duplicate rows can occur in both `scan_results-*.csv` and `opened_results-*.csv`. Use a CSV parser and the `ip` plus `port` columns to remove duplicates. Do not use line-based tools because quoted fields can contain newlines. The [3.0.1 release notes](docs/release-notes/3.0.1.md) include a standard-library script that keeps the last result for each target.
@@ -360,7 +421,7 @@ defaults are in [All flags](docs/cli/flags.md).
 | `-log-level` / `-format` / `-quiet` | all | Shared observability flags |
 | `-pre-scan-ping-timeout` | `pre-ping` | Ping reply-wait (default `100ms`). Removed from `scan` |
 | `-output` | `pre-ping`, `scan` | Output anchor: unreachable CSV (`pre-ping`), scan/opened CSVs (`scan`) |
-| `-port-file` | `generate-buckets` (primary), `scan` (fallback) | Required in basic mode. Ignored in rich mode |
+| `-port-file` | `generate-buckets` (primary), `scan` (legacy fallback) | Basic rows with blank `port` values require this file. Rich mode ignores it |
 | `-unreachable-file` | `generate-buckets` | Optional blocklist to subtract (a `pre-ping` output) — **NEW** |
 | `-buckets-out` (required) | `generate-buckets` | Bucket snapshot output path — **NEW** |
 | `-resume` (required) | `scan` | Bucket snapshot to scan. Updated in place on cancel or error |
@@ -443,9 +504,11 @@ cidr-compare -deny-file <file> -open-file <file>
 | `-deny-file` | string | required | Path to deny CSV file (or CIDR_COMPARE_DENY_FILE env var) |
 | `-open-file` | string | required | Path to open CSV file (or CIDR_COMPARE_OPEN_FILE env var) |
 
-**Input format (deny CSV):** CSV with columns `dst_network_segment` (CIDR notation, for example `10.0.0.0/24`) and `decision`. If headers are missing, the tool reads columns 0 and 1.
+**Input format (deny CSV):** CSV with official columns `dst_network_segment` and `decision`. If neither header exists, the tool reads columns 0 and 1.
 
-**Input format (open CSV):** CSV with columns `segment` (CIDR notation) and `status`. If headers are missing, the tool reads columns 0 and 1.
+**Input format (open CSV):** CSV with official columns `segment` and `status`. If neither header exists, the tool reads columns 0 and 1.
+
+If only one official header exists, the tool stops with exit code 1. Invalid nonblank records also cause exit code 1 and empty stdout.
 
 **Output format:** CSV with header `deny_cidr,open_cidr` followed by matching pairs where the deny CIDR contains the open CIDR.
 
@@ -533,6 +596,8 @@ This section lists high-impact flags. Full definitions are in [All flags](docs/c
 - IPv4 only (selectors, CIDR parsing, and expansion paths).
 - Port input accepts `<port>/tcp` only.
 - Pressure API polling fails hard after 3 consecutive failures.
+- Non-finite pressure values count as pressure API failures.
+- The first two pressure failures keep the current API pause state.
 - The pressure threshold defaults to `60`. No CLI flag exposes it.
 - The pause gate blocks new dispatch only. In-flight worker probes continue.
 - Dispatch order is chunk-serial (not cross-CIDR fair round-robin).

@@ -28,6 +28,24 @@ func TestNewPressureHandler_OK(t *testing.T) {
 	}
 }
 
+func TestNewPressureHandler_OversizeRecordsClientFailure(t *testing.T) {
+	stats := newPressureStats()
+	handler := newPressureHandlerWithStats("oversize", 0, newPressureState(20, nil, false), nil, stats)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/pressure", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if recorder.Body.Len() <= 1_000_000 {
+		t.Fatalf("response bytes = %d, want more than 1000000", recorder.Body.Len())
+	}
+	requests, failures := stats.snapshot()
+	if requests != 1 || failures != 1 {
+		t.Fatalf("stats = (%d, %d), want (1, 1)", requests, failures)
+	}
+}
+
 func TestNewPressureHandler_Fail(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/pressure", nil)

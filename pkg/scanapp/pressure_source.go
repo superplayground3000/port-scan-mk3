@@ -9,7 +9,7 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 )
 
-func newPressureSource(policy config.PressurePolicy) (PressureSource, error) {
+func newPressureSource(policy config.PressurePolicy, limits pressure.ResponseLimits) (PressureSource, error) {
 	values, err := policy.Resolve()
 	if err != nil {
 		return nil, err
@@ -18,14 +18,14 @@ func newPressureSource(policy config.PressurePolicy) (PressureSource, error) {
 
 	switch values.Kind {
 	case config.PressureKindSimple:
-		return pressure.NewSimpleHTTP(values.Endpoint, client)
+		return pressure.NewSimpleHTTPWithLimits(values.Endpoint, client, limits)
 	case config.PressureKindAuthenticated:
-		return pressure.NewOAuthMulti(pressure.OAuthConfig{
+		return pressure.NewOAuthMultiWithLimits(pressure.OAuthConfig{
 			AuthEndpoint:  values.AuthEndpoint,
 			DataEndpoints: values.DataEndpoints,
 			ClientID:      values.ClientID,
 			ClientSecret:  values.ClientSecret,
-		}, client)
+		}, client, limits)
 	case config.PressureKindDisabled:
 		return nil, nil
 	default:

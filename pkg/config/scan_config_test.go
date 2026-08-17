@@ -2,7 +2,9 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,18 +30,19 @@ func TestParseScanReturnsDefaults(t *testing.T) {
 	}
 
 	want := config.ScanValues{
-		CIDRFile:       "targets.csv",
-		CIDRIPCol:      "ip",
-		CIDRIPCidrCol:  "ip_cidr",
-		ResumeInput:    "buckets.json",
-		Output:         "scan_results.csv",
-		Workers:        10,
-		DialTimeout:    100 * time.Millisecond,
-		DispatchDelay:  10 * time.Millisecond,
-		BucketRate:     100,
-		BucketCapacity: 100,
-		LogLevel:       "info",
-		Format:         "human",
+		CIDRFile:           "targets.csv",
+		CIDRIPCol:          "ip",
+		CIDRIPCidrCol:      "ip_cidr",
+		ResumeInput:        "buckets.json",
+		Output:             "scan_results.csv",
+		OutputFlushResults: 1000,
+		Workers:            10,
+		DialTimeout:        100 * time.Millisecond,
+		DispatchDelay:      10 * time.Millisecond,
+		BucketRate:         100,
+		BucketCapacity:     100,
+		LogLevel:           "info",
+		Format:             "human",
 	}
 	wantPressure := config.PressureValues{
 		Kind:     config.PressureKindSimple,
@@ -52,6 +55,37 @@ func TestParseScanReturnsDefaults(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotPressure, wantPressure) {
 		t.Fatalf("Pressure.Resolve() = %#v, want %#v", gotPressure, wantPressure)
+	}
+}
+
+func TestParseScanAcceptsEveryOutputFlushMode(t *testing.T) {
+	for _, interval := range []string{"0", "1", "1000", "9223372036854775807"} {
+		cfg, err := config.ParseScan([]string{
+			"-cidr-file", "targets.csv",
+			"-resume", "buckets.json",
+			"-output-flush-results", interval,
+		})
+		if err != nil {
+			t.Fatalf("interval=%s ParseScan() error = %v", interval, err)
+		}
+		values, err := cfg.Resolve()
+		if err != nil {
+			t.Fatalf("interval=%s Resolve() error = %v", interval, err)
+		}
+		if got := values.OutputFlushResults; fmt.Sprint(got) != interval {
+			t.Fatalf("OutputFlushResults = %d, want %s", got, interval)
+		}
+	}
+}
+
+func TestParseScanRejectsNegativeOutputFlushBeforeIO(t *testing.T) {
+	_, err := config.ParseScan([]string{
+		"-cidr-file", "targets.csv",
+		"-resume", "buckets.json",
+		"-output-flush-results", "-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "-output-flush-results must be >= 0") {
+		t.Fatalf("ParseScan() error = %v", err)
 	}
 }
 
@@ -259,20 +293,21 @@ func TestParseScanReturnsAcceptedFlagsAndAuthenticatedPolicy(t *testing.T) {
 		t.Fatalf("Pressure.Resolve() error = %v", err)
 	}
 	want := config.ScanValues{
-		CIDRFile:       "custom.csv",
-		CIDRIPCol:      "address",
-		CIDRIPCidrCol:  "network",
-		PortFile:       "ports.csv",
-		ResumeInput:    "custom.json",
-		Output:         "reports",
-		Workers:        24,
-		DialTimeout:    2 * time.Second,
-		DispatchDelay:  20 * time.Millisecond,
-		BucketRate:     80,
-		BucketCapacity: 120,
-		LogLevel:       "debug",
-		Format:         "json",
-		Quiet:          true,
+		CIDRFile:           "custom.csv",
+		CIDRIPCol:          "address",
+		CIDRIPCidrCol:      "network",
+		PortFile:           "ports.csv",
+		ResumeInput:        "custom.json",
+		Output:             "reports",
+		OutputFlushResults: 1000,
+		Workers:            24,
+		DialTimeout:        2 * time.Second,
+		DispatchDelay:      20 * time.Millisecond,
+		BucketRate:         80,
+		BucketCapacity:     120,
+		LogLevel:           "debug",
+		Format:             "json",
+		Quiet:              true,
 	}
 	wantPressure := config.PressureValues{
 		Kind:          config.PressureKindAuthenticated,
@@ -354,6 +389,7 @@ func TestNewScanRejectsInvalidValues(t *testing.T) {
 		{name: "blank IP column", change: func(v *config.ScanValues) { v.CIDRIPCol = " " }},
 		{name: "blank CIDR column", change: func(v *config.ScanValues) { v.CIDRIPCidrCol = " " }},
 		{name: "missing resume input", change: func(v *config.ScanValues) { v.ResumeInput = "" }},
+		{name: "negative output flush", change: func(v *config.ScanValues) { v.OutputFlushResults = -1 }},
 		{name: "zero workers", change: func(v *config.ScanValues) { v.Workers = 0 }},
 		{name: "too many workers", change: func(v *config.ScanValues) { v.Workers = config.MaxWorkers + 1 }},
 		{name: "zero bucket rate", change: func(v *config.ScanValues) { v.BucketRate = 0 }},

@@ -2,7 +2,6 @@ package scanapp
 
 import (
 	"context"
-	"errors"
 	"io"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
@@ -16,20 +15,23 @@ type resultLoopChannels struct {
 	executorErrCh <-chan error
 	dispatchErrCh <-chan error
 	resultCh      <-chan scanResult
+	abandonedCh   <-chan scanTask
 }
 
 // resultLoopDeps carries the collaborators the loop needs to persist results
 // and emit progress/telemetry. Kept as a struct so runResultLoop stays
 // unit-testable without reconstructing the whole Run pipeline.
 type resultLoopDeps struct {
-	outputs        *batchOutputs
-	runtimes       []*chunkRuntime
-	resultObserver resultTelemetryObserver
-	stdout         io.Writer
-	logger         *scanLogger
-	ctrl           *speedctrl.Controller
-	progressStep   int
-	quiet          bool
+	outputs                *batchOutputs
+	runtimes               []*chunkRuntime
+	resultObserver         resultTelemetryObserver
+	stdout                 io.Writer
+	logger                 *scanLogger
+	ctrl                   *speedctrl.Controller
+	progressStep           int
+	quiet                  bool
+	outputFlushResults     int
+	resultObserverCallback func(completed uint64)
 }
 
 // runResultLoop consumes the scan pipeline's channels until dispatch is done,
@@ -52,6 +54,22 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 	executorErrCh := chans.executorErrCh
 	dispatchErrCh := chans.dispatchErrCh
 	resultCh := chans.resultCh
+	abandonedCh := chans.abandonedCh
+	var committer *outputCommitter
+	if deps.outputs != nil {
+		committer = newOutputCommitter(outputCommitterConfig{
+			outputs:                deps.outputs,
+			flushInterval:          deps.outputFlushResults,
+			runtimes:               deps.runtimes,
+			resultObserver:         deps.resultObserver,
+			resultObserverCallback: deps.resultObserverCallback,
+			stdout:                 deps.stdout,
+			logger:                 deps.logger,
+			ctrl:                   deps.ctrl,
+			progressStep:           deps.progressStep,
+			quiet:                  deps.quiet,
+		})
+	}
 
 	// The loop must also keep running while executorErrCh is still open
 	// (executorErrCh != nil): a recovered worker panic and the result-channel
@@ -62,7 +80,7 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 	// sending, and the workerWG waiter closes it via the same sync.Once after all
 	// workers finish — so draining it to nil is guaranteed and the loop still
 	// terminates.
-	for !dispatchDone || resultCh != nil || executorErrCh != nil {
+	for !dispatchDone || resultCh != nil || executorErrCh != nil || abandonedCh != nil {
 		select {
 		case apiErr := <-apiErrCh:
 			if apiErr != nil && runErr == nil {
@@ -87,27 +105,55 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 				resultCh = nil
 				continue
 			}
-			// Only a result that reached the output file counts as scanned. A
-			// result written after runErr was set is never attempted, and a write
-			// that failed persisted nothing — counting either would inflate the
-			// scanned counter and the completion summary past the rows actually on
-			// disk (issue #51).
-			persisted := false
-			if runErr == nil {
-				if err := writeScanRecord(deps.outputs.scanWriter, deps.outputs.openOnlyWriter, res.record); err != nil {
+			// Only a result that reached the output file counts as scanned. A late
+			// in-flight result is still written after a non-output fatal error. An
+			// output error prevents later writes because their result is unknown.
+			if committer != nil {
+				if err := committer.Accept(res); err != nil {
 					runErr = err
 					cancel()
-				} else {
-					persisted = true
 				}
 			}
-			if persisted {
-				applyScanResult(deps.runtimes, res, &summary, deps.resultObserver)
-				emitScanResultEvents(deps.stdout, deps.logger, deps.ctrl, deps.progressStep, deps.runtimes, res, &summary, deps.quiet)
-			} else if errors.Is(runErr, errScanOutputWrite) {
-				deps.runtimes[res.chunkIdx].tracker.MarkUnwritten(res.taskIdx)
+		case abandoned, ok := <-abandonedCh:
+			if !ok {
+				abandonedCh = nil
+				continue
 			}
+			deps.runtimes[abandoned.chunkIdx].tracker.MarkUnwritten(abandoned.taskIdx)
 		}
+	}
+	// apiErrCh is selected above but is deliberately NOT part of the exit
+	// condition, so the loop can stop while a fatal pressure error still sits in
+	// its buffer. Draining it here is what stops that error from being lost, and
+	// it is the same defect class as issue #59: a select whose termination is
+	// decided by a subset of its cases can drop any error-bearing case outside
+	// that subset.
+	//
+	// It cannot be solved the way #59 was, by adding the channel to the exit
+	// condition. pollPressureAPI never closes apiErrCh, and it returns on
+	// ctx.Done, which for a successful scan happens only after this function has
+	// already returned. Waiting for apiErrCh to drain to nil would therefore
+	// deadlock every successful run.
+	//
+	// One receive is enough: pollPressureAPI sends at most once, through a
+	// non-blocking send, and returns immediately afterwards. The receive is
+	// non-blocking so a run with no pressure error is unaffected.
+	if runErr == nil && apiErrCh != nil {
+		select {
+		case apiErr := <-apiErrCh:
+			if apiErr != nil {
+				runErr = apiErr
+				cancel()
+			}
+		default:
+		}
+	}
+	if committer != nil {
+		if err := committer.Finish(); err != nil {
+			runErr = err
+			cancel()
+		}
+		summary = committer.Summary()
 	}
 
 	return summary, dispatchErr, runErr

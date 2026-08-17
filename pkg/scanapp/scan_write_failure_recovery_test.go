@@ -80,3 +80,54 @@ func TestRun_AfterWriteFailure_ResumeCoversEveryTarget(t *testing.T) {
 			len(outputs), len(openOnly))
 	}
 }
+
+func TestRun_OutputFailureInjectionUsesRealWritersAndSavesRecoveryState(t *testing.T) {
+	cfg, _, bucketsFile := newInterruptibleScanConfig(t)
+	var snapshotTelemetry SnapshotTelemetry
+
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		Dial:            refusingDial,
+		OutputFailure:   &OutputFailureInjection{FailOnResult: 3},
+		SnapshotTelemetryObserver: func(telemetry SnapshotTelemetry) {
+			snapshotTelemetry = telemetry
+		},
+	})
+	if !errors.Is(runErr, ErrInjectedOutputFailure) {
+		t.Fatalf("Run() error = %v, want injected output failure", runErr)
+	}
+	snapshot, err := state.LoadSnapshot(bucketsFile)
+	if err != nil {
+		t.Fatalf("load recovery snapshot: %v", err)
+	}
+	var remaining int
+	for _, chunk := range snapshot.Chunks {
+		remaining += chunk.Remaining()
+	}
+	if remaining == 0 {
+		t.Fatal("output failure saved no remaining work")
+	}
+	if snapshotTelemetry.RewoundChunks == 0 {
+		t.Fatalf("snapshot telemetry = %+v, want rewound chunks", snapshotTelemetry)
+	}
+}
+
+func TestRunRejectsInvalidOutputFailureInjection(t *testing.T) {
+	cfg, _, _ := newInterruptibleScanConfig(t)
+
+	for _, options := range []RunOptions{
+		{DisableKeyboard: true, OutputFailure: &OutputFailureInjection{}},
+		{
+			DisableKeyboard: true,
+			OutputFailure:   &OutputFailureInjection{FailOnResult: 1},
+			batchOutputsOpener: func(string, string, bool) (*batchOutputs, error) {
+				return nil, errors.New("must not run")
+			},
+		},
+	} {
+		err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, options)
+		if err == nil {
+			t.Fatal("Run() accepted an invalid output failure injection")
+		}
+	}
+}

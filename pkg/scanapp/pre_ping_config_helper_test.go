@@ -6,7 +6,7 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 )
 
-func mustPrePingConfig(t *testing.T, values config.PrePingValues) config.PrePingConfig {
+func mustPrePingConfig(t testing.TB, values config.PrePingValues) config.PrePingConfig {
 	t.Helper()
 
 	cfg, err := config.NewPrePing(values)

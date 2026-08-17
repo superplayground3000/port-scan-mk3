@@ -233,7 +233,7 @@ func TestBuildRichGroups_WhenDuplicateExecutionKey_PreservesMergedContext(t *tes
 			FabName:           "10.0.0.11",
 			CIDRName:          "web",
 			ServiceLabel:      "web",
-			Decision:          "deny",
+			Decision:          "accept",
 			PolicyID:          "P-2",
 			Reason:            "audit",
 			SrcIP:             "10.0.0.11",
@@ -257,7 +257,7 @@ func TestBuildRichGroups_WhenDuplicateExecutionKey_PreservesMergedContext(t *tes
 	if got.targets[0].meta.policyID != "P-1|P-2" {
 		t.Fatalf("unexpected merged policy id: %s", got.targets[0].meta.policyID)
 	}
-	if got.targets[0].meta.decision != "accept|deny" {
+	if got.targets[0].meta.decision != "accept" {
 		t.Fatalf("unexpected merged decision: %s", got.targets[0].meta.decision)
 	}
 }
@@ -284,7 +284,7 @@ func TestBuildRichGroups_WhenExecutionKeyAppearsAcrossCIDRs_DedupGloballyToFirst
 			DstNetworkSegment: "127.0.0.0/25",
 			Port:              8080,
 			PolicyID:          "P-2",
-			Decision:          "deny",
+			Decision:          "accept",
 			Reason:            "audit",
 			SrcIP:             "10.0.0.11",
 		},
@@ -486,6 +486,54 @@ func TestIndexToRuntimeTarget_WhenRichTargetsHaveDedicatedPorts_MapsOneTaskPerTa
 
 	if _, _, err := indexToRuntimeTarget(targets, ports, 2); err == nil {
 		t.Fatal("expected out-of-range error for idx 2")
+	}
+}
+
+func TestIndexToRuntimeTarget_WhenTargetPortsAreMixed_UsesRuntimePort(t *testing.T) {
+	targets := []scanTarget{
+		{ip: "10.0.0.1", port: 443},
+		{ip: "10.0.0.2"},
+	}
+	target, port, err := indexToRuntimeTarget(targets, []int{8443}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ip != "10.0.0.2" || port != 8443 {
+		t.Fatalf("mixed target mapping = %s:%d, want 10.0.0.2:8443", target.ip, port)
+	}
+}
+
+func TestIndexToChunkRuntimeTarget_DedicatedPortLookupDoesNotScaleWithTargetCount(t *testing.T) {
+	makeRuntime := func(count int) *chunkRuntime {
+		targets := make([]scanTarget, count)
+		for index := range targets {
+			targets[index] = scanTarget{ip: "192.0.2.1", port: 443}
+		}
+		return &chunkRuntime{targets: targets, ports: []int{1}}
+	}
+	measure := func(targetCount int) testing.BenchmarkResult {
+		runtime := makeRuntime(targetCount)
+		observed := 0
+		result := testing.Benchmark(func(b *testing.B) {
+			for index := 0; index < b.N; index++ {
+				target, port, err := indexToChunkRuntimeTarget(runtime, index%targetCount)
+				if err != nil {
+					b.Fatal(err)
+				}
+				observed += len(target.ip) + port
+			}
+		})
+		if observed == 0 {
+			t.Fatal("lookup result was not consumed")
+		}
+		return result
+	}
+
+	small := measure(1)
+	large := measure(65_536)
+	t.Logf("dedicated-port lookup: one=%s, 65536=%s", small, large)
+	if large.NsPerOp() > small.NsPerOp()*32 {
+		t.Fatalf("dedicated-port lookup scales with target count: one=%s, 65536=%s", small, large)
 	}
 }
 

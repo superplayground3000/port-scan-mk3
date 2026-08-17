@@ -40,12 +40,12 @@
 package input
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
-
-	"github.com/xuxiping/port-scan-mk3/pkg/netutil"
 )
 
 // ParseRichRows parses and validates rich-mode CIDR input rows.
@@ -79,13 +79,23 @@ import (
 //	    records, summary, err := input.ParseRichRows(allRows, headerIdx)
 //	}
 func ParseRichRows(rows [][]string, idx map[string]int) ([]CIDRRecord, RichParseSummary, error) {
+	return ParseRichRowsContext(context.Background(), rows, idx)
+}
+
+// ParseRichRowsContext parses rich rows and stops at a row transition when ctx
+// is canceled.
+func ParseRichRowsContext(ctx context.Context, rows [][]string, idx map[string]int) ([]CIDRRecord, RichParseSummary, error) {
 	summary := RichParseSummary{
 		TotalRows:       max(0, len(rows)-1),
 		FailureByReason: map[string]int{},
 	}
 	out := make([]CIDRRecord, 0, summary.TotalRows)
+	pool := newRichStringPool()
 	for i := 1; i < len(rows); i++ {
-		rec, code, err := parseRichRow(rows[i], i+1, idx)
+		if err := ctx.Err(); err != nil {
+			return out, summary, err
+		}
+		rec, code, err := parseRichRow(rows[i], i+1, idx, pool)
 		if err != nil {
 			summary.InvalidRows++
 			summary.FailureByReason[code]++
@@ -107,7 +117,7 @@ func ParseRichRows(rows [][]string, idx map[string]int) ([]CIDRRecord, RichParse
 	return out, summary, nil
 }
 
-func parseRichRow(row []string, rowNumber int, idx map[string]int) (CIDRRecord, string, error) {
+func parseRichRow(row []string, rowNumber int, idx map[string]int, pool *richStringPool) (CIDRRecord, string, error) {
 	get := func(field string) string {
 		i := idx[field]
 		if i < 0 || i >= len(row) {
@@ -127,104 +137,167 @@ func parseRichRow(row []string, rowNumber int, idx map[string]int) (CIDRRecord, 
 	policyID := get(RichFieldPolicyID)
 	reason := get(RichFieldReason)
 
-	required := map[string]string{
-		RichFieldSrcIP:             srcIPRaw,
-		RichFieldSrcNetworkSegment: srcSegRaw,
-		RichFieldDstIP:             dstIPRaw,
-		RichFieldDstNetworkSegment: dstSegRaw,
-		RichFieldServiceLabel:      serviceLabel,
-		RichFieldProtocol:          protocolRaw,
-		RichFieldPort:              portRaw,
-		RichFieldDecision:          decisionRaw,
-		RichFieldPolicyID:          policyID,
-		RichFieldReason:            reason,
+	required := [...]struct {
+		field string
+		value string
+	}{
+		{RichFieldSrcIP, srcIPRaw},
+		{RichFieldSrcNetworkSegment, srcSegRaw},
+		{RichFieldDstIP, dstIPRaw},
+		{RichFieldDstNetworkSegment, dstSegRaw},
+		{RichFieldServiceLabel, serviceLabel},
+		{RichFieldProtocol, protocolRaw},
+		{RichFieldPort, portRaw},
+		{RichFieldDecision, decisionRaw},
+		{RichFieldPolicyID, policyID},
+		{RichFieldReason, reason},
 	}
-	for field, value := range required {
+	for _, item := range required {
+		field, value := item.field, item.value
 		if value == "" {
 			return CIDRRecord{}, ValidationMissingField, fmt.Errorf("missing required field %s", field)
 		}
 	}
 
-	srcIP := net.ParseIP(srcIPRaw)
-	if srcIP == nil {
+	srcAddr, err := netip.ParseAddr(srcIPRaw)
+	if err != nil {
 		return CIDRRecord{}, ValidationInvalidSrcIP, fmt.Errorf("invalid src_ip %q", srcIPRaw)
 	}
-	srcIP = srcIP.To4()
-	if srcIP == nil {
+	srcAddr = srcAddr.Unmap()
+	if !srcAddr.Is4() {
 		return CIDRRecord{}, ValidationInvalidSrcIP, fmt.Errorf("src_ip %q is not an IPv4 address", srcIPRaw)
 	}
-	dstIP := net.ParseIP(dstIPRaw)
-	if dstIP == nil {
+	dstAddr, err := netip.ParseAddr(dstIPRaw)
+	if err != nil {
 		return CIDRRecord{}, ValidationInvalidDstIP, fmt.Errorf("invalid dst_ip %q", dstIPRaw)
 	}
-	dstIP = dstIP.To4()
-	if dstIP == nil {
+	dstAddr = dstAddr.Unmap()
+	if !dstAddr.Is4() {
 		return CIDRRecord{}, ValidationInvalidDstIP, fmt.Errorf("dst_ip %q is not an IPv4 address", dstIPRaw)
 	}
 
-	_, srcSeg, err := net.ParseCIDR(srcSegRaw)
+	srcPrefix, err := netip.ParsePrefix(srcSegRaw)
 	if err != nil {
 		return CIDRRecord{}, ValidationInvalidSrcSegment, fmt.Errorf("invalid src_network_segment %q", srcSegRaw)
 	}
-	if srcSeg.IP.To4() == nil {
+	if !srcPrefix.Addr().Unmap().Is4() {
 		return CIDRRecord{}, ValidationInvalidSrcSegment, fmt.Errorf("src_network_segment %q is not an IPv4 address", srcSegRaw)
 	}
-	_, dstSeg, err := net.ParseCIDR(dstSegRaw)
+	srcPrefix = netip.PrefixFrom(srcPrefix.Addr().Unmap(), srcPrefix.Bits()).Masked()
+	dstPrefix, err := netip.ParsePrefix(dstSegRaw)
 	if err != nil {
 		return CIDRRecord{}, ValidationInvalidDstSegment, fmt.Errorf("invalid dst_network_segment %q", dstSegRaw)
 	}
-	if dstSeg.IP.To4() == nil {
+	if !dstPrefix.Addr().Unmap().Is4() {
 		return CIDRRecord{}, ValidationInvalidDstSegment, fmt.Errorf("dst_network_segment %q is not an IPv4 address", dstSegRaw)
 	}
-	if !srcSeg.Contains(srcIP) {
-		return CIDRRecord{}, ValidationSrcContainmentFail, fmt.Errorf("src_ip %s not in src_network_segment %s", srcIP.String(), srcSeg.String())
+	dstPrefix = netip.PrefixFrom(dstPrefix.Addr().Unmap(), dstPrefix.Bits()).Masked()
+	if !srcPrefix.Contains(srcAddr) {
+		return CIDRRecord{}, ValidationSrcContainmentFail, fmt.Errorf("src_ip %s not in src_network_segment %s", srcAddr, srcPrefix)
 	}
-	if !dstSeg.Contains(dstIP) {
-		return CIDRRecord{}, ValidationDstContainmentFail, fmt.Errorf("dst_ip %s not in dst_network_segment %s", dstIP.String(), dstSeg.String())
+	if !dstPrefix.Contains(dstAddr) {
+		return CIDRRecord{}, ValidationDstContainmentFail, fmt.Errorf("dst_ip %s not in dst_network_segment %s", dstAddr, dstPrefix)
 	}
 
-	protocol := strings.ToLower(protocolRaw)
-	if protocol != "tcp" {
+	if !strings.EqualFold(protocolRaw, "tcp") {
 		return CIDRRecord{}, ValidationInvalidProtocol, fmt.Errorf("invalid protocol %q", protocolRaw)
 	}
-	decision := strings.ToLower(decisionRaw)
-	if decision != "accept" && decision != "deny" {
+	decision := "accept"
+	if strings.EqualFold(decisionRaw, "deny") {
+		decision = "deny"
+	} else if !strings.EqualFold(decisionRaw, decision) {
 		return CIDRRecord{}, ValidationInvalidDecision, fmt.Errorf("invalid decision %q", decisionRaw)
 	}
 	port, err := strconv.Atoi(portRaw)
 	if err != nil || port < 1 || port > 65535 {
 		return CIDRRecord{}, ValidationInvalidPort, fmt.Errorf("invalid port %q", portRaw)
 	}
-	key, err := netutil.BuildExecutionKey(dstIP.String(), port, protocol)
-	if err != nil {
-		return CIDRRecord{}, ValidationInvalidPort, err
+	srcIP := pool.internOwned(srcAddr.String())
+	dstIP := pool.internOwned(dstAddr.String())
+	srcSegment := pool.internOwned(srcPrefix.String())
+	dstSegment := pool.internOwned(dstPrefix.String())
+	serviceLabel = pool.internBorrowed(serviceLabel)
+	policyID = pool.internBorrowed(policyID)
+	reason = pool.internBorrowed(reason)
+	key := dstIP + ":" + strconv.Itoa(port) + "/tcp"
+	dstNet := prefixIPNet(dstPrefix)
+	selector := addressIPNet(dstAddr)
+	if dstPrefix.Bits() == 32 && dstPrefix.Addr() == dstAddr {
+		selector = dstNet
 	}
 
 	rec := CIDRRecord{
-		FabName:             srcIP.String(),
+		FabName:             srcIP,
+		CIDR:                dstSegment,
 		CIDRName:            serviceLabel,
-		IPRaw:               dstIP.String(),
-		IPCidrRaw:           dstSeg.String(),
+		Net:                 dstNet,
+		IPRaw:               dstIP,
+		IPCidrRaw:           dstSegment,
+		Selector:            selector,
 		RowNumber:           rowNumber,
 		IPColName:           RichFieldDstIP,
 		IPCidrCol:           RichFieldDstNetworkSegment,
 		IsRich:              true,
 		IsValid:             true,
-		SrcIP:               srcIP.String(),
-		SrcNetworkSegment:   srcSeg.String(),
-		DstIP:               dstIP.String(),
-		DstNetworkSegment:   dstSeg.String(),
+		SrcIP:               srcIP,
+		SrcNetworkSegment:   srcSegment,
+		DstIP:               dstIP,
+		DstNetworkSegment:   dstSegment,
 		ServiceLabel:        serviceLabel,
-		Protocol:            protocol,
+		Protocol:            "tcp",
 		Port:                port,
 		Decision:            decision,
 		PolicyID:            policyID,
 		Reason:              reason,
 		ExecutionKey:        key,
-		RichInputIdentifier: fmt.Sprintf("row:%d", rowNumber),
-	}
-	if err := rec.Parse(); err != nil {
-		return CIDRRecord{}, ValidationInvalidDstIP, err
+		RichInputIdentifier: "row:" + strconv.Itoa(rowNumber),
 	}
 	return rec, "", nil
+}
+
+const richStringPoolCapacity = 4_096
+
+type richStringPool struct {
+	values map[string]string
+}
+
+func newRichStringPool() *richStringPool {
+	return &richStringPool{values: make(map[string]string, richStringPoolCapacity)}
+}
+
+func (pool *richStringPool) internOwned(value string) string {
+	if interned, ok := pool.values[value]; ok {
+		return interned
+	}
+	if len(pool.values) < richStringPoolCapacity {
+		pool.values[value] = value
+	}
+	return value
+}
+
+func (pool *richStringPool) internBorrowed(value string) string {
+	if interned, ok := pool.values[value]; ok {
+		return interned
+	}
+	owned := strings.Clone(value)
+	if len(pool.values) < richStringPoolCapacity {
+		pool.values[owned] = owned
+	}
+	return owned
+}
+
+func prefixIPNet(prefix netip.Prefix) *net.IPNet {
+	address := prefix.Addr().As4()
+	return &net.IPNet{
+		IP:   net.IP{address[0], address[1], address[2], address[3]},
+		Mask: net.CIDRMask(prefix.Bits(), 32),
+	}
+}
+
+func addressIPNet(address netip.Addr) *net.IPNet {
+	value := address.As4()
+	return &net.IPNet{
+		IP:   net.IP{value[0], value[1], value[2], value[3]},
+		Mask: net.IPMask{0xff, 0xff, 0xff, 0xff},
+	}
 }

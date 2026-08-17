@@ -59,17 +59,32 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	if err != nil {
 		return fmt.Errorf("resolve bucket configuration: %w", err)
 	}
+	expansion, err := resolveTargetExpansion(configuration)
+	if err != nil {
+		return err
+	}
+	resourceLimits, err := resolveGenerateBucketsLimits(configuration)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(values.SnapshotOutput) == "" {
 		return fmt.Errorf("generate-buckets requires -buckets-out")
 	}
-	inputs, err := loadRunInputs(inputConfiguration{
-		cidrFile:      values.CIDRFile,
-		cidrIPCol:     values.CIDRIPCol,
-		cidrIPCidrCol: values.CIDRIPCidrCol,
-		portFile:      values.PortFile,
+	inputs, err := loadRunInputsContext(ctx, inputConfiguration{
+		cidrFile:         values.CIDRFile,
+		cidrIPCol:        values.CIDRIPCol,
+		cidrIPCidrCol:    values.CIDRIPCidrCol,
+		portFile:         values.PortFile,
+		allowMissingPort: true,
+		cidrLimits:       resourceLimits.CIDR,
+		portLimits:       resourceLimits.Port,
 	}, defaultRunDependencies())
 	if err != nil {
 		return fmt.Errorf("generate-buckets: load inputs: %w", err)
+	}
+	expansionEstimate, err := task.EstimateAuthorizedCIDRRecords(inputs.cidrRecords, expansion.Limits, nil)
+	if err != nil {
+		return fmt.Errorf("generate-buckets: estimate target expansion: %w", err)
 	}
 
 	blocklist, err := parseUnreachableBlocklist(values.BlocklistFile)
@@ -85,7 +100,12 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	if richMode {
 		groups, err = buildRichGroupsWithPredicate(inputs.cidrRecords, reachable)
 	} else {
-		groups, err = buildCIDRGroupsWithPredicate(inputs.cidrRecords, reachable)
+		resolution, resolveErr := resolveBasicTargetsContext(ctx, inputs.cidrRecords, inputs.portSpecs, reachable)
+		if resolveErr != nil {
+			err = resolveErr
+		} else {
+			groups = resolution.groups
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("generate-buckets: build CIDR groups: %w", err)
@@ -102,16 +122,8 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 		reporter = progress.New("generate-buckets", len(keys), values.ProgressInterval, stderr)
 	}
 
-	var rawPorts []string
-	if !richMode {
-		rawPorts = make([]string, 0, len(inputs.portSpecs))
-		for _, p := range inputs.portSpecs {
-			rawPorts = append(rawPorts, p.Raw)
-		}
-	}
-
 	chunks := make([]task.Chunk, len(keys))
-	if err := fanOutGroupChunks(ctx, keys, groups, richMode, rawPorts, values.Workers, reporter, chunks); err != nil {
+	if err := fanOutGroupChunks(ctx, keys, groups, richMode, values.Workers, reporter, chunks); err != nil {
 		return fmt.Errorf("generate-buckets: build chunks: %w", err)
 	}
 	reporter.Done()
@@ -122,14 +134,27 @@ func GenerateBuckets(ctx context.Context, configuration GenerateBucketsConfigura
 	sort.Slice(chunks, func(i, j int) bool { return chunks[i].CIDR < chunks[j].CIDR })
 
 	snap := state.Snapshot{
-		Chunks: chunks,
+		Chunks:                 chunks,
+		RichDenyExcluded:       true,
+		TargetSemanticsVersion: state.CurrentTargetSemanticsVersion,
+		TargetExpansion: &state.TargetExpansionState{
+			CandidateCount: expansionEstimate.CandidateCount,
+			CandidateLimit: int64(expansion.Limits.CandidateLimit()),
+			MemoryLimitGB:  int64(expansion.Limits.MemoryLimitGB()),
+		},
 		PreScanPing: state.PreScanPingState{
 			Enabled:            true,
 			TimeoutMS:          0,
 			UnreachableIPv4U32: blocklist,
 		},
 	}
-	if err := state.SaveSnapshot(values.SnapshotOutput, snap); err != nil {
+	if !richMode {
+		snap.BasicPortFallback = make([]string, 0, len(inputs.portSpecs))
+		for _, port := range inputs.portSpecs {
+			snap.BasicPortFallback = append(snap.BasicPortFallback, port.Raw)
+		}
+	}
+	if err := state.SaveSnapshotWithLimits(values.SnapshotOutput, snap, resourceLimits.Snapshot); err != nil {
 		return fmt.Errorf("generate-buckets: write snapshot %s: %w", values.SnapshotOutput, err)
 	}
 	return nil
@@ -145,7 +170,6 @@ func fanOutGroupChunks(
 	keys []string,
 	groups map[string]cidrGroup,
 	richMode bool,
-	rawPorts []string,
 	workers int,
 	reporter progress.Reporter,
 	out []task.Chunk,
@@ -181,7 +205,7 @@ func fanOutGroupChunks(
 					if richMode {
 						out[i] = richChunkFromGroup(key, groups[key])
 					} else {
-						out[i] = basicChunkFromGroup(key, groups[key], rawPorts)
+						out[i] = basicChunkFromGroup(groups[key])
 					}
 					reporter.Inc()
 				}

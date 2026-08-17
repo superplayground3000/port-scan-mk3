@@ -1,6 +1,6 @@
 # cidr-compare Specification
 
-**Tool**: `cmd/cidr-compare` | **Revised**: 2026-05-03
+**Tool**: `cmd/cidr-compare` | **Revised**: 2026-08-14
 
 ## Overview
 
@@ -25,7 +25,9 @@ Both flags are required. Either pass as CLI flags or set via environment variabl
 
 ### Deny CSV
 
-Expects a CSV with a header row. Columns matched by name with fallback to column index.
+The input requires a CSV header record. Both official headers select name-based columns.
+
+If neither official header exists, the tool uses columns 0 and 1. One official header is an error.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -43,7 +45,9 @@ Rows where `decision` is not `deny` (case-insensitive) are skipped silently.
 
 ### Open CSV
 
-Expects a CSV with a header row. Columns matched by name with fallback to column index.
+The input requires a CSV header record. Both official headers select name-based columns.
+
+If neither official header exists, the tool uses columns 0 and 1. One official header is an error.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -82,8 +86,15 @@ An open CIDR within multiple deny CIDRs produces multiple output rows (one per m
 - Missing `-deny-file` or `-open-file` (flags or env vars not set): prints usage to stderr, exits 1
 - Deny file does not exist or cannot be opened: exits 1 with message
 - Open file does not exist or cannot be opened: exits 1 with message
-- Malformed CSV rows are skipped with a warning; they do not cause exit 1
-- Invalid CIDR values are skipped with a warning; they do not cause exit 1
+- An empty file, a missing header, or a partial official header causes exit 1.
+- A malformed CSV record, a short record, or an invalid CIDR causes exit 1.
+
+The parser ignores blank lines and whitespace-only lines. It accepts quoted fields that contain newlines.
+
+The parser stops at the first other invalid record. The command writes no stdout data for an input error.
+
+The diagnostic gives the input role and the input path. It prints the path
+without quotation marks. A Windows path thus keeps its single backslashes.
 
 ## Building and Testing
 

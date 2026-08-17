@@ -49,16 +49,36 @@ func sortedUniqueIPv4U32(values []uint32) []uint32 {
 	return out
 }
 
-func collectUniquePreScanIPs(inputs runInputs) ([]string, error) {
-	uniq := make(map[uint32]string)
-	for _, rec := range inputs.cidrRecords {
-		targets, err := preScanTargetsFromRecord(rec)
+type authorizedPreScanPlan struct {
+	richGroups map[string]cidrGroup
+	richKeys   []string
+	basicRows  []input.CIDRRecord
+}
+
+func buildAuthorizedPreScanPlan(inputs runInputs) (authorizedPreScanPlan, error) {
+	if hasRichRecords(inputs.cidrRecords) {
+		groups, err := buildRichGroups(inputs.cidrRecords)
 		if err != nil {
-			return nil, err
+			return authorizedPreScanPlan{}, err
 		}
-		for _, target := range targets {
-			uniq[ipv4ToUint32(target.ip)] = target.ip
+		keys := make([]string, 0, len(groups))
+		for key := range groups {
+			keys = append(keys, key)
 		}
+		sort.Strings(keys)
+		return authorizedPreScanPlan{richGroups: groups, richKeys: keys}, nil
+	}
+	return authorizedPreScanPlan{basicRows: inputs.cidrRecords}, nil
+}
+
+func (plan authorizedPreScanPlan) collectUniqueIPs() ([]string, error) {
+	uniq := make(map[uint32]string)
+	err := plan.visit(func(target scanTarget) error {
+		uniq[ipv4ToUint32(target.ip)] = target.ip
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	keys := make([]uint32, 0, len(uniq))
@@ -183,67 +203,98 @@ func runReachabilityChecksWithProgress(ctx context.Context, checker Reachability
 }
 
 func collectUnreachableRows(inputs runInputs, reachable func(string) bool, reason string) ([]writer.UnreachableRecord, error) {
-	predicate := normalizeReachablePredicate(reachable)
-	rows := make([]writer.UnreachableRecord, 0)
-	richOrder := make([]string, 0)
-	richRows := make(map[string]writer.UnreachableRecord)
-	for _, rec := range inputs.cidrRecords {
-		targets, err := preScanTargetsFromRecord(rec)
-		if err != nil {
-			return nil, err
-		}
-		for _, target := range targets {
-			if predicate(target.ip) {
-				continue
-			}
-			row := writer.UnreachableRecord{
-				IP:                target.ip,
-				IPCidr:            target.ipCidr,
-				Status:            "unreachable",
-				Reason:            reason,
-				FabName:           target.meta.fabName,
-				CIDRName:          target.meta.cidrName,
-				ServiceLabel:      target.meta.serviceLabel,
-				Decision:          target.meta.decision,
-				PolicyID:          target.meta.policyID,
-				ExecutionKey:      target.meta.executionKey,
-				SrcIP:             target.meta.srcIP,
-				SrcNetworkSegment: target.meta.srcNetworkSegment,
-			}
-			if !rec.IsRich {
-				rows = append(rows, row)
-				continue
-			}
-
-			key := richUnreachableRowKey(row)
-			existing, ok := richRows[key]
-			if !ok {
-				richRows[key] = row
-				richOrder = append(richOrder, key)
-				continue
-			}
-			richRows[key] = mergeUnreachableRecord(existing, row)
-		}
-	}
-	for _, key := range richOrder {
-		rows = append(rows, richRows[key])
-	}
-	return rows, nil
-}
-
-func preScanTargetsFromRecord(rec input.CIDRRecord) ([]scanTarget, error) {
-	if rec.IsRich {
-		if !rec.IsValid {
-			return nil, nil
-		}
-		return richTargetsFromRecord(rec)
-	}
-
-	strategy := basicGroupStrategy{}
-	if _, err := strategy.Key(rec); err != nil {
+	plan, err := buildAuthorizedPreScanPlan(inputs)
+	if err != nil {
 		return nil, err
 	}
-	return strategy.targets(rec)
+	rows := make([]writer.UnreachableRecord, 0)
+	err = plan.visitUnreachableRows(reachable, reason, func(row writer.UnreachableRecord) error {
+		rows = append(rows, row)
+		return nil
+	})
+	return rows, err
+}
+
+func (plan authorizedPreScanPlan) visitUnreachableRows(reachable func(string) bool, reason string, visit func(writer.UnreachableRecord) error) error {
+	predicate := normalizeReachablePredicate(reachable)
+	richMode := plan.richGroups != nil
+	var pending writer.UnreachableRecord
+	pendingKey := ""
+	err := plan.visit(func(target scanTarget) error {
+		if predicate(target.ip) {
+			return nil
+		}
+		row := writer.UnreachableRecord{
+			IP:                target.ip,
+			IPCidr:            target.ipCidr,
+			Status:            "unreachable",
+			Reason:            reason,
+			FabName:           target.meta.fabName,
+			CIDRName:          target.meta.cidrName,
+			ServiceLabel:      target.meta.serviceLabel,
+			Decision:          target.meta.decision,
+			PolicyID:          target.meta.policyID,
+			ExecutionKey:      target.meta.executionKey,
+			SrcIP:             target.meta.srcIP,
+			SrcNetworkSegment: target.meta.srcNetworkSegment,
+		}
+		if !richMode {
+			return visit(row)
+		}
+
+		key := richUnreachableRowKey(row)
+		if pendingKey == "" {
+			pending = row
+			pendingKey = key
+			return nil
+		}
+		if key == pendingKey {
+			pending = mergeUnreachableRecord(pending, row)
+			return nil
+		}
+		if err := visit(pending); err != nil {
+			return err
+		}
+		pending = row
+		pendingKey = key
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if pendingKey != "" {
+		return visit(pending)
+	}
+	return nil
+}
+
+func (plan authorizedPreScanPlan) visit(visit func(scanTarget) error) error {
+	if plan.richGroups != nil {
+		for _, key := range plan.richKeys {
+			for _, target := range plan.richGroups[key].targets {
+				if err := visit(target); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	strategy := basicGroupStrategy{}
+	for _, rec := range plan.basicRows {
+		if _, err := strategy.Key(rec); err != nil {
+			return err
+		}
+		recordTargets, err := strategy.targets(rec)
+		if err != nil {
+			return err
+		}
+		for _, target := range recordTargets {
+			if err := visit(target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func richUnreachableRowKey(row writer.UnreachableRecord) string {

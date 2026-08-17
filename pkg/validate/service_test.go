@@ -135,3 +135,123 @@ func TestInputs_WhenDefaultCSVAndPortFileMissing_ReturnsInvalidDetail(t *testing
 		t.Fatalf("unexpected detail: %s", result.Detail)
 	}
 }
+
+func TestInputs_WhenAllBasicRowsHavePortsAndPortFileMissing_ReturnsValidResult(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "cidr.csv")
+	if err := os.WriteFile(cidr, []byte(
+		"ip,ip_cidr,port\n"+
+			"192.0.2.1,192.0.2.0/24,443\n"+
+			"198.51.100.1,198.51.100.0/24,8443\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
+		CIDRFile:      cidr,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+	}))
+	if !result.Valid || result.Detail != "ok" {
+		t.Fatalf("Inputs() = %+v, want valid result", result)
+	}
+}
+
+func TestInputs_WhenBasicRowHasNoPortSource_ReturnsRowError(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "cidr.csv")
+	if err := os.WriteFile(cidr, []byte("ip,ip_cidr,port\n192.0.2.1,192.0.2.0/24,\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
+		CIDRFile:      cidr,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+	}))
+	if result.Valid || !strings.Contains(result.Detail, "basic row 2 has no port source") {
+		t.Fatalf("Inputs() = %+v, want row port-source error", result)
+	}
+}
+
+func TestInputs_WhenExpansionExceedsDefault_ReturnsEstimateWithoutMaterializingTargets(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "cidr.csv")
+	if err := os.WriteFile(cidr, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,10.0.0.0/8,10.0.0.0/8,a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Inputs(mustValidateConfig(t, config.ValidateValues{
+		CIDRFile:      cidr,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+	}))
+	if result.Valid {
+		t.Fatalf("Inputs() = %+v, want expansion limit rejection", result)
+	}
+	if !strings.Contains(result.Detail, "candidate count 16777216") || strings.Contains(result.Detail, "-port-file is required") {
+		t.Fatalf("Detail = %q, want pre-materialization expansion estimate", result.Detail)
+	}
+}
+
+func TestInputs_TargetCountOverrideAndBypass(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "cidr.csv")
+	port := filepath.Join(tmp, "ports.csv")
+	if err := os.WriteFile(cidr, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,192.0.2.0/30,192.0.2.0/30,a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(port, []byte("443/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	strict, err := config.ParseValidate([]string{
+		"-cidr-file", cidr,
+		"-port-file", port,
+		"-target-count-limit", "3",
+		"-target-memory-limit-gb", "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := Inputs(strict); result.Valid || !strings.Contains(result.Detail, "count limit 3") {
+		t.Fatalf("Inputs(strict) = %+v, want count limit rejection", result)
+	}
+
+	bypass, err := config.ParseValidate([]string{
+		"-cidr-file", cidr,
+		"-port-file", port,
+		"-target-count-limit", "0",
+		"-target-memory-limit-gb", "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := Inputs(bypass); !result.Valid {
+		t.Fatalf("Inputs(bypass) = %+v, want valid", result)
+	}
+}
+
+func TestInputs_AppliesCIDRAndPortRecordLimits(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cidrPath := filepath.Join(dir, "cidr.csv")
+	portPath := filepath.Join(dir, "ports.csv")
+	if err := os.WriteFile(cidrPath, []byte("ip,ip_cidr\n192.0.2.1,192.0.2.0/24\n192.0.2.2,192.0.2.0/24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portPath, []byte("80/tcp\n443/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, flagName := range []string{"-cidr-input-record-limit", "-port-input-record-limit"} {
+		cfg, err := config.ParseValidate([]string{"-cidr-file", cidrPath, "-port-file", portPath, flagName, "1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := Inputs(cfg)
+		if result.Valid || !strings.Contains(result.Detail, flagName) {
+			t.Fatalf("Inputs(%s) = %+v, want limit failure", flagName, result)
+		}
+	}
+}

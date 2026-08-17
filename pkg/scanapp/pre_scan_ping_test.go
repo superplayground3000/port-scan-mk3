@@ -46,7 +46,7 @@ func TestCollectUnreachableRows_RichRowsAggregateToSingleRowWithDistinctMergedMe
 				FabName:           "fab-b",
 				CIDRName:          "seg-b",
 				ServiceLabel:      "svc-b",
-				Decision:          "deny",
+				Decision:          "accept",
 				PolicyID:          "P-2",
 				Reason:            "MATCH_POLICY_ACCEPT",
 				SrcIP:             "192.168.1.11",
@@ -85,7 +85,7 @@ func TestCollectUnreachableRows_RichRowsAggregateToSingleRowWithDistinctMergedMe
 	if got.ServiceLabel != "svc-a|svc-b" {
 		t.Fatalf("unexpected merged service_label: %s", got.ServiceLabel)
 	}
-	if got.Decision != "accept|deny" {
+	if got.Decision != "accept" {
 		t.Fatalf("unexpected merged decision: %s", got.Decision)
 	}
 	if got.PolicyID != "P-1|P-2" {
@@ -174,7 +174,7 @@ func TestBuildRichGroupsWithPredicate_SkipsUnreachableTargetsAndPreservesDistinc
 			DstNetworkSegment: "10.0.0.0/24",
 			Port:              443,
 			PolicyID:          "P-2",
-			Decision:          "deny",
+			Decision:          "accept",
 			Reason:            "MATCH_POLICY_ACCEPT",
 			SrcIP:             "192.168.1.11",
 		},
@@ -186,7 +186,7 @@ func TestBuildRichGroupsWithPredicate_SkipsUnreachableTargetsAndPreservesDistinc
 			DstNetworkSegment: "10.0.0.0/24",
 			Port:              443,
 			PolicyID:          "P-drop",
-			Decision:          "deny",
+			Decision:          "accept",
 			Reason:            "MATCH_POLICY_ACCEPT",
 			SrcIP:             "192.168.1.12",
 		},
@@ -207,7 +207,7 @@ func TestBuildRichGroupsWithPredicate_SkipsUnreachableTargetsAndPreservesDistinc
 	if got[0].meta.policyID != "P-1|P-2" {
 		t.Fatalf("unexpected merged policy id: %s", got[0].meta.policyID)
 	}
-	if got[0].meta.decision != "accept|deny" {
+	if got[0].meta.decision != "accept" {
 		t.Fatalf("unexpected merged decision: %s", got[0].meta.decision)
 	}
 }

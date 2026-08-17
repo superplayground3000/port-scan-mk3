@@ -4,7 +4,9 @@ package pressure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -13,6 +15,28 @@ import (
 	"sync"
 	"time"
 )
+
+const (
+	// DefaultResponseSizeLimitBytes is the default size for each HTTP response.
+	DefaultResponseSizeLimitBytes uint64 = 1_000_000
+	// DefaultResponseEntryLimit is the default entry count for each OAuth data array.
+	DefaultResponseEntryLimit uint64 = 10_000
+)
+
+var errNonFinitePressure = errors.New("non-finite pressure value")
+
+// ResponseLimits controls the byte count for each HTTP response and the entry count for each OAuth data array.
+// A zero maximum disables only that limit.
+type ResponseLimits struct {
+	MaxBytes   uint64
+	MaxEntries uint64
+}
+
+// DefaultResponseLimits returns the default byte and OAuth entry limits.
+// It does not create an HTTP adapter and cannot return an error.
+func DefaultResponseLimits() ResponseLimits {
+	return ResponseLimits{MaxBytes: DefaultResponseSizeLimitBytes, MaxEntries: DefaultResponseEntryLimit}
+}
 
 // Sample contains the aggregate value and optional per-source results from one poll.
 type Sample struct {
@@ -50,6 +74,7 @@ type OAuthConfig struct {
 type SimpleHTTP struct {
 	endpoint string
 	client   *http.Client
+	limits   ResponseLimits
 }
 
 // OAuthMulti polls authenticated pressure endpoints concurrently.
@@ -63,6 +88,7 @@ type oauthSource struct {
 	clientID     string
 	clientSecret string
 	client       *http.Client
+	limits       ResponseLimits
 
 	mu          sync.Mutex
 	accessToken string
@@ -73,13 +99,20 @@ type oauthSource struct {
 // The endpoint must be an absolute HTTP or HTTPS URL. The client must be non-nil.
 // NewSimpleHTTP returns a configuration error before it sends a request.
 func NewSimpleHTTP(endpoint string, client *http.Client) (*SimpleHTTP, error) {
+	return NewSimpleHTTPWithLimits(endpoint, client, DefaultResponseLimits())
+}
+
+// NewSimpleHTTPWithLimits returns an unauthenticated adapter for endpoint.
+// The client sends requests, and limits control each response.
+// It returns an error for an invalid endpoint or nil client.
+func NewSimpleHTTPWithLimits(endpoint string, client *http.Client, limits ResponseLimits) (*SimpleHTTP, error) {
 	if err := validateEndpoint("pressure endpoint", endpoint); err != nil {
 		return nil, err
 	}
 	if client == nil {
 		return nil, fmt.Errorf("pressure HTTP client is required")
 	}
-	return &SimpleHTTP{endpoint: endpoint, client: client}, nil
+	return &SimpleHTTP{endpoint: endpoint, client: client, limits: limits}, nil
 }
 
 // NewOAuthMulti returns an authenticated multi-source adapter.
@@ -88,6 +121,13 @@ func NewSimpleHTTP(endpoint string, client *http.Client) (*SimpleHTTP, error) {
 // The constructor copies endpoint values into private source state.
 // It returns a configuration error before it sends a request.
 func NewOAuthMulti(cfg OAuthConfig, client *http.Client) (*OAuthMulti, error) {
+	return NewOAuthMultiWithLimits(cfg, client, DefaultResponseLimits())
+}
+
+// NewOAuthMultiWithLimits returns an authenticated adapter for all configured endpoints.
+// The client sends requests, and limits control each token and data response.
+// It returns an error for invalid endpoints, missing credentials, no data endpoints, or a nil client.
+func NewOAuthMultiWithLimits(cfg OAuthConfig, client *http.Client, limits ResponseLimits) (*OAuthMulti, error) {
 	if err := validateEndpoint("OAuth endpoint", cfg.AuthEndpoint); err != nil {
 		return nil, err
 	}
@@ -117,6 +157,7 @@ func NewOAuthMulti(cfg OAuthConfig, client *http.Client) (*OAuthMulti, error) {
 			clientID:     cfg.ClientID,
 			clientSecret: cfg.ClientSecret,
 			client:       client,
+			limits:       limits,
 		}
 	}
 	return &OAuthMulti{sources: sources}, nil
@@ -151,13 +192,22 @@ func (s *SimpleHTTP) Sample(ctx context.Context) (Sample, error) {
 		return Sample{}, fmt.Errorf("pressure api status=%d", resp.StatusCode)
 	}
 
-	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	decoder, consumed, err := responseDecoder(resp, s.endpoint, "simple response", s.limits.MaxBytes)
+	if err != nil {
+		return Sample{}, err
+	}
+	var body struct {
+		Pressure json.RawMessage `json:"pressure"`
+	}
+	if err := decodeCompleteResponse(decoder, consumed, s.endpoint, "simple response", s.limits.MaxBytes, &body); err != nil {
 		return Sample{}, fmt.Errorf("decode pressure response: %w", err)
 	}
-	raw, ok := body["pressure"]
-	if !ok {
+	if len(body.Pressure) == 0 {
 		return Sample{}, fmt.Errorf("pressure field missing")
+	}
+	var raw any
+	if err := json.Unmarshal(body.Pressure, &raw); err != nil {
+		return Sample{}, fmt.Errorf("decode pressure field: %w", err)
 	}
 	value, err := parseValue(raw)
 	if err != nil {
@@ -224,16 +274,34 @@ func (s *oauthSource) sample(ctx context.Context) (float64, error) {
 		return 0, fmt.Errorf("data api status=%d", resp.StatusCode)
 	}
 
-	var entries []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-		return 0, fmt.Errorf("decode pressure data: %w", err)
-	}
-
 	var (
 		maximum float64
 		found   bool
 	)
-	for _, entry := range entries {
+	decoder, consumed, err := responseDecoder(resp, s.dataEndpoint, "OAuth data response", s.limits.MaxBytes)
+	if err != nil {
+		return 0, err
+	}
+	firstToken, err := decoder.Token()
+	if err != nil {
+		return 0, pressureDecodeError(consumed, s.dataEndpoint, "OAuth data response", s.limits.MaxBytes, err)
+	}
+	delim, ok := firstToken.(json.Delim)
+	if !ok || delim != '[' {
+		return 0, fmt.Errorf("decode pressure data: expected JSON array")
+	}
+	var count uint64
+	for decoder.More() {
+		if err := incrementResponseCount(&count, "OAuth data entries"); err != nil {
+			return 0, fmt.Errorf("pressure endpoint %s OAuth data response: %w", s.dataEndpoint, err)
+		}
+		if s.limits.MaxEntries > 0 && count > s.limits.MaxEntries {
+			return 0, fmt.Errorf("pressure endpoint %s OAuth data response count %d exceeds limit %d; use -pressure-response-entry-limit to override it", s.dataEndpoint, count, s.limits.MaxEntries)
+		}
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			return 0, pressureDecodeError(consumed, s.dataEndpoint, "OAuth data response", s.limits.MaxBytes, err)
+		}
 		data, ok := entry["data"].(map[string]any)
 		if !ok {
 			continue
@@ -244,12 +312,21 @@ func (s *oauthSource) sample(ctx context.Context) (float64, error) {
 		}
 		pressure, err := parseValue(value)
 		if err != nil {
+			if errors.Is(err, errNonFinitePressure) {
+				return 0, fmt.Errorf("Percent field: %w", err)
+			}
 			continue
 		}
 		if !found || pressure > maximum {
 			maximum = pressure
 		}
 		found = true
+	}
+	if _, err := decoder.Token(); err != nil {
+		return 0, pressureDecodeError(consumed, s.dataEndpoint, "OAuth data response", s.limits.MaxBytes, err)
+	}
+	if err := requireResponseEOF(decoder, consumed, s.dataEndpoint, "OAuth data response", s.limits.MaxBytes); err != nil {
+		return 0, err
 	}
 	if !found {
 		return 0, fmt.Errorf("no valid Percent values found in response")
@@ -284,12 +361,16 @@ func (s *oauthSource) token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("auth status=%d", resp.StatusCode)
 	}
 
+	decoder, consumed, err := responseDecoder(resp, s.authEndpoint, "OAuth token response", s.limits.MaxBytes)
+	if err != nil {
+		return "", err
+	}
 	var result struct {
 		AccessToken string `json:"access_token"`
 		TokenType   string `json:"token_type"`
 		ExpiresIn   int    `json:"expires_in"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeCompleteResponse(decoder, consumed, s.authEndpoint, "OAuth token response", s.limits.MaxBytes, &result); err != nil {
 		return "", fmt.Errorf("decode auth response: %w", err)
 	}
 	if result.AccessToken == "" {
@@ -302,6 +383,73 @@ func (s *oauthSource) token(ctx context.Context) (string, error) {
 	s.accessToken = result.AccessToken
 	s.expiresAt = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
 	return s.accessToken, nil
+}
+
+func responseDecoder(resp *http.Response, endpoint, responseType string, maxBytes uint64) (*json.Decoder, *countingReader, error) {
+	if maxBytes > 0 && resp.ContentLength >= 0 && uint64(resp.ContentLength) > maxBytes {
+		return nil, nil, pressureSizeError(endpoint, responseType, uint64(resp.ContentLength), maxBytes)
+	}
+	reader := &countingReader{reader: resp.Body}
+	var body io.Reader = reader
+	if maxBytes > 0 && maxBytes < math.MaxInt64 {
+		body = io.LimitReader(reader, int64(maxBytes)+1)
+	}
+	return json.NewDecoder(body), reader, nil
+}
+
+type countingReader struct {
+	reader io.Reader
+	count  uint64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if uint64(n) > math.MaxUint64-r.count {
+		return n, fmt.Errorf("response byte count overflows the supported range")
+	}
+	r.count += uint64(n)
+	return n, err
+}
+
+func incrementResponseCount(count *uint64, kind string) error {
+	if *count == math.MaxUint64 {
+		return fmt.Errorf("%s count overflows the supported range", kind)
+	}
+	*count++
+	return nil
+}
+
+func decodeCompleteResponse(decoder *json.Decoder, consumed *countingReader, endpoint, responseType string, maxBytes uint64, target any) error {
+	if err := decoder.Decode(target); err != nil {
+		return pressureDecodeError(consumed, endpoint, responseType, maxBytes, err)
+	}
+	return requireResponseEOF(decoder, consumed, endpoint, responseType, maxBytes)
+}
+
+func requireResponseEOF(decoder *json.Decoder, consumed *countingReader, endpoint, responseType string, maxBytes uint64) error {
+	var trailing any
+	err := decoder.Decode(&trailing)
+	if maxBytes > 0 && consumed.count > maxBytes {
+		return pressureSizeError(endpoint, responseType, consumed.count, maxBytes)
+	}
+	if !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("pressure endpoint %s %s has trailing JSON content", endpoint, responseType)
+		}
+		return err
+	}
+	return nil
+}
+
+func pressureDecodeError(consumed *countingReader, endpoint, responseType string, maxBytes uint64, err error) error {
+	if maxBytes > 0 && consumed.count > maxBytes {
+		return pressureSizeError(endpoint, responseType, consumed.count, maxBytes)
+	}
+	return err
+}
+
+func pressureSizeError(endpoint, responseType string, size, limit uint64) error {
+	return fmt.Errorf("pressure endpoint %s %s size %d bytes exceeds limit %d bytes; use -pressure-response-size-limit-mb to override it", endpoint, responseType, size, limit)
 }
 
 func parseValue(raw any) (float64, error) {
@@ -318,5 +466,27 @@ func parseValue(raw any) (float64, error) {
 	default:
 		return 0, fmt.Errorf("unsupported pressure field type: %T", raw)
 	}
-	return math.Round(value*10) / 10, nil
+	if err := validateFinitePressure(value); err != nil {
+		return 0, err
+	}
+	if math.Abs(value) <= math.MaxFloat64/10 {
+		value = math.Round(value*10) / 10
+	}
+	if err := validateFinitePressure(value); err != nil {
+		return 0, fmt.Errorf("normalize pressure value: %w", err)
+	}
+	return value, nil
+}
+
+func validateFinitePressure(value float64) error {
+	switch {
+	case math.IsNaN(value):
+		return fmt.Errorf("%w: NaN", errNonFinitePressure)
+	case math.IsInf(value, 1):
+		return fmt.Errorf("%w: positive infinity", errNonFinitePressure)
+	case math.IsInf(value, -1):
+		return fmt.Errorf("%w: negative infinity", errNonFinitePressure)
+	default:
+		return nil
+	}
 }

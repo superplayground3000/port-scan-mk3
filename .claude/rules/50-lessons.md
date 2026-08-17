@@ -6,6 +6,70 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-16 — A build tag did not take a test out of CI
+- Symptom: `TestSnapshotMixedGrowthThroughHundredMegabytesIsLinear` failed the
+  Linux coverage gate on PR #152. The first fix put the case behind a
+  `perfqualified` build tag, so `go test ./...` no longer built it. The case
+  still ran on the same shared runner. Two independent `/code-review` agents
+  found this before the push; local `make verify` could not.
+- Root cause: `.github/workflows/ci.yml` runs
+  `bash scripts/performance_gate.sh smoke` in the same `ubuntu-latest` job, and
+  that script ran `go test -tags perfqualified` unconditionally. The case only
+  moved from one step of the job to another step of the same job. The pinning
+  test searched for the literal string `-tags perfqualified`, so it confirmed
+  the step existed but proved nothing about when the step runs.
+- Fix / rule: guard the run with `[[ "$profile" == "full" ]]`, and pin the
+  guard, not only the command. General rule: a build tag alone does not retire
+  a test. Read EVERY CI step that calls the script before you claim a case left
+  CI. When you pin a gate with a string search, pin the condition that limits
+  it, and pin that the artifact still reaches the run directory. See
+  [[60-development-guidelines]] G2 — this is exactly the defect class that only
+  an independent reviewer finds.
+- Evidence: `.github/workflows/ci.yml:67` plus `scripts/performance_gate.sh`;
+  after the fix the smoke artifact reads `hardware-qualified cases skipped:
+  profile smoke is not the certified profile`, and all five PR #152 checks
+  passed at commit `e710d42`.
+
+## 2026-08-16 — A short duration measured exactly zero on Windows only
+- Symptom: `TestRunCancellationSmokeInjectsEveryProductionStage` failed the
+  native Windows gate on `result.FinalizationDuration <= 0`. Six of fifteen
+  cases reported `StopDuration:0s FinalizationDuration:0s`. The same run
+  reported `WallTime:581.7µs` for other measurements, so the clock looked
+  precise. That combination hid the cause and suggested a torn read instead.
+- Root cause: `runtime·nanotime1` on windows/amd64 reads `_INTERRUPT_TIME` from
+  KUSER_SHARED_DATA (`$(go env GOROOT)/src/runtime/sys_windows_amd64.s`). That
+  counter advances in coarse steps. A window shorter than one step therefore
+  measures exactly zero, while longer windows still show sub-millisecond
+  values. Linux resolves every one of these windows, so the case never failed
+  there.
+- Fix / rule: keep the lower bound, and guard it with
+  `runtime.GOOS != "windows"`. Do NOT delete the bound: `StopDuration` is
+  derived from `FinalizationDuration` when it is zero, so an unguarded
+  `FinalizationDuration >= StopDuration` passes on `0`/`0` and asserts nothing.
+  General rule: when one platform cannot resolve a measurement, restrict the
+  assertion to the platforms that can. Deleting it makes the test vacuous
+  everywhere. Do not borrow an unrelated contract bound (here `ForceWithin`,
+  which bounds the second interrupt) to keep an assertion alive.
+- Evidence: `internal/perfharness/cancellation_test.go:66`; run
+  31801673410 failed, run 31926472484 passed on `e710d42`.
+
+## 2026-08-13 — A large accepted fixture used the default file-size limit
+- Symptom: the full issue #151 matrix stopped after 5 hours and 31 minutes.
+  The first accepted `rich-record-mixed` workflow rejected its 1,022,664,300-byte
+  CSV because the default limit was 1,000,000,000 bytes.
+- Root cause: `RunRichSmoke` generated the large fixture, but it used default
+  resource limits for pre-ping, bucket generation, and scan. The harness did
+  not calculate an override from the actual fixture size.
+- Fix / rule: after fixture generation, calculate the smallest positive
+  decimal-GB limit that contains the actual file. Give the same limit to all
+  three production stages. Keep the other limits at their defaults. Keep the
+  dedicated rejection and bypass cases separate. See [[60-development-guidelines]]
+  G3.
+- Evidence: the full log contains `size 1022664300 bytes exceeds limit
+  1000000000 bytes`. The focused regression test was red because the limit
+  helper did not exist. The focused race test passed in 1.142 seconds after
+  the fix.
+
 ## 2026-08-02 — A `select` loop raced its own exit condition and dropped a fatal error
 - Symptom: `TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError` failed ~6% of
   runs (measured 7/120 on master `19eb4da`), always as `err == nil` in 0.00s.

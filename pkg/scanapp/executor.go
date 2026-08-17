@@ -1,12 +1,70 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/scanner"
 )
+
+type scanExecutorTelemetry struct {
+	gate           sync.RWMutex
+	stopping       bool
+	inFlight       atomic.Int64
+	inFlightAtStop int
+	abandoned      atomic.Int64
+	stopStartedAt  time.Time
+	totalStarted   atomic.Uint64
+	startedAtStop  uint64
+}
+
+func (t *scanExecutorTelemetry) markStopping() {
+	t.gate.Lock()
+	defer t.gate.Unlock()
+	if t.stopping {
+		return
+	}
+	t.stopping = true
+	t.inFlightAtStop = int(t.inFlight.Load())
+	t.startedAtStop = t.totalStarted.Load()
+	t.stopStartedAt = time.Now()
+}
+
+func (t *scanExecutorTelemetry) startProbe(ctx context.Context) bool {
+	t.gate.RLock()
+	defer t.gate.RUnlock()
+	if t.stopping || ctx.Err() != nil {
+		return false
+	}
+	t.inFlight.Add(1)
+	t.totalStarted.Add(1)
+	return true
+}
+
+func (t *scanExecutorTelemetry) finishProbe(ctx context.Context) {
+	if ctx.Err() != nil {
+		t.markStopping()
+	}
+	t.inFlight.Add(-1)
+}
+
+func (t *scanExecutorTelemetry) abandon() {
+	t.abandoned.Add(1)
+}
+
+func (t *scanExecutorTelemetry) snapshot() (int, int, time.Time, uint64, uint64) {
+	t.gate.RLock()
+	defer t.gate.RUnlock()
+	totalStarted := t.totalStarted.Load()
+	startsAfterStop := uint64(0)
+	if t.stopping && totalStarted > t.startedAtStop {
+		startsAfterStop = totalStarted - t.startedAtStop
+	}
+	return t.inFlightAtStop, int(t.abandoned.Load()), t.stopStartedAt, totalStarted, startsAfterStop
+}
 
 // startScanExecutor launches worker goroutines that consume scanTask items from taskCh,
 // execute TCP scans, and emit structured log events for each result.
@@ -24,7 +82,21 @@ import (
 //   - resultCh: closed when all workers finish scanning.
 //   - errCh: receives a fatal executor error (for example, recovered worker panic).
 func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger *scanLogger, taskCh <-chan scanTask) (<-chan scanResult, <-chan error) {
+	resultCh, errCh, _, _ := startCancellableScanExecutor(context.Background(), workers, timeout, dial, logger, taskCh)
+	return resultCh, errCh
+}
+
+func startCancellableScanExecutor(ctx context.Context, workers int, timeout time.Duration, dial DialFunc, logger *scanLogger, taskCh <-chan scanTask) (<-chan scanResult, <-chan error, <-chan scanTask, *scanExecutorTelemetry) {
+	executorCtx, stopExecutor := context.WithCancel(ctx)
 	resultCh := make(chan scanResult, queueCapacityFor(workers))
+	abandonedCh := make(chan scanTask, queueCapacityFor(workers))
+	telemetry := &scanExecutorTelemetry{}
+	if ctx.Done() != nil {
+		go func() {
+			<-ctx.Done()
+			telemetry.markStopping()
+		}()
+	}
 	workers = effectiveWorkerCount(workers)
 	errCh := make(chan error, 1)
 
@@ -36,6 +108,8 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 		}
 		errOnce.Do(func() {
 			logger.errorf("%v", err)
+			telemetry.markStopping()
+			stopExecutor()
 			errCh <- err
 			close(errCh)
 		})
@@ -65,13 +139,50 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 		workerWG.Add(1)
 		go func() {
 			defer workerWG.Done()
+			var activeTask scanTask
+			active := false
 			defer func() {
 				if r := recover(); r != nil {
+					if active {
+						telemetry.finishProbe(executorCtx)
+						telemetry.abandon()
+						abandonedCh <- activeTask
+					}
 					reportFatal(fmt.Errorf("executor worker panic: %v", r))
+					for abandoned := range taskCh {
+						telemetry.abandon()
+						abandonedCh <- abandoned
+					}
 				}
 			}()
-			for t := range taskCh {
+			for {
+				var (
+					t  scanTask
+					ok bool
+				)
+				select {
+				case <-executorCtx.Done():
+					telemetry.markStopping()
+					for abandoned := range taskCh {
+						telemetry.abandon()
+						abandonedCh <- abandoned
+					}
+					return
+				case t, ok = <-taskCh:
+					if !ok {
+						return
+					}
+				}
+				if !telemetry.startProbe(executorCtx) {
+					telemetry.abandon()
+					abandonedCh <- t
+					continue
+				}
+				activeTask = t
+				active = true
 				res := scanner.ScanTCP(dial, t.ip, t.port, timeout)
+				telemetry.finishProbe(executorCtx)
+				active = false
 				state := LogEventScanned
 				errCause := LogEventNone
 				if res.Error != "" {
@@ -79,11 +190,13 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 					state = LogEventError
 				}
 				reportLocalResource(res)
-				logger.eventf(LogEventScanProbeResult, t.ip, t.port, state, errCause, map[string]any{
-					"status":  res.Status,
-					"outcome": string(res.Outcome),
-					"error":   res.Error,
-				})
+				if logger.enabledEvent(LogEventScanProbeResult) {
+					logger.eventf(LogEventScanProbeResult, t.ip, t.port, state, errCause, map[string]any{
+						"status":  res.Status,
+						"outcome": string(res.Outcome),
+						"error":   res.Error,
+					})
+				}
 				resultCh <- scanResult{
 					chunkIdx: t.chunkIdx,
 					taskIdx:  t.taskIdx,
@@ -95,11 +208,13 @@ func startScanExecutor(workers int, timeout time.Duration, dial DialFunc, logger
 
 	go func() {
 		workerWG.Wait()
+		stopExecutor()
 		close(resultCh)
+		close(abandonedCh)
 		errOnce.Do(func() {
 			close(errCh)
 		})
 	}()
 
-	return resultCh, errCh
+	return resultCh, errCh, abandonedCh, telemetry
 }

@@ -29,6 +29,41 @@ func TestValidateIPRows_WhenDuplicateSrcDstIPCidrAndPortExists_ReturnsError(t *t
 	}
 }
 
+func TestValidateIPRows_WhenBasicSelectorsHaveEquivalentForms_ReturnsError(t *testing.T) {
+	rows := mustLoadRows(t, []CIDRRecord{
+		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.42/24", Port: 443},
+		{IPRaw: "10.0.0.1/32", IPCidrRaw: "10.0.0.0/24", Port: 443},
+	})
+	if err := ValidateIPRows(rows); err == nil || !strings.Contains(err.Error(), "rows 1 and 2") {
+		t.Fatalf("equivalent selector duplicate error = %v", err)
+	}
+}
+
+func TestValidateIPRows_ReportsTheEarliestDuplicateInInputOrder(t *testing.T) {
+	rows := mustLoadRows(t, []CIDRRecord{
+		{IPRaw: "10.0.0.9", IPCidrRaw: "10.0.0.0/24"},
+		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24"},
+		{IPRaw: "10.0.0.9", IPCidrRaw: "10.0.0.0/24"},
+		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24"},
+	})
+	err := ValidateIPRows(rows)
+	if err == nil || !strings.Contains(err.Error(), "rows 1 and 3") {
+		t.Fatalf("duplicate error = %v, want earliest duplicate in input order", err)
+	}
+}
+
+func TestValidateIPRows_ReportsInvalidRowBeforeDuplicate(t *testing.T) {
+	duplicate := mustLoadRows(t, []CIDRRecord{
+		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24"},
+		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24"},
+	})
+	rows := append([]CIDRRecord{{}}, duplicate...)
+	err := ValidateIPRows(rows)
+	if err == nil || err.Error() != "row 1 is not parsed" {
+		t.Fatalf("validation error = %v, want invalid-row precedence", err)
+	}
+}
+
 func TestValidateIPRows_WhenRichRowsShareSameIPCidrWithDifferentSrcDstOrPort_ReturnsNil(t *testing.T) {
 	rows := mustLoadRows(t, []CIDRRecord{
 		{
@@ -117,13 +152,13 @@ func TestValidateIPRows_WhenRichRowsHaveExactSameSrcDstIPCidrAndPort_ReturnsErro
 	}
 }
 
-func TestDuplicateRowKey_WhenOnlyPortDiffers_ReturnsDifferentKeys(t *testing.T) {
+func TestBasicDuplicateRowKey_WhenOnlyPortDiffers_ReturnsDifferentKeys(t *testing.T) {
 	rows := mustLoadRows(t, []CIDRRecord{
 		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24", Port: 80},
 		{IPRaw: "10.0.0.1", IPCidrRaw: "10.0.0.0/24", Port: 443},
 	})
 
-	if duplicateRowKey(rows[0]) == duplicateRowKey(rows[1]) {
+	if basicDuplicateRowKey(rows[0]) == basicDuplicateRowKey(rows[1]) {
 		t.Fatal("expected duplicate key to include port")
 	}
 }

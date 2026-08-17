@@ -2,6 +2,8 @@ package writer
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,5 +52,40 @@ func TestCSVWriter_WhenIPCidrMissing_UsesCIDRFallbackAndHeaderWrittenOnce(t *tes
 	}
 	if !strings.Contains(out, "10.0.0.1,10.0.0.0/24,22,open") {
 		t.Fatalf("expected CIDR fallback row, got: %s", out)
+	}
+}
+
+func TestBufferedCSVWriterAppendingKeepsOneHeaderAndWaitsForFlush(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results.csv")
+	if err := os.WriteFile(path, []byte(CanonicalHeader()+"\n"), 0o644); err != nil {
+		t.Fatalf("seed output: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatalf("open output: %v", err)
+	}
+	w := NewBufferedCSVWriterAppending(file)
+	if err := w.Write(Record{IP: "192.0.2.1", IPCidr: "192.0.2.1/32", Port: 443, Status: "open"}); err != nil {
+		t.Fatalf("write row: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read before flush: %v", err)
+	}
+	if strings.Contains(string(before), "192.0.2.1") {
+		t.Fatalf("row became visible before flush: %q", before)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush row: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close output: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after flush: %v", err)
+	}
+	if strings.Count(string(after), CanonicalHeader()) != 1 || !strings.Contains(string(after), "192.0.2.1") {
+		t.Fatalf("unexpected appended output: %q", after)
 	}
 }

@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/pressure"
 	"github.com/xuxiping/port-scan-mk3/pkg/ratelimit"
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 // PressureKind identifies one validated pressure policy variant.
@@ -105,25 +108,41 @@ func (p PressurePolicy) Resolve() (PressureValues, error) {
 
 // ScanValues contains the validated values for the scan workflow.
 type ScanValues struct {
-	CIDRFile       string
-	CIDRIPCol      string
-	CIDRIPCidrCol  string
-	PortFile       string
-	ResumeInput    string
-	Output         string
-	Workers        int
-	DialTimeout    time.Duration
-	DispatchDelay  time.Duration
-	BucketRate     int
-	BucketCapacity int
-	LogLevel       string
-	Format         string
-	Quiet          bool
-	Pressure       PressurePolicy
+	CIDRFile           string
+	CIDRIPCol          string
+	CIDRIPCidrCol      string
+	PortFile           string
+	ResumeInput        string
+	Output             string
+	OutputFlushResults int
+	Workers            int
+	DialTimeout        time.Duration
+	DispatchDelay      time.Duration
+	BucketRate         int
+	BucketCapacity     int
+	LogLevel           string
+	Format             string
+	Quiet              bool
+	Pressure           PressurePolicy
 }
 
 type scanState struct {
-	values ScanValues
+	values    ScanValues
+	expansion TargetExpansionValues
+	resources ScanResourceLimits
+}
+
+// ScanResourceLimits contains the input, snapshot, and response limits used by scanning.
+// The workflow returns an error or source failure when these limits reject data.
+type ScanResourceLimits struct {
+	CIDR     input.CIDRLimits
+	Port     input.PortLimits
+	Snapshot state.SnapshotLimits
+	Pressure pressure.ResponseLimits
+}
+
+func defaultScanResourceLimits() ScanResourceLimits {
+	return ScanResourceLimits{CIDR: input.DefaultCIDRLimits(""), Port: input.DefaultPortLimits(""), Snapshot: state.DefaultSnapshotLimits(), Pressure: pressure.DefaultResponseLimits()}
 }
 
 // ScanConfig is an opaque configuration for the scan workflow.
@@ -143,6 +162,9 @@ func NewScan(values ScanValues) (ScanConfig, error) {
 	if values.ResumeInput == "" {
 		return ScanConfig{}, errors.New("-resume is required")
 	}
+	if values.OutputFlushResults < 0 {
+		return ScanConfig{}, errors.New("-output-flush-results must be >= 0")
+	}
 	if err := validateWorkers(values.Workers); err != nil {
 		return ScanConfig{}, fmt.Errorf("validate workers: %w", err)
 	}
@@ -155,7 +177,18 @@ func NewScan(values ScanValues) (ScanConfig, error) {
 	if _, err := values.Pressure.Resolve(); err != nil {
 		return ScanConfig{}, fmt.Errorf("resolve pressure policy: %w", err)
 	}
-	return ScanConfig{state: &scanState{values: values}}, nil
+	return ScanConfig{state: &scanState{values: values, expansion: defaultTargetExpansionValues(), resources: defaultScanResourceLimits()}}, nil
+}
+
+// NewScanWithResourceLimits verifies values and returns a scan configuration with explicit limits.
+// It returns the same validation errors as NewScan. It does not access files or endpoints.
+func NewScanWithResourceLimits(values ScanValues, limits ScanResourceLimits) (ScanConfig, error) {
+	cfg, err := NewScan(values)
+	if err != nil {
+		return ScanConfig{}, err
+	}
+	cfg.state.resources = limits
+	return cfg, nil
 }
 
 // ParseScan parses and verifies the arguments for the scan command.
@@ -164,6 +197,11 @@ func ParseScan(args []string) (ScanConfig, error) {
 	fs := flag.NewFlagSet("port-scan scan", flag.ContinueOnError)
 	common := commonCLIValues{}
 	values := ScanValues{}
+	expansionFlags := targetExpansionFlagValues{}
+	cidrLimitFlags := defaultCIDRLimitFlags()
+	portLimitFlags := defaultPortLimitFlags()
+	snapshotLimitFlags := defaultSnapshotLimitFlags()
+	pressureLimitFlags := defaultPressureLimitFlags()
 	var (
 		pressureAPI          string
 		pressureIntervalRaw  string
@@ -175,10 +213,16 @@ func ParseScan(args []string) (ScanConfig, error) {
 		pressureUseAuth      bool
 	)
 	registerCommonFlags(fs, &common)
+	registerTargetExpansionFlags(fs, &expansionFlags)
+	registerCIDRLimitFlags(fs, &cidrLimitFlags)
+	registerPortLimitFlags(fs, &portLimitFlags)
+	registerSnapshotLimitFlags(fs, &snapshotLimitFlags)
+	registerPressureLimitFlags(fs, &pressureLimitFlags)
 	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
 	fs.Int("progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path (optional fallback; chunks carry ports)")
 	fs.StringVar(&values.Output, "output", "scan_results.csv", "output csv")
+	fs.IntVar(&values.OutputFlushResults, "output-flush-results", 1000, "result count between output flushes (0 disables periodic flushes)")
 	fs.StringVar(&values.ResumeInput, "resume", "", "resume/bucket snapshot file (required)")
 	fs.DurationVar(&values.DialTimeout, "timeout", 100*time.Millisecond, "dial timeout")
 	fs.DurationVar(&values.DispatchDelay, "delay", 10*time.Millisecond, "dispatch delay")
@@ -198,6 +242,26 @@ func ParseScan(args []string) (ScanConfig, error) {
 	}
 	if err := common.validate(); err != nil {
 		return ScanConfig{}, fmt.Errorf("validate scan flags: %w", err)
+	}
+	expansion, err := resolveTargetExpansionFlags(fs, expansionFlags)
+	if err != nil {
+		return ScanConfig{}, err
+	}
+	cidrLimits, err := cidrLimitFlags.resolve()
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("validate resource limits: %w", err)
+	}
+	portLimits, err := portLimitFlags.resolve()
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("validate resource limits: %w", err)
+	}
+	snapshotLimits, err := snapshotLimitFlags.resolve()
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("validate resource limits: %w", err)
+	}
+	pressureLimits, err := pressureLimitFlags.resolve()
+	if err != nil {
+		return ScanConfig{}, fmt.Errorf("validate resource limits: %w", err)
 	}
 	interval, err := parsePressureInterval(pressureIntervalRaw)
 	if err != nil {
@@ -255,7 +319,17 @@ func ParseScan(args []string) (ScanConfig, error) {
 	if err != nil {
 		return ScanConfig{}, fmt.Errorf("validate scan arguments: %w", err)
 	}
+	cfg.state.expansion = expansion
+	cfg.state.resources = ScanResourceLimits{CIDR: cidrLimits, Port: portLimits, Snapshot: snapshotLimits, Pressure: pressureLimits}
 	return cfg, nil
+}
+
+// ResolveResourceLimits returns the verified input, snapshot, and response limits.
+func (c ScanConfig) ResolveResourceLimits() (ScanResourceLimits, error) {
+	if c.state == nil {
+		return ScanResourceLimits{}, ErrUninitializedConfiguration
+	}
+	return c.state.resources, nil
 }
 
 // Resolve returns the validated values for the scan workflow.
@@ -265,4 +339,12 @@ func (c ScanConfig) Resolve() (ScanValues, error) {
 		return ScanValues{}, ErrUninitializedConfiguration
 	}
 	return c.state.values, nil
+}
+
+// ResolveTargetExpansion returns the verified target expansion values.
+func (c ScanConfig) ResolveTargetExpansion() (TargetExpansionValues, error) {
+	if c.state == nil {
+		return TargetExpansionValues{}, ErrUninitializedConfiguration
+	}
+	return c.state.expansion, nil
 }

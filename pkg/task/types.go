@@ -41,7 +41,7 @@ type Chunk struct {
 	// ScannedCount is the number of persisted task results credited to progress.
 	// A write-failure rewind sets it to the safe dispatch cursor.
 	ScannedCount int `json:"scanned_count"`
-	// TotalCount is the total number of scan tasks for this chunk (targets × ports).
+	// TotalCount is the number of ordered probe tasks in this chunk.
 	TotalCount int `json:"total_count"`
 	// Status is "pending", "scanning", or "completed".
 	Status string `json:"status"`

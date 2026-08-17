@@ -65,9 +65,9 @@ type RunOptions struct {
 4. Open both output files.
 5. Start dashboard, controller, keyboard, and pressure tasks.
 6. Start the executor and dispatcher.
-7. Drain result, executor, dispatcher, and pressure channels.
+7. Drain result, executor, dispatcher, pressure, and abandoned-task channels.
 8. Close all per-chunk rate limiters.
-9. Rewind unwritten tasks after an output failure.
+9. Rewind each chunk to its lowest unwritten task.
 10. If work is incomplete, save the snapshot.
 11. Select the final error and emit one completion summary.
 12. Cancel background work and close output files.
@@ -94,8 +94,12 @@ The runtime loads `config.ScanValues.ResumeInput` with `state.LoadSnapshot`.
 The snapshot blocklist defines reachability. An empty blocklist makes every
 target reachable.
 
-`prepareRuntimePlan` rebuilds incomplete chunks with a narrow `runtimePolicy`.
+`prepareRuntimePlanContext` rebuilds incomplete chunks with a narrow
+`runtimePolicy`.
 Completed chunks do not create runtime work.
+
+Parsing and rebuild read cancellation at row and chunk transitions. Expansion,
+grouping, and deduplication read cancellation within 4,096 items.
 
 ## 4. Output setup
 
@@ -112,9 +116,11 @@ all required writes succeed.
 
 ## 5. Executor and dispatcher
 
-`startScanExecutor` creates a worker pool. Each worker calls
-`scanner.ScanTCP`, sends a `scanResult`, and stops when the task channel closes.
-The executor closes its result and error channels after all workers stop.
+`startCancellableScanExecutor` creates a worker pool. Cancellation abandons
+queued tasks. It does not change the timeout of a started probe.
+
+Each started probe sends one `scanResult`. The worker starts no next probe after
+cancellation. The executor reports every abandoned task.
 
 `dispatchTasks` processes chunks in order. For each task it:
 
@@ -122,15 +128,17 @@ The executor closes its result and error channels after all workers stop.
 2. Waits for the pause gate.
 3. Sends one task to the executor.
 4. Advances the dispatch cursor.
-5. Applies the configured delay.
+5. Waits for the cancellable configured delay.
 
 The dispatcher goroutine closes the task channel when dispatch ends.
 
 ## 6. Result drain and error order
 
-The result loop continues required channel drain after cancellation. It keeps
-the first observed pressure, executor, or output error. Simultaneous runtime
-errors can arrive in either select order.
+The result loop continues required channel drain after cancellation. It writes
+results from started probes unless an output error prevents the write.
+
+The loop keeps the first pressure, executor, or output error. Simultaneous
+runtime errors can arrive in either select order.
 
 The final error order is:
 
@@ -142,15 +150,20 @@ Output close errors are best effort. They do not replace the selected error.
 
 ## 7. Resume safety
 
-The dispatcher can advance before an output write completes. Therefore, an
-output failure records the lowest unwritten index for each affected chunk.
-The snapshot save rewinds each affected cursor to that index.
+The dispatcher can advance before a worker starts a queued probe. It can also
+advance before an output write completes.
+
+Both cases record the lowest unwritten index for each affected chunk. The
+snapshot save rewinds each affected cursor to that index.
 
 This rule can repeat a persisted row. It cannot skip an unwritten task.
 Completion counts include only committed rows.
 
 The configured resume path is both the load path and the save path. A clean,
 complete run does not save a snapshot.
+
+The first user interrupt starts this flow. A second interrupt forces exit code
+`130` without a current-snapshot guarantee.
 
 ## 8. Pressure and pause control
 
@@ -171,6 +184,9 @@ emit ANSI dashboard control codes.
 
 The runtime emits progress during snapshot rebuild and result processing. It
 emits one completion summary for success, cancellation, or failure.
+
+`probe_drain_complete` reports drain time, in-flight probes, and abandoned
+tasks. `snapshot_save_complete` reports save time and rewound chunks.
 
 ## 10. Extension rules
 

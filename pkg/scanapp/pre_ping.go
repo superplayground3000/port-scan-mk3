@@ -8,6 +8,7 @@ import (
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
@@ -28,14 +29,25 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 	if err != nil {
 		return fmt.Errorf("resolve pre-ping configuration: %w", err)
 	}
+	expansion, err := resolveTargetExpansion(configuration)
+	if err != nil {
+		return err
+	}
+	resourceLimits, err := resolvePrePingLimits(configuration)
+	if err != nil {
+		return err
+	}
 	deps := defaultRunDependencies()
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	inputs, err := loadPrePingInputs(values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, deps)
+	inputs, err := loadPrePingInputsContext(ctx, values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, resourceLimits.CIDR, deps)
 	if err != nil {
+		return err
+	}
+	if _, err := task.EstimateAuthorizedCIDRRecords(inputs.cidrRecords, expansion.Limits, nil); err != nil {
 		return err
 	}
 
@@ -45,7 +57,11 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 		return err
 	}
 
-	uniqueIPs, err := collectUniquePreScanIPs(inputs)
+	plan, err := buildAuthorizedPreScanPlan(inputs)
+	if err != nil {
+		return err
+	}
+	uniqueIPs, err := plan.collectUniqueIPs()
 	if err != nil {
 		return err
 	}
@@ -71,12 +87,16 @@ func RunPrePing(ctx context.Context, configuration PrePingConfiguration, stdout,
 		return err
 	}
 
-	rows, err := collectUnreachableRows(inputs, reachablePredicate(unreachable), reason)
-	if err != nil {
-		return err
-	}
-
-	if err := finalizeUnreachableResults(outputPaths.unreachablePath, rows); err != nil {
+	if len(unreachable) == 0 {
+		if err := finalizeUnreachableResults(outputPaths.unreachablePath, nil); err != nil {
+			return err
+		}
+	} else if err := finalizeUnreachableResultsFromPlan(
+		outputPaths.unreachablePath,
+		plan,
+		reachablePredicate(unreachable),
+		reason,
+	); err != nil {
 		return err
 	}
 
@@ -110,6 +130,18 @@ func finalizeUnreachableResults(finalPath string, rows []writer.UnreachableRecor
 			_ = output.Finalize(false)
 			return err
 		}
+	}
+	return output.Finalize(true)
+}
+
+func finalizeUnreachableResultsFromPlan(finalPath string, plan authorizedPreScanPlan, reachable func(string) bool, reason string) error {
+	output, err := openUnreachableOutput(finalPath)
+	if err != nil {
+		return err
+	}
+	if err := plan.visitUnreachableRows(reachable, reason, output.writer.Write); err != nil {
+		_ = output.Finalize(false)
+		return err
 	}
 	return output.Finalize(true)
 }

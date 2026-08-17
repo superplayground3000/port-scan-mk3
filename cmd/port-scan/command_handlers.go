@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/cli"
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
@@ -69,6 +70,15 @@ func handlePrePingCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func newScanInterruptContext(parent context.Context, stderr io.Writer, forceExit func(int)) (context.Context, context.CancelFunc) {
+	return state.WithInterruptEscalation(parent, func() {
+		fmt.Fprintln(stderr, "scan cancellation requested")
+		fmt.Fprintln(stderr, "graceful finalization is in progress")
+		fmt.Fprintln(stderr, "press Ctrl+C or Ctrl+Break again to force exit 130")
+		fmt.Fprintln(stderr, "the emergency exit does not save the current snapshot or finalize output files")
+	}, forceExit)
+}
+
 // handleGenerateBucketsCommand builds a resume bucket snapshot from the target
 // inputs (minus an optional unreachable blocklist) and writes it to -buckets-out.
 // It performs no network I/O. Exit codes: parse error (including missing
@@ -101,7 +111,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	ctx, cancel := state.WithSIGINTCancel(context.Background())
+	ctx, cancel := newScanInterruptContext(context.Background(), stderr, os.Exit)
 	defer cancel()
 
 	err = scanapp.Run(ctx, cfg, stdout, stderr, scanapp.RunOptions{})
@@ -119,16 +129,16 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "port-scan is a three-step pipeline: pre-ping -> generate-buckets -> scan.")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "port-scan pre-ping -cidr-file <file> [-pre-scan-ping-timeout 100ms] [-workers N] [-output <file>] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
+	fmt.Fprintln(w, "port-scan pre-ping -cidr-file <file> [-cidr-input-size-limit-gb N] [-cidr-input-record-limit N] [-target-count-limit N] [-target-memory-limit-gb N] [-pre-scan-ping-timeout 100ms] [-workers N] [-output <file>] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
 	fmt.Fprintln(w, "    Ping unique targets and write unreachable_results-<ts>.csv; prints its path for chaining. No -port-file and no ping-toggle flag (skip pinging by skipping this step).")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "port-scan generate-buckets -cidr-file <file> -buckets-out <file> [-port-file <file>] [-unreachable-file <file>] [-workers N] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
+	fmt.Fprintln(w, "port-scan generate-buckets -cidr-file <file> -buckets-out <file> [-cidr-input-size-limit-gb N] [-cidr-input-record-limit N] [-port-input-size-limit-mb N] [-port-input-record-limit N] [-snapshot-size-limit-gb N] [-snapshot-chunk-limit N] [-snapshot-port-entry-limit N] [-snapshot-unreachable-ip-limit N] [-target-count-limit N] [-target-memory-limit-gb N] [-port-file <file>] [-unreachable-file <file>] [-workers N] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
 	fmt.Fprintln(w, "    Build a resume bucket snapshot over targets minus the optional -unreachable-file blocklist. No network I/O.")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "port-scan scan -cidr-file <file> -resume <bucket-file> [-output <file>] [-timeout 100ms] [-workers N] [-delay 10ms] [-bucket-rate N] [-bucket-capacity N] [-disable-api] [-pressure-api URL] [-pressure-interval 5s] [-pressure-auth-url URL] [-pressure-data-url URLs] [-pressure-client-id ID] [-pressure-client-secret SECRET] [-pressure-use-auth] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
+	fmt.Fprintln(w, "port-scan scan -cidr-file <file> -resume <bucket-file> [-cidr-input-size-limit-gb N] [-cidr-input-record-limit N] [-port-input-size-limit-mb N] [-port-input-record-limit N] [-snapshot-size-limit-gb N] [-snapshot-chunk-limit N] [-snapshot-port-entry-limit N] [-snapshot-unreachable-ip-limit N] [-pressure-response-size-limit-mb N] [-pressure-response-entry-limit N] [-target-count-limit N] [-target-memory-limit-gb N] [-output <file>] [-output-flush-results N] [-timeout 100ms] [-workers N] [-delay 10ms] [-bucket-rate N] [-bucket-capacity N] [-disable-api] [-pressure-api URL] [-pressure-interval 5s] [-pressure-auth-url URL] [-pressure-data-url URLs] [-pressure-client-id ID] [-pressure-client-secret SECRET] [-pressure-use-auth] [-progress-interval N] [-cidr-ip-col ip] [-cidr-ip-cidr-col ip_cidr] [-log-level info] [-format human|json] [-quiet]")
 	fmt.Fprintln(w, "    Scan the buckets in -resume. Requires -resume; has NO ping flags (scan never pings). -port-file is a fallback normally ignored (chunks carry ports).")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "port-scan validate -cidr-file <file> [-port-file <file>] [-format human|json]")
+	fmt.Fprintln(w, "port-scan validate -cidr-file <file> [-port-file <file>] [-cidr-input-size-limit-gb N] [-cidr-input-record-limit N] [-port-input-size-limit-mb N] [-port-input-record-limit N] [-target-count-limit N] [-target-memory-limit-gb N] [-format human|json]")
 	fmt.Fprintln(w, "    Validate CIDR/port inputs without scanning.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "port-scan version | --version | -version")

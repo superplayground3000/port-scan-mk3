@@ -53,7 +53,7 @@ type CIDRRecord struct {
 	ServiceLabel string
 	// Protocol is the protocol name. The parser accepts "tcp" only.
 	Protocol string
-	// Port is the target TCP port number (rich mode only).
+	// Port is the row TCP port. It is required in rich mode and optional in basic mode.
 	Port int
 	// Decision is "accept" or "deny" from the policy row.
 	Decision string

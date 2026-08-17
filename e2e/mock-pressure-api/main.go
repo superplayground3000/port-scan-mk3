@@ -322,6 +322,10 @@ func newPressureHandlerWithStats(mode string, delayMS int, state *pressureState,
 		switch mode {
 		case "ok":
 			writeBody(w)
+		case "oversize":
+			stats.recordFailure()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"pressure":20,"padding":"%s"}`, strings.Repeat("x", 1_000_000))
 		case "fail":
 			stats.recordFailure()
 			http.Error(w, "mock fail", http.StatusInternalServerError)

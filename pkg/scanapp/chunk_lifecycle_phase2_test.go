@@ -1,11 +1,13 @@
 package scanapp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
@@ -102,12 +104,19 @@ func assertRuntimesEquivalent(t *testing.T, got, want []*chunkRuntime) {
 		if fmt.Sprintf("%v", g.ports) != fmt.Sprintf("%v", w.ports) {
 			t.Fatalf("runtime[%d] %s ports: got %v, want %v", i, w.ipCidr, g.ports, w.ports)
 		}
-		if len(g.targets) != len(w.targets) {
-			t.Fatalf("runtime[%d] %s target count: got %d, want %d", i, w.ipCidr, len(g.targets), len(w.targets))
+		if g.state.TotalCount != w.state.TotalCount {
+			t.Fatalf("runtime[%d] %s task count: got %d, want %d", i, w.ipCidr, g.state.TotalCount, w.state.TotalCount)
 		}
-		for j := range w.targets {
-			gt, wt := g.targets[j], w.targets[j]
-			if gt.ip != wt.ip || gt.ipU32 != wt.ipU32 || gt.port != wt.port || gt.ipCidr != wt.ipCidr || gt.meta != wt.meta {
+		for j := 0; j < w.state.TotalCount; j++ {
+			gt, gp, err := indexToChunkRuntimeTarget(g, j)
+			if err != nil {
+				t.Fatalf("runtime[%d] target[%d]: %v", i, j, err)
+			}
+			wt, wp, err := indexToChunkRuntimeTarget(w, j)
+			if err != nil {
+				t.Fatalf("reference runtime[%d] target[%d]: %v", i, j, err)
+			}
+			if gt.ip != wt.ip || gt.ipU32 != wt.ipU32 || gp != wp || gt.ipCidr != wt.ipCidr || gt.meta != wt.meta {
 				t.Fatalf("runtime[%d] %s target[%d]:\n got  %+v\n want %+v", i, w.ipCidr, j, gt, wt)
 			}
 		}
@@ -354,6 +363,35 @@ func TestBuildRuntime_StatusCompletedButUnfinished_IsDispatchSafe(t *testing.T) 
 	rt.bkt.Close()
 }
 
+func TestBuildRuntime_RemainingWorkWithinInitialCapacity_DispatchesWithoutBucket(t *testing.T) {
+	records := []input.CIDRRecord{
+		richRecord(1, "10.1.0.0/30", "10.1.0.0", "10.1.0.0:80/tcp", reasonPrecheckAllowAll),
+	}
+	chunks := []task.Chunk{{
+		CIDR: "10.1.0.0/30", Ports: []string{"80/tcp"}, NextIndex: 2, ScannedCount: 2, TotalCount: 3, Status: "scanning",
+	}}
+	runtimes, err := buildRuntimeWithPredicate(chunks, records, nil, runtimePolicy{bucketRate: 1, bucketCapacity: 1}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtimes) != 1 {
+		t.Fatalf("runtime count = %d, want 1", len(runtimes))
+	}
+	if runtimes[0].bkt != nil {
+		runtimes[0].bkt.Close()
+		t.Fatal("one remaining task allocated a rate limiter even though the initial capacity already covers it")
+	}
+
+	taskCh := make(chan scanTask, 1)
+	err = dispatchTasks(context.Background(), dispatchPolicy{}, speedctrl.NewController(), newLogger("error", true, nil), runtimes, taskCh)
+	if err != nil {
+		t.Fatalf("dispatch one task without a rate limiter: %v", err)
+	}
+	if got := <-taskCh; got.taskIdx != 2 || got.ip != "10.1.0.2" || got.port != 80 {
+		t.Fatalf("dispatched task = %+v", got)
+	}
+}
+
 // TestBuildRuntime_LegacyZeroTotalCount_PreservesOwnership guards the byte-for-byte
 // contract for legacy snapshots that omit total_count. Filtering out a completed
 // segment's rows would hand a cross-segment execution key back to an incomplete
@@ -462,5 +500,12 @@ func TestBuildRuntime_DivergenceGuard_TotalCountMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "incompatible") {
 		t.Fatalf("expected an 'incompatible' resume-state error, got: %v", err)
+	}
+}
+
+func TestNewRuntimeBucketCanBeDisabledForTestAdapters(t *testing.T) {
+	if bucket := newRuntimeBucket(2, runtimePolicy{bucketRate: 1, bucketCapacity: 1, disableRateLimit: true}); bucket != nil {
+		bucket.Close()
+		t.Fatal("disabled rate limit created a runtime bucket")
 	}
 }

@@ -2,6 +2,7 @@ package scanapp
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -10,16 +11,21 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/progress"
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 type scanRuntimeInput struct {
 	values                   config.ScanValues
+	targetExpansion          config.TargetExpansionValues
+	resourceLimits           config.ScanResourceLimits
 	pressure                 config.PressureValues
 	stdout                   io.Writer
 	stderr                   io.Writer
 	pressureLimit            int
 	disableKeyboard          bool
 	progressInterval         int
+	outputFlushResults       int
+	disableRateLimit         bool
 	dashboardRefreshInterval time.Duration
 }
 
@@ -33,6 +39,12 @@ type scanRuntimeAdapters struct {
 	pressureObserver          pressureTelemetryObserver
 	controllerObserver        controllerTelemetryObserver
 	batchOutputsOpener        batchOutputsOpenFunc
+	taskObserver              func(ip string, port int)
+	resumeObserver            func(completed, total int)
+	resultObserver            func(completed uint64)
+	probeTelemetryObserver    func(ProbeTelemetry)
+	snapshotTelemetryObserver func(SnapshotTelemetry)
+	saveSnapshot              snapshotSaveFunc
 }
 
 type scanRuntime struct {
@@ -60,24 +72,63 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		return err
 	}
 
-	inputs, err := loadRunInputs(inputConfiguration{
+	inputs, err := loadRunInputsContext(ctx, inputConfiguration{
 		cidrFile:         cfg.CIDRFile,
 		cidrIPCol:        cfg.CIDRIPCol,
 		cidrIPCidrCol:    cfg.CIDRIPCidrCol,
 		portFile:         cfg.PortFile,
 		allowMissingPort: true,
+		cidrLimits:       r.input.resourceLimits.CIDR,
+		portLimits:       r.input.resourceLimits.Port,
 	}, r.adapters.deps)
 	if err != nil {
 		return err
 	}
 
-	snapshot, err := state.LoadSnapshot(cfg.ResumeInput)
+	snapshot, err := state.LoadSnapshotWithLimits(cfg.ResumeInput, r.input.resourceLimits.Snapshot)
 	if err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	if err := validateSnapshotAuthorization(snapshot, inputs.cidrRecords); err != nil {
+		return err
+	}
+	if err := validateSnapshotTargetSemantics(snapshot, inputs.cidrRecords); err != nil {
+		return err
+	}
+	if snapshot.TargetSemanticsVersion == state.CurrentTargetSemanticsVersion && !hasRichRecords(inputs.cidrRecords) {
+		inputs.portSpecs, err = inputPortSpecsFromRows(snapshot.BasicPortFallback)
+		if err != nil {
+			return fmt.Errorf("load snapshot basic port fallback: %w", err)
+		}
+	}
+	// A successful legacy check proves that the snapshot contains no denied
+	// work. A later progress save can record this fact and skip the check.
+	snapshot.RichDenyExcluded = true
+	effectiveLimits, err := effectiveScanExpansionLimits(snapshot.TargetExpansion, r.input.targetExpansion)
+	if err != nil {
+		return err
+	}
+	expansionEstimate, err := task.EstimateAuthorizedCIDRRecords(inputs.cidrRecords, effectiveLimits, incompleteChunkKeys(snapshot.Chunks))
+	if err != nil {
+		return err
+	}
+	candidateCount := expansionEstimate.CandidateCount
+	if snapshot.TargetExpansion != nil {
+		candidateCount = snapshot.TargetExpansion.CandidateCount
+	}
+	snapshot.TargetExpansion = &state.TargetExpansionState{
+		CandidateCount: candidateCount,
+		CandidateLimit: int64(effectiveLimits.CandidateLimit()),
+		MemoryLimitGB:  int64(effectiveLimits.MemoryLimitGB()),
+	}
+	// The snapshot blocklist supplies the reachable predicate. The scan does not
+	// use ping to calculate reachability. An empty blocklist makes all targets
+	// reachable.
+	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
 
 	// Resolve output paths after the snapshot. A snapshot from an interrupted run
 	// makes this run append to the same files (design §3.7). A new snapshot gets
@@ -112,11 +163,6 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	}
 	outputState := &state.OutputState{ScanPath: scanPath, OpenPath: openPath}
 
-	// The snapshot blocklist supplies the reachable predicate. The scan does not
-	// use ping to calculate reachability. An empty blocklist makes all targets
-	// reachable.
-	reachable := reachablePredicate(snapshot.PreScanPing.UnreachableIPv4U32)
-
 	progressStep := r.input.progressInterval
 	if progressStep <= 0 {
 		progressStep = 100
@@ -133,32 +179,41 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	parseStart := time.Now()
 	var parseReporter chunkExpandReporter
 	var bucketProgress progress.Reporter
-	if !cfg.Quiet {
+	if !cfg.Quiet || r.adapters.resumeObserver != nil {
+		completed := 0
 		bucketProgress = progress.New("bucket_parse_progress", incompleteChunks, progressStep, r.input.stderr)
-		parseReporter = bucketProgress.Inc
+		parseReporter = func() {
+			completed++
+			if !cfg.Quiet {
+				bucketProgress.Inc()
+			}
+			if r.adapters.resumeObserver != nil {
+				r.adapters.resumeObserver(completed, incompleteChunks)
+			}
+		}
 	}
 
-	plan, err := prepareRuntimePlan(runtimePolicy{
-		bucketRate:     cfg.BucketRate,
-		bucketCapacity: cfg.BucketCapacity,
+	plan, err := prepareRuntimePlanContext(ctx, runtimePolicy{
+		bucketRate:       cfg.BucketRate,
+		bucketCapacity:   cfg.BucketCapacity,
+		disableRateLimit: r.input.disableRateLimit,
 	}, inputs, reachable, snapshot.Chunks, parseReporter)
 	if err != nil {
 		return err
 	}
 
-	if bucketProgress != nil {
+	if bucketProgress != nil && !cfg.Quiet {
 		bucketProgress.Done()
 	}
 	targetsGenerated := 0
 	for _, rt := range plan.runtimes {
-		targetsGenerated += len(rt.targets)
+		targetsGenerated += rt.targetCount()
 	}
 	logger.eventf("bucket_parse_complete", "", 0, "bucket_parse_complete", LogEventNone, map[string]any{
 		"chunks_parsed":     incompleteChunks,
 		"targets_generated": targetsGenerated,
 		"elapsed_ms":        time.Since(parseStart).Milliseconds(),
 	})
-
 	outputs, err := r.adapters.batchOutputsOpener(scanPath, openPath, appendMode)
 	if err != nil {
 		return err
@@ -214,9 +269,9 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	}
 
 	taskCh := make(chan scanTask, queueSize)
-	resultCh, executorErrCh := startScanExecutor(workers, cfg.DialTimeout, r.adapters.dial, logger, taskCh)
+	resultCh, executorErrCh, abandonedCh, executorTelemetry := startCancellableScanExecutor(runCtx, workers, cfg.DialTimeout, r.adapters.dial, logger, taskCh)
 
-	dispatchPolicy := dispatchPolicy{delay: cfg.DispatchDelay, observer: noopDispatchObserver{}}
+	dispatchPolicy := dispatchPolicy{delay: cfg.DispatchDelay, observer: noopDispatchObserver{}, taskObserver: r.adapters.taskObserver}
 	if dashboardState != nil {
 		dispatchPolicy.observer = newDashboardDispatchObserver(dashboardState)
 	}
@@ -240,16 +295,30 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 		executorErrCh: executorErrCh,
 		dispatchErrCh: dispatchErrCh,
 		resultCh:      resultCh,
+		abandonedCh:   abandonedCh,
 	}, resultLoopDeps{
-		outputs:        outputs,
-		runtimes:       plan.runtimes,
-		resultObserver: resultObserver,
-		stdout:         r.input.stdout,
-		logger:         logger,
-		ctrl:           ctrl,
-		progressStep:   progressStep,
-		quiet:          cfg.Quiet,
+		outputs:                outputs,
+		runtimes:               plan.runtimes,
+		resultObserver:         resultObserver,
+		stdout:                 r.input.stdout,
+		logger:                 logger,
+		ctrl:                   ctrl,
+		progressStep:           progressStep,
+		quiet:                  cfg.Quiet,
+		outputFlushResults:     r.input.outputFlushResults,
+		resultObserverCallback: r.adapters.resultObserver,
 	})
+	inFlight, abandoned, stopStarted, totalStarted, startsAfterStop := executorTelemetry.snapshot()
+	if r.adapters.probeTelemetryObserver != nil {
+		r.adapters.probeTelemetryObserver(ProbeTelemetry{TotalStarted: totalStarted, StartsAfterStop: startsAfterStop})
+	}
+	if !stopStarted.IsZero() {
+		logger.eventf("probe_drain_complete", "", 0, "probe_drain_complete", LogEventNone, map[string]any{
+			"duration_ms":            time.Since(stopStarted).Milliseconds(),
+			"in_flight_probes":       inFlight,
+			"abandoned_queued_tasks": abandoned,
+		})
+	}
 
 	for _, rt := range plan.runtimes {
 		if rt.bkt != nil {
@@ -259,9 +328,18 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 
 	// A failure to save the snapshot is the run outcome. Therefore, it gets a
 	// completion summary, as constitution VI requires.
-	if err := persistResumeSnapshot(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, dispatchErr, runErr); err != nil {
-		emitCompletionSummary(logger, summary, startedAt, err)
-		return err
+	snapshotStartedAt := time.Now()
+	rewoundChunks, snapshotErr := persistResumeSnapshotWithSaver(cfg.ResumeInput, logger, plan.runtimes, snapshot.PreScanPing, outputState, snapshot.RichDenyExcluded, snapshot.TargetExpansion, snapshot.TargetSemanticsVersion, snapshot.BasicPortFallback, r.input.resourceLimits.Snapshot, dispatchErr, runErr, r.adapters.saveSnapshot)
+	if r.adapters.snapshotTelemetryObserver != nil {
+		r.adapters.snapshotTelemetryObserver(SnapshotTelemetry{RewoundChunks: uint64(rewoundChunks)})
+	}
+	logger.eventf("snapshot_save_complete", "", 0, "snapshot_save_complete", errorCause(snapshotErr), map[string]any{
+		"duration_ms":    time.Since(snapshotStartedAt).Milliseconds(),
+		"rewound_chunks": rewoundChunks,
+	})
+	if snapshotErr != nil {
+		emitCompletionSummary(logger, summary, startedAt, snapshotErr)
+		return snapshotErr
 	}
 
 	if runErr != nil {

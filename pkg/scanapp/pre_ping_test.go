@@ -240,6 +240,36 @@ func TestRunPrePing_NoTargets_WritesHeaderOnlyValidCSV(t *testing.T) {
 	}
 }
 
+func TestRunPrePing_WhenRichInputIsDenied_SendsNoProbeAndWritesHeaderOnlyCSV(t *testing.T) {
+	cidrFile, _, output := writePrePingInputs(t,
+		richBucketCSVHeader+
+			"10.1.0.10,10.1.0.0/24,10.0.0.8,10.0.0.0/24,https,tcp,443,deny,P-1,MATCH_POLICY_DENY\n",
+		"",
+	)
+	checker := &fakePreScanChecker{}
+
+	var stdout, stderr bytes.Buffer
+	err := RunPrePing(context.Background(), mustPrePingConfig(t, config.PrePingValues{
+		CIDRFile:      cidrFile,
+		CIDRIPCol:     "ip",
+		CIDRIPCidrCol: "ip_cidr",
+		Output:        output,
+		Workers:       1,
+		PingTimeout:   100 * time.Millisecond,
+	}), &stdout, &stderr, RunOptions{ReachabilityChecker: checker})
+	if err != nil {
+		t.Fatalf("RunPrePing() error = %v", err)
+	}
+	if calls := checker.calls(); len(calls) != 0 {
+		t.Fatalf("RunPrePing() probed denied targets: %v", calls)
+	}
+
+	rows := readCSVRecords(t, strings.TrimSpace(stdout.String()))
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0], expectedUnreachableHeader) {
+		t.Fatalf("RunPrePing() output = %v, want header-only CSV", rows)
+	}
+}
+
 // TestRunPrePing_WhenContextCanceledMidFlight_AbortsWithoutWritingOutput drives
 // RunPrePing (the live production pre-ping entry) against a checker that blocks
 // until the context is canceled, cancels while a reachability check is in

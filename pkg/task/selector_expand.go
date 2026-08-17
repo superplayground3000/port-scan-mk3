@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -16,7 +17,8 @@ import (
 //
 // Each selector can be a single IPv4 address, for example "192.168.1.1", or a
 // CIDR range, for example "10.0.0.0/8". ExpandIPSelectors returns an error for an
-// IPv6 input. The output is in ascending numeric order.
+// IPv6 input or an expansion that exceeds the default limits. The output is in
+// ascending numeric order.
 //
 // ExpandIPSelectors includes every address in the range. The caller removes the
 // broadcast address separately, against the boundary subnet, with
@@ -30,15 +32,53 @@ import (
 // # Returns
 //
 //	A sorted slice of individual IPv4 strings on success. An error if a selector
-//	is invalid or is IPv6.
+//	is invalid, is IPv6, or exceeds the default expansion limits.
 //
 // # Example
 //
 //	ips, err := task.ExpandIPSelectors([]string{"192.168.1.0/30", "192.168.1.1"})
 //	// ips == ["192.168.1.0", "192.168.1.1", "192.168.1.2", "192.168.1.3"]
 func ExpandIPSelectors(selectors []string) ([]string, error) {
+	return ExpandIPSelectorsWithLimits(selectors, DefaultExpansionLimits())
+}
+
+// ExpandIPSelectorsContext expands IPv4 selectors with the default limits.
+// It reads ctx at intervals of no more than 4,096 candidate addresses.
+// It returns sorted unique IPv4 addresses.
+// It returns an error for cancellation, invalid input, IPv6, overflow, or a default-limit failure.
+func ExpandIPSelectorsContext(ctx context.Context, selectors []string) ([]string, error) {
+	return ExpandIPSelectorsContextWithLimits(ctx, selectors, DefaultExpansionLimits())
+}
+
+// ExpandIPSelectorsWithLimits expands IPv4 selectors with explicit limits.
+// A zero count or memory limit disables that limit.
+// It returns sorted unique IPv4 addresses.
+// It returns an error for invalid input, IPv6, overflow, or a limit failure.
+func ExpandIPSelectorsWithLimits(selectors []string, limits ExpansionLimits) ([]string, error) {
+	return ExpandIPSelectorsContextWithLimits(context.Background(), selectors, limits)
+}
+
+// ExpandIPSelectorsContextWithLimits expands IPv4 selectors with explicit limits.
+// It verifies the complete expansion before it enumerates an address.
+// It returns sorted unique IPv4 addresses.
+// It returns an error for cancellation, invalid input, IPv6, overflow, or a limit failure.
+func ExpandIPSelectorsContextWithLimits(ctx context.Context, selectors []string, limits ExpansionLimits) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	inputs := make([]SelectorInput, 0, len(selectors))
+	for i, selector := range selectors {
+		inputs = append(inputs, SelectorInput{Row: i + 1, Selector: selector})
+	}
+	if _, err := EstimateIPSelectors(inputs, limits); err != nil {
+		return nil, err
+	}
+
 	uniq := make(map[uint32]struct{})
 	for _, raw := range selectors {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			return nil, fmt.Errorf("empty selector")
@@ -62,6 +102,11 @@ func ExpandIPSelectors(selectors []string) ([]string, error) {
 		startN := binary.BigEndian.Uint32(start.To4())
 		endN := binary.BigEndian.Uint32(end.To4())
 		for curr := startN; curr <= endN; curr++ {
+			if (curr-startN)%4096 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			uniq[curr] = struct{}{}
 			if curr == ^uint32(0) {
 				break
@@ -71,12 +116,22 @@ func ExpandIPSelectors(selectors []string) ([]string, error) {
 
 	keys := make([]uint32, 0, len(uniq))
 	for n := range uniq {
+		if len(keys)%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		keys = append(keys, n)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 
 	out := make([]string, 0, len(keys))
-	for _, n := range keys {
+	for i, n := range keys {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		ip := make(net.IP, 4)
 		binary.BigEndian.PutUint32(ip, n)
 		out = append(out, ip.String())

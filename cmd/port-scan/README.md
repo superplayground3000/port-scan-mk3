@@ -6,30 +6,42 @@ TCP port scanner for IPv4 with pressure-aware pacing, rate control, and resume s
 
 `port-scan` is the main scanner binary for the port-scan-mk3 project. It supports two input modes:
 
-- **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs. A port file gives the TCP ports to test.
+- **Basic mode** — A CIDR CSV file with IP selectors and boundary CIDRs. Each row can override the port file.
 - **Rich mode** — A single CSV file with full firewall-policy rows (for example, src_ip, dst_ip, port, and decision). In rich mode, you do not need a separate port file.
 
-The scanner dispatches tasks to a worker pool that you configure. It writes the results in real time. SIGINT or a pressure API can pause the scan and resume it.
+The scanner dispatches probe tasks to a worker pool that you configure. It writes results during the scan.
+
+An OS interrupt cancels the scan. The pressure API or space bar can pause and resume dispatch in the same process.
 
 ## Commands
 
 ### validate
 
-This command parses and validates the input files. It does not run a network scan. It runs in O(n) time over the input rows.
+This command parses and validates the input files. It does not run a network scan.
+
+The validation cost increases with the input byte count and row count.
 
 ```bash
 port-scan validate -cidr-file targets.csv -port-file ports.csv
 port-scan validate -cidr-file targets.csv -port-file ports.csv -format json
 ```
 
+### pre-ping
+
+Ping the authorized candidate addresses. The command writes an unreachable-address CSV and prints its path.
+
+### generate-buckets
+
+Build a resume snapshot from the authorized input. In basic mode, this command also reads the port file.
+
 ### scan
 
-Run the full scan pipeline. The command writes the output to `scan_results-<timestamp>.csv` (all results) and `opened_results-<timestamp>.csv` (open ports only).
+Scan the probe tasks in a required resume snapshot. The command never pings targets or builds new buckets.
 
 ```bash
-port-scan scan -cidr-file targets.csv -port-file ports.csv
-port-scan scan -cidr-file targets.csv -port-file ports.csv -output ./results
-port-scan scan -cidr-file targets.csv -port-file ports.csv -format json -log-level debug
+port-scan pre-ping -cidr-file targets.csv
+port-scan generate-buckets -cidr-file targets.csv -port-file ports.csv -buckets-out buckets.json
+port-scan scan -cidr-file targets.csv -resume buckets.json -output ./results
 ```
 
 ## Architecture
@@ -41,18 +53,16 @@ CLI entry point (main.go)
     │       config.ParseValidate() → config.ValidateConfig
     │           └── validate.Inputs(Configuration) → cli.WriteValidation()
     │
-    └── handleScanCommand
-            config.ParseScan() → config.ScanConfig
-                   │
-                   ▼
-            scanapp.Run(ScanConfiguration)
-                   │
-                   └── private scanRuntime.execute(context.Context)
-                           ├── load the snapshot and rebuild runtime state
-                           ├── start pressure, control, worker, and dispatch tasks
-                           ├── drain results and errors after cancellation
-                           ├── write results and save resume state
-                           └── stop tasks and close output files
+    ├── handlePrePingCommand → scanapp.RunPrePing
+    ├── handleGenerateBucketsCommand → scanapp.GenerateBuckets
+    └── handleScanCommand → scanapp.Run
+                               │
+                               └── private scanRuntime.execute(context.Context)
+                                      ├── load the snapshot and rebuild incomplete chunks
+                                      ├── start pressure, control, worker, and dispatch tasks
+                                      ├── drain results and errors after cancellation
+                                      ├── write committed results and save resume state
+                                      └── stop tasks and close output files
 ```
 
 ### Key Packages
@@ -63,11 +73,11 @@ CLI entry point (main.go)
 | `pkg/validate` | Input file validation (exists, parseable, correct schema) |
 | `pkg/input` | CIDR CSV and port file loading. It detects basic or rich mode automatically |
 | `pkg/scanapp` | Workflow entry points and the private scan runtime |
-| `pkg/speedctrl` | Rate control through a leaky-bucket controller, plus keyboard pause support |
+| `pkg/speedctrl` | Rate control and a space-bar pause gate |
 | `pkg/scanner` | Low-level TCP scanning via `net.DialTimeout` |
 | `pkg/writer` | CSV output with a fixed 14-column schema, plus the OpenOnlyWriter filter |
 | `pkg/cli` | CLI formatting (human vs JSON output for validate command) |
-| `pkg/state` | SIGINT cancel context for graceful interruption |
+| `pkg/state` | Interrupt contexts for graceful cancellation and emergency exit |
 
 ## CLI Flags
 
@@ -78,11 +88,12 @@ compatibility.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-cidr-file` | (required) | Path to the CIDR input CSV |
-| `-port-file` | (required in basic mode) | Path to the port input file (one `port/tcp` per line). Not required in rich mode. |
+| `-port-file` | (conditional) | Path to the port input file. A basic row with a blank `port` value uses this file. Rich mode ignores it. |
 | `-output` | `scan_results.csv` | Base path for result CSV files. Actual files are `scan_results-<ts>.csv` and `opened_results-<ts>.csv` written in the same directory as the output path. |
+| `-output-flush-results` | `1000` | Number of probe results in one output batch. `1` flushes each result. `0` disables periodic flushes. |
 | `-timeout` | `100ms` | Per-scan TCP connection timeout (duration string) |
 | `-pre-scan-ping-timeout` | `100ms` | Pre-scan ping reachability timeout (duration string, must be > 0) |
-| `-delay` | `10ms` | Pause between dispatching consecutive tasks |
+| `-delay` | `10ms` | Wait between consecutive task dispatches |
 | `-bucket-rate` | `100` | Leaky-bucket token refill rate (tokens/second) |
 | `-bucket-capacity` | `100` | Leaky-bucket maximum burst size |
 | `-workers` | `10` | Number of concurrent scan goroutines |
@@ -100,6 +111,42 @@ compatibility.
 | `-quiet` | `false` | Suppress the console logs. Keep the pressure API logs |
 | `-cidr-ip-col` | `ip` | Column name for the IP selector in the CIDR CSV |
 | `-cidr-ip-cidr-col` | `ip_cidr` | Column name for the boundary CIDR in the CIDR CSV |
+| `-target-count-limit` | `10000000` | Maximum candidate addresses. Set `0` to disable the count limit. |
+| `-target-memory-limit-gb` | `16` | Target expansion budget in decimal GB. Set `0` to disable the memory limit. |
+
+The commands verify target expansion before ping, dial, snapshot write, or result-file creation.
+The estimate is `1000000000 + candidate count * 1500` bytes.
+
+The count includes each authorized input row before de-duplication, broadcast removal, and blocklist filtering.
+A rich deny row contributes zero candidates. An IPv4 `/9` passes the defaults, but an IPv4 `/8` does not.
+
+`generate-buckets` stores the effective limits and candidate count in the snapshot.
+`scan` uses the stored limits unless an explicit scan flag replaces one limit.
+A legacy snapshot uses the defaults.
+
+CAUTION: Set both flags to `0` only when the host has sufficient memory.
+With this setting, no hidden target limit protects the process from resource exhaustion.
+
+### Input, snapshot, and pressure limits
+
+The CIDR input defaults are `1` decimal GB and `10000000` data records.
+Use `-cidr-input-size-limit-gb` and `-cidr-input-record-limit` to change them.
+
+The port input defaults are `1` decimal MB and `65535` nonblank records.
+Use `-port-input-size-limit-mb` and `-port-input-record-limit` to change them.
+
+The snapshot defaults are `2` decimal GB and `10000000` items for each object type.
+The object types are chunks, port entries, and unreachable IPs.
+Use the four `-snapshot-*-limit` flags to change these values.
+
+Each pressure response defaults to `1` decimal MB.
+Each OAuth data array defaults to `10000` entries.
+Use `-pressure-response-size-limit-mb` and `-pressure-response-entry-limit` to change them.
+
+A positive value replaces its default. A negative value is an error.
+Set one flag to `0` to disable only that limit.
+
+CAUTION: A disabled limit can exhaust memory or terminate the process.
 
 ## Input Formats
 
@@ -113,7 +160,7 @@ One row per IP selector. `port-scan` matches the columns by header name. If the 
 | `ip_cidr` | Yes | Boundary CIDR containing the selector |
 | `fab_name` | No | Fabric/mesh name carried through to output |
 | `cidr_name` | No | Human-readable CIDR label carried through to output |
-| `port` | No | Pre-specified port number on this row (otherwise uses port-file) |
+| `port` | No | TCP port for this row. A value overrides the port file for all IPs from this selector. |
 
 **Example:**
 ```csv
@@ -127,6 +174,10 @@ fab2,192.168.1.0,192.168.1.0/28,dmz
 
 One specification per line in `port/tcp` format.
 
+A basic row with a blank `port` value uses every port in this file. If all
+basic rows contain a port, `-port-file` is optional. The scanner combines all
+rows and scans each unique `ip:port/tcp` target one time.
+
 ```
 80/tcp
 443/tcp
@@ -135,7 +186,13 @@ One specification per line in `port/tcp` format.
 
 ### Rich Mode: Firewall-Policy CSV
 
-`port-scan` detects this mode when all the required columns are present. You do not need a port file, because each row gives its own dst_ip, dst_network_segment, port, and decision. Rows with `decision=accept` become scan targets. `port-scan` skips the rows with `decision=deny`.
+`port-scan` detects this mode when all required columns are present. You do not need a port file because each row contains its port.
+
+Rows with `decision=accept` become scan targets. Rows with `decision=deny` never become network targets.
+
+A deny row overrides an accept row with the same normalized `execution_key`. This rule applies before ICMP, bucket generation, resume rebuild, and TCP dispatch.
+
+The `validate` command still rejects malformed deny rows. A deny-only input succeeds and produces empty scan artifacts.
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -149,6 +206,8 @@ One specification per line in `port/tcp` format.
 | `decision` | Yes | `accept` (scan) or `deny` (skip) |
 | `matched_policy_id` | Yes | Policy rule identifier |
 | `reason` | Yes | Policy match reason |
+
+If an unmarked snapshot has rich deny input, `scan` rejects it before TCP dispatch. Run `generate-buckets` to create a new snapshot.
 
 **Example:**
 ```csv
@@ -196,9 +255,26 @@ Basic mode rows carry `ip`, `ip_cidr`, `port`, `status`, `response_time_ms`, `fa
 
 This file has the same schema as `scan_results-*.csv`. It contains only the rows where `status=open`.
 
-### resume_state.json
+The scan treats both result files as one commit batch. It updates progress only
+after both writers flush. A controlled stop flushes the final batch.
 
-`port-scan` writes this file on SIGINT or on a scan failure. It contains the completed task keys. Thus you can continue the scan at the point where it stopped.
+If a write or flush fails, the scan rewinds the complete current batch. A
+resumed scan can duplicate rows from that batch, but it does not omit them.
+
+### Bucket snapshot and resume state
+
+The path from `-resume` is the bucket snapshot and the resume state. `port-scan` updates it after cancellation or a scan failure.
+The file records completed work and the lowest unwritten task in each chunk.
+
+Resume reads and parses the current input. It rebuilds only incomplete chunks and does not revalidate completed chunks.
+
+Completed chunks can use an earlier input revision. If all results must use one input revision, start a fresh run.
+
+Queued probes do not start after cancellation. Started probes finish with their
+original timeout, and the command writes their results before snapshot persistence.
+
+Press Ctrl+C or Ctrl+Break one time for graceful cancellation. Press it again
+to force exit code `130` without a current-snapshot guarantee.
 
 ## Usage Examples
 
@@ -311,7 +387,7 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv -quiet
 | `0` | Success | The scan completed, and the command wrote the result CSVs |
 | `1` | Runtime error | File write failure, config error during run, or validation failure |
 | `2` | CLI or config error | Missing required flags, invalid flag values, parse failure |
-| `130` | Scan canceled | The scan received SIGINT, and the command wrote `resume_state.json` |
+| `130` | Scan canceled | The first interrupt saved the snapshot, or the second interrupt forced an emergency exit |
 
 **Validation exit codes:**
 - `validate` with `0` — all inputs valid
@@ -341,8 +417,14 @@ go test ./...
 
 ## Implementation Notes
 
-The scanner uses the Go standard library `net.DialTimeout` for TCP connections. The workers are goroutines that share a bounded task channel. A single writer goroutine serializes the results at write time.
+The scanner uses the Go standard library `net.Dialer.DialContext` for TCP connections.
+Workers share a bounded task channel. One result loop serializes output writes.
 
-For pressure control, the task dispatcher consults a `speedctrl.Controller` before it releases each task. The controller accumulates tokens from the leaky-bucket scheduler and from the pressure API (when it is enabled). Keyboard input (`p` to pause, `r` to resume) updates the controller directly.
+Cancellation stops queue consumption before the next dial. It does not change
+the context or timeout of a dial that already started.
+
+For pressure control, the task dispatcher reads a `speedctrl.Controller` before it releases each task.
+
+The leaky bucket controls rate. The pressure API and the space bar control the pause gate.
 
 `pkg/writer/csv_writer.go` defines the output schema (14 columns) as a single source of truth. A change to the schema is a MAJOR version change, per the product constitution.

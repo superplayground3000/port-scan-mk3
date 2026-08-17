@@ -5,16 +5,25 @@
 package validate
 
 import (
+	"context"
 	"fmt"
-	"os"
 
 	"github.com/xuxiping/port-scan-mk3/pkg/config"
 	"github.com/xuxiping/port-scan-mk3/pkg/input"
+	"github.com/xuxiping/port-scan-mk3/pkg/task"
 )
 
 // Configuration supplies verified values to the validate workflow.
 type Configuration interface {
 	Resolve() (config.ValidateValues, error)
+}
+
+type targetExpansionConfiguration interface {
+	ResolveTargetExpansion() (config.TargetExpansionValues, error)
+}
+
+type resourceLimitConfiguration interface {
+	ResolveResourceLimits() (config.ValidateResourceLimits, error)
 }
 
 // Result is the outcome of input validation. Valid is true when all inputs are
@@ -60,14 +69,30 @@ func Inputs(cfg Configuration) Result {
 	if err != nil {
 		return Result{Valid: false, Detail: fmt.Sprintf("resolve validate configuration: %v", err)}
 	}
-	cidrFile, err := os.Open(values.CIDRFile)
-	if err != nil {
-		return Result{Valid: false, Detail: fmt.Sprintf("failed to open cidr file: %v", err)}
+	resourceLimits := config.ValidateResourceLimits{
+		CIDR: input.DefaultCIDRLimits(values.CIDRFile),
+		Port: input.DefaultPortLimits(values.PortFile),
 	}
-	defer cidrFile.Close()
-
-	cidrRecords, err := input.LoadCIDRsWithColumns(cidrFile, values.CIDRIPCol, values.CIDRIPCidrCol)
+	if resolver, ok := cfg.(resourceLimitConfiguration); ok {
+		resolved, resolveErr := resolver.ResolveResourceLimits()
+		if resolveErr != nil {
+			return Result{Valid: false, Detail: fmt.Sprintf("resolve resource limits: %v", resolveErr)}
+		}
+		resourceLimits = resolved
+	}
+	cidrRecords, err := input.LoadCIDRsFileWithColumnsContext(context.Background(), values.CIDRFile, values.CIDRIPCol, values.CIDRIPCidrCol, resourceLimits.CIDR)
 	if err != nil {
+		return Result{Valid: false, Detail: err.Error()}
+	}
+	limits := task.DefaultExpansionLimits()
+	if resolver, ok := cfg.(targetExpansionConfiguration); ok {
+		expansion, resolveErr := resolver.ResolveTargetExpansion()
+		if resolveErr != nil {
+			return Result{Valid: false, Detail: fmt.Sprintf("resolve target expansion limits: %v", resolveErr)}
+		}
+		limits = expansion.Limits
+	}
+	if _, err := task.EstimateAuthorizedCIDRRecords(cidrRecords, limits, nil); err != nil {
 		return Result{Valid: false, Detail: err.Error()}
 	}
 	if values.PortFile == "" {
@@ -75,17 +100,14 @@ func Inputs(cfg Configuration) Result {
 			if rec.IsRich {
 				return Result{Valid: true, Detail: "ok"}
 			}
+			if rec.Port <= 0 {
+				return Result{Valid: false, Detail: fmt.Sprintf("basic row %d has no port source; set its port or provide -port-file (-port-file is required for blank basic row ports)", rec.RowNumber)}
+			}
 		}
-		return Result{Valid: false, Detail: "-port-file is required when cidr input is not rich mode"}
+		return Result{Valid: true, Detail: "ok"}
 	}
 
-	portFile, err := os.Open(values.PortFile)
-	if err != nil {
-		return Result{Valid: false, Detail: fmt.Sprintf("failed to open port file: %v", err)}
-	}
-	defer portFile.Close()
-
-	if _, err := input.LoadPorts(portFile); err != nil {
+	if _, err := input.LoadPortsFileContext(context.Background(), values.PortFile, resourceLimits.Port); err != nil {
 		return Result{Valid: false, Detail: err.Error()}
 	}
 

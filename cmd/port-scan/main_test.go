@@ -232,3 +232,23 @@ func TestMainValidate_WhenDefaultCSVAndPortFileMissing_ReturnsExit1(t *testing.T
 		t.Fatalf("expected missing port-file detail, got %s", out.String())
 	}
 }
+
+func TestMainValidate_WhenDeniedRichRowIsMalformed_ReturnsExit1(t *testing.T) {
+	tmp := t.TempDir()
+	cidr := filepath.Join(tmp, "rich-denied-invalid.csv")
+	if err := os.WriteFile(cidr, []byte(
+		"src_ip,src_network_segment,dst_ip,dst_network_segment,service_label,protocol,port,decision,matched_policy_id,reason\n"+
+			"10.0.0.1,10.0.0.0/24,not-an-ip,10.0.1.0/24,https,tcp,443,deny,P-1,MATCH_POLICY_DENY\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"validate", "-cidr-file", cidr, "-format", "json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("validate exit = %d, want 1; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"valid":false`) {
+		t.Fatalf("validate output = %s, want invalid denied row", stdout.String())
+	}
+}

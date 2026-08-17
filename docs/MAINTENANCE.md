@@ -32,6 +32,7 @@ intended design, and issues #63/#71 own `.github/workflows/ci.yml`.
 | `make cover` | coverage gate only (`scripts/coverage_gate.sh`) | Checking the 85% floor |
 | `make fmt` / `make fmt-check` | format in place / fail if unformatted | Before committing |
 | `make e2e` | `e2e/run_e2e.sh` only | Isolated e2e alone |
+| `make verify-performance` | complete native Linux large-data matrix | Large-input evidence and hot-path changes |
 | `make help` | list all targets | Discovery |
 
 Rule: never declare work complete until `make verify` exits 0. See
@@ -349,6 +350,18 @@ containers. This is true even when you run `make verify-e2e` from a Windows host
 It proves nothing about Windows file handles, path shapes, or `.exe` startup. The
 Windows-native equivalent is `scripts/windows_gate.ps1` (section 2.1). The two
 are complements, not substitutes, and neither one covers the other's platform.
+
+### 4.1 Large-data performance evidence
+
+`make verify-performance` runs the complete Linux matrix.
+The command uses `scripts/performance_gate.sh` and writes JSON and Markdown reports.
+
+Linux and Windows CI run bounded performance smoke cases.
+These cases use 100,000 records and a 100 MB snapshot.
+GitHub-hosted runners supply correctness and instrumentation evidence only.
+
+Read [`performance-harness.md`](performance-harness.md) for the complete matrix contract.
+That document also defines report fields, evidence labels, and Windows release checks.
 
 ## 5. Coverage floor (mind the margin)
 

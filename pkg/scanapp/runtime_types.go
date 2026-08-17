@@ -19,12 +19,13 @@ type targetMeta struct {
 }
 
 type chunkRuntime struct {
-	ipCidr  string
-	ports   []int
-	targets []scanTarget
-	state   *task.Chunk
-	tracker *chunkStateTracker
-	bkt     *ratelimit.LeakyBucket
+	ipCidr       string
+	ports        []int
+	targets      []scanTarget
+	basicTargets []basicScanTarget
+	state        *task.Chunk
+	tracker      *chunkStateTracker
+	bkt          *ratelimit.LeakyBucket
 }
 
 type scanTarget struct {
@@ -36,6 +37,12 @@ type scanTarget struct {
 	ipU32 uint32
 	port  int
 	meta  targetMeta
+}
+
+type basicScanTarget struct {
+	ip    string
+	ipU32 uint32
+	meta  *targetMeta
 }
 
 type scanTask struct {
@@ -51,4 +58,8 @@ type scanResult struct {
 	chunkIdx int
 	taskIdx  int
 	record   writer.Record
+}
+
+func (runtime *chunkRuntime) targetCount() int {
+	return len(runtime.targets) + len(runtime.basicTargets)
 }

@@ -7,5 +7,6 @@ coverage/
 .env*
 Dockerfile*
 e2e/out/
+performance-out/
 *.tmp
 *.swp

@@ -21,13 +21,18 @@ var (
 
 func main() {
 	if err := runMain(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if _, writeErr := fmt.Fprintln(os.Stderr, err); writeErr != nil {
+			os.Exit(1)
+		}
 		os.Exit(1)
 	}
 }
 
 func runMain(args []string, stdout io.Writer, stderr io.Writer) error {
 	if buildinfo.IsVersionRequest(args) {
-		fmt.Fprint(stdout, buildinfo.Resolve("cidr-compare", version, buildTime, commit).String())
+		if _, err := fmt.Fprint(stdout, buildinfo.Resolve("cidr-compare", version, buildTime, commit).String()); err != nil {
+			return fmt.Errorf("write version: %w", err)
+		}
 		return nil
 	}
 
@@ -60,41 +65,48 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) error {
 		return errors.New("missing required flags")
 	}
 
-	// Load deny file into interval tree
-	tree := &cidrutil.IntervalTree{}
 	denyF, err := os.Open(*denyFile)
 	if err != nil {
-		return fmt.Errorf("failed to open deny file: %w", err)
+		return fmt.Errorf("open deny CSV %s: %w", *denyFile, err)
 	}
-	defer denyF.Close()
-
 	denyReader := cidrutil.NewDenyCSVReader(denyF)
 	denyEntries, err := denyReader.ReadAll()
+	closeErr := denyF.Close()
 	if err != nil {
-		return fmt.Errorf("failed to read deny file: %w", err)
+		return fmt.Errorf("read deny CSV %s: %w", *denyFile, err)
 	}
+	if closeErr != nil {
+		return fmt.Errorf("close deny CSV %s: %w", *denyFile, closeErr)
+	}
+
+	openF, err := os.Open(*openFile)
+	if err != nil {
+		return fmt.Errorf("open open CSV %s: %w", *openFile, err)
+	}
+	openReader := cidrutil.NewOpenCSVReader(openF)
+	openEntries, err := openReader.ReadAll()
+	closeErr = openF.Close()
+	if err != nil {
+		return fmt.Errorf("read open CSV %s: %w", *openFile, err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close open CSV %s: %w", *openFile, closeErr)
+	}
+
+	tree := &cidrutil.IntervalTree{}
 	for _, entry := range denyEntries {
 		tree.Insert(entry)
 	}
 
-	// Stream open file and query
-	openF, err := os.Open(*openFile)
-	if err != nil {
-		return fmt.Errorf("failed to open open file: %w", err)
-	}
-	defer openF.Close()
-
-	fmt.Fprintln(stdout, "deny_cidr,open_cidr")
-
-	openReader := cidrutil.NewOpenCSVReader(openF)
-	openEntries, err := openReader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("failed to read open file: %w", err)
+	if _, err := fmt.Fprintln(stdout, "deny_cidr,open_cidr"); err != nil {
+		return fmt.Errorf("write output header: %w", err)
 	}
 	for _, entry := range openEntries {
 		matches := tree.Query(entry)
 		for _, deny := range matches {
-			fmt.Fprintf(stdout, "%s,%s\n", deny.Network, entry.Network)
+			if _, err := fmt.Fprintf(stdout, "%s,%s\n", deny.Network, entry.Network); err != nil {
+				return fmt.Errorf("write comparison result: %w", err)
+			}
 		}
 	}
 

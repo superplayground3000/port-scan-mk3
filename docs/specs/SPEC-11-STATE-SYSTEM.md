@@ -15,9 +15,11 @@ scan failure     -> state.SaveSnapshot -> corrected snapshot JSON
 
 ```go
 type Snapshot struct {
-    Chunks      []task.Chunk
-    PreScanPing PreScanPingState
-    Output      *OutputState
+    Chunks            []task.Chunk
+    PreScanPing       PreScanPingState
+    Output            *OutputState
+    RichDenyExcluded bool
+    TargetExpansion  *TargetExpansionState
 }
 ```
 
@@ -27,6 +29,11 @@ IPv4 values. `OutputState` stores the all-results and open-only CSV paths.
 A nil `Output` means that the snapshot has no recorded output paths. The scan
 runtime then creates new timestamped paths.
 
+`RichDenyExcluded` records that bucket generation applied rich deny authorization. Legacy snapshots omit this optional JSON field.
+
+`TargetExpansion` stores the candidate count and the two effective expansion limits.
+A nil value identifies a legacy snapshot. The scan workflow uses default limits for this snapshot.
+
 ## 2. Snapshot loading
 
 ```go
@@ -35,7 +42,7 @@ func LoadSnapshot(path string) (Snapshot, error)
 
 `LoadSnapshot` accepts both supported formats:
 
-- The current object envelope with `chunks`, `pre_scan_ping`, and `output`.
+- The current object envelope with `chunks`, `pre_scan_ping`, `output`, and `target_expansion`.
 - The legacy top-level array of chunks.
 
 JSON decoding rejects unknown fields and trailing content. The current envelope
@@ -46,6 +53,8 @@ and `timeout_ms`.
 
 ```go
 func SaveSnapshot(path string, snapshot Snapshot) error
+func SaveSnapshotWithLimits(path string, snapshot Snapshot, limits SnapshotLimits) error
+func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error)
 ```
 
 The save operation creates a temporary file in the destination directory. It
@@ -69,6 +78,20 @@ does not save after a clean, complete run.
 The runtime loads recorded output paths before it opens output files. It
 validates existing CSV headers and appends new rows to those files.
 
+The runtime verifies only candidates from incomplete chunks.
+If scan limit flags are absent, the runtime uses limits from `target_expansion`.
+Each explicit scan flag replaces its related stored limit.
+
+Resume reads and parses the complete current input. This cost increases with its byte count (`B`) and row count (`R`).
+
+The runtime does not expand or revalidate completed chunks. The incomplete rebuild cost increases with their candidate-address count (`Cᵢ`).
+
+A completed chunk is historical snapshot work. Completed results can use a different input revision from incomplete results.
+
+If all results must use one input revision, start a fresh run.
+
+Snapshot-save cost increases with the serialized snapshot byte count (`S`). See the [performance harness](../performance-harness.md) for the measured report.
+
 ## 5. Output-failure rewind
 
 Dispatch can advance before an output write completes. When a required writer
@@ -90,27 +113,41 @@ dispatcher error.
 
 ```go
 func WithSIGINTCancel(ctx context.Context) (context.Context, func())
+func WithInterruptEscalation(ctx context.Context, onFirst func(), forceExit func(int)) (context.Context, func())
 ```
 
-`WithSIGINTCancel` returns a context that cancels after `SIGINT`. Its cleanup
-function restores the signal handler. The command layer uses this context for
-the scan workflow.
+`WithSIGINTCancel` cancels preparation commands after the first interrupt.
+
+The `scan` command uses `WithInterruptEscalation`. The first interrupt starts graceful cancellation. The second interrupt calls `forceExit(130)`.
 
 ## 8. Compatibility rules
 
 - Keep current and legacy snapshot decoding.
 - Keep snapshots that omit `output` readable.
+- Keep snapshots that omit `rich_deny_excluded` readable.
+- Keep snapshots that omit `target_expansion` readable and apply the default limits.
 - Keep recovery for older chunks that omit `total_count`.
 - Resolve recorded relative output paths with the documented compatibility
   rule in `pkg/scanapp`.
 - Do not change JSON fields without a version and migration decision.
+
+If an unmarked snapshot has rich deny input, `scan` rejects it before TCP dispatch. The error tells the operator to run `generate-buckets` again.
 
 ## 9. Main files
 
 | File | Responsibility |
 | --- | --- |
 | `pkg/state/state.go` | Snapshot format, strict decode, and safe replacement |
-| `pkg/state/signal.go` | `SIGINT` cancellation |
+| `pkg/state/signal.go` | Graceful cancellation and second-interrupt handling |
 | `pkg/scanapp/scan_runtime.go` | Snapshot load and lifecycle order |
 | `pkg/scanapp/resume_manager.go` | Rewind and save decision |
 | `pkg/scanapp/output_path_upgrade.go` | Legacy relative output paths |
+
+## 10. Resource limits
+
+The default byte limit is `2000000000` bytes.
+The default limits for chunks, port entries, and unreachable IPs are each `10000000`.
+
+Loading and saving use the same effective values.
+A zero field disables only that limit.
+The snapshot does not store these values.

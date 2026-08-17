@@ -38,6 +38,8 @@ their trigger applies.
   with `make verify-e2e`.
 - Format: `make fmt` · Lint: `make lint` (uses golangci-lint if installed) ·
   Tidy: `go mod tidy` · List targets: `make help`
+- Run the complete native Linux performance matrix: `make verify-performance`.
+  This command writes reports under `performance-out/` by default.
 
 ## Definition of Done (do not skip)
 1. `make verify` exits 0. Paste the final result line as evidence.

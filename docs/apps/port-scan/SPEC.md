@@ -1,6 +1,6 @@
 # port-scan Specification
 
-**Tool**: `cmd/port-scan` | **Revised**: 2026-08-10
+**Tool**: `cmd/port-scan` | **Revised**: 2026-08-12
 
 ## Overview
 
@@ -68,13 +68,48 @@ port-scan validate -cidr-file <path> [-port-file <path>] [-format human|json]
 - `0` — success (inputs valid / snapshot written / scan completed)
 - `1` — runtime error (file write failure, config error during run, validation failure)
 - `2` — CLI or config error (missing required flags, unknown flag, invalid value)
-- `130` — canceled by SIGINT (`scan` persists progress to the `-resume` path)
+- `130` — canceled by SIGINT after successful snapshot persistence
+
+### Scan cancellation
+
+The first Ctrl+C or Windows Ctrl+Break starts graceful cancellation. Parent
+context cancellation and fatal runtime errors use the same stop flow.
+
+Parsing and runtime rebuild read the context at row and chunk transitions.
+Inner expansion and deduplication loops read it within 4,096 items.
+
+Rate, pause, send, and `-delay` waits stop after cancellation. Queued probes do
+not start. Each started probe finishes with its original `-timeout`.
+
+The result loop persists every completed in-flight result. It abandons queued
+tasks and rewinds each chunk to its lowest unwritten index.
+
+A resumed run can repeat a persisted row after a rewind. It cannot skip an
+unwritten task.
+
+The second Ctrl+C or Ctrl+Break forces exit code `130`. This exit does not
+promise a current snapshot or finalized output handles.
+
+A snapshot-save error replaces cancellation and returns exit code `1`. The
+error states whether the previous snapshot remains usable.
+
+The scan commits a result batch only after both result writers flush. Progress
+and summaries include only committed results.
+
+A controlled stop flushes the final batch. A write or flush failure rewinds
+the current batch to its earliest pending task in each chunk.
+
+Each `scan_result` event includes `output_state=pending` and `batch_id`. The
+runtime emits `output_batch_committed` or `output_batch_failed` for each batch.
+
+The `output_batch_summary` event reports the interval, batch counts, maximum
+batch size, and total flush time.
 
 ## CLI Flags
 
 The three pipeline commands register only their workflow flags. A foreign flag
 is an unknown-flag error. `validate` is a compatibility exception. It accepts
-and verifies the complete 24-flag surface of the removed shared parser.
+and verifies the complete 30-flag surface of the removed shared parser.
 
 The table shows the pipeline ownership of each flag. `validate` accepts all
 listed flags except `-progress-interval`, `-unreachable-file`, and
@@ -86,6 +121,18 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 |------|---------|-------------|
 | `-cidr-file` | (required) | All commands. Path to the CIDR/rich input CSV. |
 | `-cidr-ip-col` / `-cidr-ip-cidr-col` | `ip` / `ip_cidr` | All commands. Case-sensitive column mapping. |
+| `-target-count-limit` | `10000000` | All commands. Maximum candidate addresses. `0` disables this limit. |
+| `-target-memory-limit-gb` | `16` | All commands. Target expansion budget in decimal GB. `0` disables this limit. |
+| `-cidr-input-size-limit-gb` | `1` | All commands. Maximum CIDR input size in decimal GB. |
+| `-cidr-input-record-limit` | `10000000` | All commands. Maximum CIDR data records. |
+| `-port-input-size-limit-mb` | `1` | `validate`, `generate-buckets`, and `scan`. Maximum port input size in decimal MB. |
+| `-port-input-record-limit` | `65535` | `validate`, `generate-buckets`, and `scan`. Maximum nonblank port records. |
+| `-snapshot-size-limit-gb` | `2` | `generate-buckets` and `scan`. Maximum snapshot load and save size in decimal GB. |
+| `-snapshot-chunk-limit` | `10000000` | `generate-buckets` and `scan`. Maximum snapshot chunks. |
+| `-snapshot-port-entry-limit` | `10000000` | `generate-buckets` and `scan`. Maximum port entries across all chunks. |
+| `-snapshot-unreachable-ip-limit` | `10000000` | `generate-buckets` and `scan`. Maximum unreachable IPs. |
+| `-pressure-response-size-limit-mb` | `1` | `scan` only. Maximum size of each pressure response in decimal MB. |
+| `-pressure-response-entry-limit` | `10000` | `scan` only. Maximum entries in each OAuth data array. |
 | `-pre-scan-ping-timeout` | `100ms` | `pre-ping` only. Ping reply-wait timeout (must be > 0). Removed from `scan`. |
 | `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `pre-ping` output) whose `ip` column is subtracted. |
 | `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
@@ -93,6 +140,7 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 | `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. The scan parser accepts this compatibility flag but does not use its value. |
 | `-port-file` | (basic mode) | `generate-buckets` (primary; required in basic mode, ignored in rich mode) and `scan` (fallback, normally ignored — chunks carry ports). |
 | `-output` | `scan_results.csv` | `pre-ping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
+| `-output-flush-results` | `1000` | `scan` only. Probe results per output batch. `1` flushes each result. `0` disables periodic flushes. Positive values have no fixed maximum. |
 | `-timeout` | `100ms` | `scan` only. Per-scan TCP connection timeout (Go duration string). |
 | `-delay` | `10ms` | `scan` only. Pause between dispatching consecutive tasks. |
 | `-bucket-rate` | `100` | `scan` only. Leaky-bucket token refill rate (tokens/second) |
@@ -149,7 +197,13 @@ Auto-detected when all required columns are present. No port file needed.
 | `matched_policy_id` | Yes | Policy rule identifier |
 | `reason` | Yes | Policy match reason |
 
-Rows with `decision=accept` become scan targets; `decision=deny` rows are skipped.
+Rows with `decision=accept` become scan targets. Rows with `decision=deny` never become network targets.
+
+A deny row overrides an accept row with the same normalized `execution_key`. This rule applies before ICMP, bucket generation, resume rebuild, and TCP dispatch.
+
+The `validate` command rejects malformed deny rows. A deny-only input succeeds with no probes, an empty snapshot, header-only results, and a zero-task summary.
+
+Generated snapshots record that rich deny rows were excluded. If an unmarked snapshot has rich deny input, `scan` stops before TCP dispatch.
 
 ### CIDR Expansion in Rich Mode
 
@@ -157,6 +211,52 @@ Rich mode performs reason-aware IP expansion:
 - If `reason` is `PRECHECK_ALLOW_ALL`: entire `dst_network_segment` is expanded
 - If `reason` is `MATCH_POLICY_ACCEPT`: only `dst_ip` is scanned
 - Otherwise: only `dst_ip` is scanned
+
+### Target Expansion Limits
+
+All commands verify the full expansion before ping, dial, output creation, or snapshot write.
+`validate` calculates the values without target enumeration.
+
+The candidate count includes every authorized input row before de-duplication, broadcast removal, and blocklist filtering.
+Repeated and overlapping selectors count again. Rich deny rows contribute zero candidates.
+
+The default candidate limit is `10000000`. The default memory limit is `16` decimal GB.
+The memory estimate is `1000000000 + candidate count * 1500` bytes.
+Thus, `10000000` candidates equal `16` GB in this estimate.
+
+An IPv4 `/9` passes the default limits. An IPv4 `/8` does not pass them.
+A positive flag value replaces its default. A value of `0` disables that limit.
+
+CAUTION: If both flags are `0`, expansion continues without a hidden limit.
+Available memory, address space, and operating-system policy then limit the command.
+
+The `pkg/task` expansion-limits module owns counting, estimation, overflow checks, and limit errors.
+Configuration parsers adapt CLI values to this module.
+Workflows supply authorized rows and do not copy the limit rules.
+
+### Data Resource Limits
+
+Each parser or decoder owns its data policy.
+Workflow configuration supplies verified values to that module.
+
+File adapters use metadata for an early size rejection.
+Bounded readers also reject the first byte more than the limit.
+
+The CIDR record count excludes the header and blank records.
+The port record count includes duplicate nonblank records.
+
+Snapshot loading and saving use the same effective limits.
+A failed replacement keeps the previous snapshot unchanged.
+A failed new save leaves no snapshot file.
+
+Pressure adapters apply the byte limit to each HTTP response.
+They use `Content-Length` for an early rejection and enforce the stream limit.
+The OAuth data decoder processes entries incrementally.
+
+A positive flag value replaces its default.
+A value of `0` disables only that limit.
+
+CAUTION: A disabled limit can exhaust memory or terminate the process.
 
 ## Output Formats
 
@@ -204,9 +304,17 @@ unreachable blocklist so `scan` never needs to ping).
   "chunks": [
     {"cidr": "10.0.0.0/24", "ports": ["8080/tcp"], "next_index": 50, "scanned_count": 50, "total_count": 254, "status": "in_progress"}
   ],
-  "pre_scan_ping": {"enabled": true, "timeout_ms": 0, "unreachable_ipv4_u32": [168430081]}
+  "pre_scan_ping": {"enabled": true, "timeout_ms": 0, "unreachable_ipv4_u32": [168430081]},
+  "target_expansion": {"candidate_count": 256, "candidate_limit": 10000000, "memory_limit_gb": 16}
 }
 ```
+
+`generate-buckets` stores the count before broadcast and blocklist filtering.
+On resume, `scan` counts only incomplete chunks.
+
+If scan limit flags are absent, `scan` uses the stored limits.
+Each explicit scan flag replaces its related stored limit.
+A legacy snapshot has no `target_expansion` object and uses the defaults.
 
 ## Pressure API Contract
 
@@ -229,6 +337,7 @@ data endpoints. Each data response is an array:
 ```
 
 Each source returns the maximum `Percent` value across its entries.
+Every present `Percent` value must be finite. One non-finite value makes its source and the complete poll fail.
 
 ### Multi-source result
 
@@ -242,7 +351,19 @@ factory maps the opaque pressure policy to a `pkg/pressure` adapter.
 
 ### Pressure Response Parsing
 
-`pressure` field accepts: number, numeric string, or JSON number types. Values are normalized to one decimal place.
+The `pressure` field accepts a number or a numeric string. Finite values are normalized to one decimal place when this calculation cannot overflow.
+
+`NaN`, positive infinity, and negative infinity are errors. This rule applies to all letter cases and to values from custom `PressureSource` implementations.
+
+Finite zero, negative values, and values more than 100 remain valid.
+
+### Pressure Failure Streak
+
+The monitor uses one failure streak for all pressure errors. The first two failures do not change the pressure-control state.
+
+After the third consecutive failure, the scan uses the existing fatal pressure-error path. One complete successful poll resets the overall streak.
+
+Each OAuth source has an independent health streak. A source failure retains its last finite dashboard value and does not display a non-finite percentage.
 
 ### Pause Behavior
 

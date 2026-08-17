@@ -24,9 +24,13 @@ func (t *chunkStateTracker) AdvanceNextIndex(i int) {
 }
 
 func (t *chunkStateTracker) IncrementScanned() {
+	t.IncrementScannedBy(1)
+}
+
+func (t *chunkStateTracker) IncrementScannedBy(count int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.chunk.ScannedCount++
+	t.chunk.ScannedCount += count
 	t.updateStatus()
 }
 

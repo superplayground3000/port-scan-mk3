@@ -277,6 +277,60 @@ func TestRun_WhenPressureAPIFailsThreeTimes_ReturnsFatalErrorAndSavesResumeState
 	}
 }
 
+func TestRun_WhenFatalSnapshotReplaceFails_PreservesThePreviousSnapshotAndReturnsSaveError(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "cidr.csv")
+	portFile := filepath.Join(tmp, "ports.csv")
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.0/24,127.0.0.0/24,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := scanConfigFixture{
+		CIDRFile: cidrFile, PortFile: portFile, Output: filepath.Join(tmp, "out.csv"),
+		Timeout: 20 * time.Millisecond, BucketRate: 1, BucketCapacity: 1, Workers: 1,
+		Pressure: pressureConfigFixture{Interval: time.Millisecond}, LogLevel: "error",
+	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
+	before, err := os.ReadFile(cfg.Resume)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runErr := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		DisableKeyboard: true,
+		PressureSource: pressureSourceFunc(func(context.Context) (pressure.Sample, error) {
+			return pressure.Sample{}, errors.New("scripted pressure failure")
+		}),
+		SnapshotFailure: &state.SaveFailureInjection{Operation: state.SaveFailureReplace},
+	})
+	if !errors.Is(runErr, state.ErrInjectedSnapshotSaveFailure) {
+		t.Fatalf("Run() error = %v, want snapshot save failure", runErr)
+	}
+	after, err := os.ReadFile(cfg.Resume)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("fatal snapshot failure changed the previous snapshot")
+	}
+	if _, err := state.LoadSnapshot(cfg.Resume); err != nil {
+		t.Fatalf("load previous snapshot: %v", err)
+	}
+	matches, err := filepath.Glob(cfg.Resume + ".tmp-*")
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("snapshot temp files = %v, error = %v", matches, err)
+	}
+	moved := cfg.Resume + ".handle-check"
+	if err := os.Rename(cfg.Resume, moved); err != nil {
+		t.Fatalf("snapshot handle was not released: %v", err)
+	}
+	if err := os.Rename(moved, cfg.Resume); err != nil {
+		t.Fatalf("restore snapshot: %v", err)
+	}
+}
+
 func TestRun_WhenSnapshotBlocklistPresent_BlocksUnreachableIPsWithoutChecker(t *testing.T) {
 	tmp := t.TempDir()
 	cidrFile := filepath.Join(tmp, "cidr.csv")
@@ -677,6 +731,245 @@ func TestRun_WhenRichAllTargetsBlocklisted_SucceedsWithoutDispatchingTCP(t *test
 	// Scan no longer writes the unreachable CSV under decision B.
 	if matches, _ := filepath.Glob(filepath.Join(tmp, "unreachable_results-*.csv")); len(matches) != 0 {
 		t.Fatalf("scan must not write unreachable_results CSV, got %v", matches)
+	}
+}
+
+func TestRun_WhenRichInputIsDenied_WritesHeaderOnlyOutputsAndZeroTargetSummary(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich-denied.csv")
+	if err := os.WriteFile(cidrFile, []byte(richBucketCSVHeader+
+		"10.1.0.10,10.1.0.0/24,10.0.0.8,10.0.0.0/24,https,tcp,443,deny,P-1,MATCH_POLICY_DENY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "info",
+		Format:         "json",
+	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
+	dialCount := 0
+	var stderr bytes.Buffer
+
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			dialCount++
+			return nil, errors.New("unexpected dial")
+		},
+		DisableKeyboard: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if dialCount != 0 {
+		t.Fatalf("Run() made %d dials, want no denied network work", dialCount)
+	}
+	if !strings.Contains(stderr.String(), `"total_tasks":0`) || !strings.Contains(stderr.String(), `"success":true`) {
+		t.Fatalf("Run() summary does not report zero successful tasks: %s", stderr.String())
+	}
+	for _, pattern := range []string{"scan_results-*.csv", "opened_results-*.csv"} {
+		path := mustFindOne(t, filepath.Join(tmp, pattern))
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if lineCount(string(data)) != 1 {
+			t.Fatalf("%s contains denied result rows: %s", path, data)
+		}
+	}
+}
+
+func TestRun_WhenLegacySnapshotReferencesDeniedWork_RejectsBeforeDial(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich-denied.csv")
+	resumeFile := filepath.Join(tmp, "legacy-snapshot.json")
+	if err := os.WriteFile(cidrFile, []byte(richBucketCSVHeader+
+		"10.1.0.10,10.1.0.0/24,10.0.0.8,10.0.0.0/24,https,tcp,443,deny,P-1,MATCH_POLICY_DENY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSnapshot(resumeFile, state.Snapshot{Chunks: []task.Chunk{{
+		CIDR:         "10.0.0.0/24",
+		CIDRName:     "https",
+		Ports:        []string{"443/tcp"},
+		NextIndex:    1,
+		ScannedCount: 1,
+		TotalCount:   1,
+		Status:       "completed",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
+	}
+	dialCount := 0
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			dialCount++
+			return nil, errors.New("unexpected dial")
+		},
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want legacy denied-work rejection")
+	}
+	if dialCount != 0 {
+		t.Fatalf("Run() made %d dials before legacy snapshot rejection", dialCount)
+	}
+	if !strings.Contains(err.Error(), "run generate-buckets to create a new snapshot") {
+		t.Fatalf("Run() error = %v, want new-snapshot instructions", err)
+	}
+}
+
+func TestRun_WhenLegacySnapshotCountMatchesAuthorizedTargets_RejectsBeforeDial(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich.csv")
+	resumeFile := filepath.Join(tmp, "legacy-snapshot.json")
+	if err := os.WriteFile(cidrFile, []byte(richBucketCSVHeader+
+		"10.1.0.10,10.1.0.0/24,10.0.0.7,10.0.0.0/24,https,tcp,443,accept,P-1,MATCH_POLICY_ACCEPT\n"+
+		"10.1.0.10,10.1.0.0/24,10.0.0.8,10.0.0.0/24,https,tcp,443,deny,P-2,MATCH_POLICY_DENY\n"+
+		"10.1.0.10,10.1.0.0/24,10.0.0.9,10.0.0.0/24,https,tcp,443,accept,P-3,MATCH_POLICY_ACCEPT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy snapshot stores only the target count. The count cannot prove
+	// that its two targets are the two currently authorized targets.
+	if err := state.SaveSnapshot(resumeFile, state.Snapshot{Chunks: []task.Chunk{{
+		CIDR:         "10.0.0.0/24",
+		CIDRName:     "https",
+		Ports:        []string{"443/tcp"},
+		NextIndex:    2,
+		ScannedCount: 2,
+		TotalCount:   2,
+		Status:       "completed",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
+	}
+	dialCount := 0
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			dialCount++
+			return nil, errors.New("unexpected dial")
+		},
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want legacy authorization rejection")
+	}
+	if dialCount != 0 {
+		t.Fatalf("Run() made %d dials before legacy snapshot rejection", dialCount)
+	}
+}
+
+func TestRun_WhenLegacyBasicSnapshotCountHidesDifferentRowPortSet_RejectsBeforeDial(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "basic.csv")
+	resumeFile := filepath.Join(tmp, "legacy.json")
+	if err := os.WriteFile(cidrFile, []byte("ip,ip_cidr,port\n192.0.2.1,192.0.2.0/24,443\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSnapshot(resumeFile, state.Snapshot{Chunks: []task.Chunk{{
+		CIDR:       "192.0.2.0/24",
+		Ports:      []string{"80/tcp"},
+		TotalCount: 1,
+		Status:     "pending",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	dialed := false
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        10 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		Resume:         resumeFile,
+		LogLevel:       "error",
+	}
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("unexpected dial")
+		},
+		DisableKeyboard: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "target-semantics version") || !strings.Contains(err.Error(), "run generate-buckets") {
+		t.Fatalf("Run() error = %v, want legacy target-semantics regeneration guidance", err)
+	}
+	if dialed {
+		t.Fatal("Run() dialed before it rejected the legacy row-port snapshot")
+	}
+	if matches, globErr := filepath.Glob(filepath.Join(tmp, "*results*.csv")); globErr != nil || len(matches) != 0 {
+		t.Fatalf("result files = %v, glob error = %v; want none", matches, globErr)
+	}
+}
+
+func TestRun_WhenResumeInputAddsCrossSegmentDeny_RejectsBeforeDial(t *testing.T) {
+	tmp := t.TempDir()
+	cidrFile := filepath.Join(tmp, "rich.csv")
+	accepted := richBucketCSVHeader +
+		"10.1.0.10,10.1.0.0/24,10.0.0.8,10.0.0.0/24,https,tcp,443,accept,P-1,MATCH_POLICY_ACCEPT\n"
+	if err := os.WriteFile(cidrFile, []byte(accepted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := scanConfigFixture{
+		CIDRFile:       cidrFile,
+		Output:         filepath.Join(tmp, "out.csv"),
+		Timeout:        20 * time.Millisecond,
+		BucketRate:     100,
+		BucketCapacity: 100,
+		Workers:        1,
+		Pressure:       pressureConfigFixture{Disabled: true},
+		LogLevel:       "error",
+	}
+	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
+	denied := "10.1.0.11,10.1.0.0/24,10.0.0.8,10.0.0.0/25,https,tcp,443,deny,P-2,MATCH_POLICY_DENY\n"
+	if err := os.WriteFile(cidrFile, []byte(accepted+denied), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dialCount := 0
+	err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &bytes.Buffer{}, RunOptions{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			dialCount++
+			return nil, errors.New("unexpected dial")
+		},
+		DisableKeyboard: true,
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want changed authorization rejection")
+	}
+	if dialCount != 0 {
+		t.Fatalf("Run() made %d dials after a cross-segment deny", dialCount)
 	}
 }
 
@@ -1195,6 +1488,13 @@ func TestRun_WhenCanceled_EmitsCanceledCompletionSummaryAndPersistsResume(t *tes
 	}
 	if _, statErr := os.Stat(cfg.Resume); statErr != nil {
 		t.Fatalf("expected persisted resume file %s, got err=%v", cfg.Resume, statErr)
+	}
+	saved, loadErr := state.LoadSnapshot(cfg.Resume)
+	if loadErr != nil {
+		t.Fatalf("LoadSnapshot() error = %v", loadErr)
+	}
+	if !saved.RichDenyExcluded {
+		t.Fatal("Run() lost the rich-deny authorization marker while it saved progress")
 	}
 }
 

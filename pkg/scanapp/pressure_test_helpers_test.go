@@ -20,6 +20,51 @@ type scriptedPressureHTTPResponse struct {
 	body       string
 }
 
+type controlledPressureResponse struct {
+	sample pressure.Sample
+	err    error
+}
+
+type controlledPressureSource struct {
+	requests  chan struct{}
+	responses chan controlledPressureResponse
+}
+
+func newControlledPressureSource() *controlledPressureSource {
+	return &controlledPressureSource{
+		requests:  make(chan struct{}),
+		responses: make(chan controlledPressureResponse),
+	}
+}
+
+func (s *controlledPressureSource) Sample(ctx context.Context) (pressure.Sample, error) {
+	select {
+	case s.requests <- struct{}{}:
+	case <-ctx.Done():
+		return pressure.Sample{}, ctx.Err()
+	}
+	select {
+	case response := <-s.responses:
+		return response.sample, response.err
+	case <-ctx.Done():
+		return pressure.Sample{}, ctx.Err()
+	}
+}
+
+func (s *controlledPressureSource) respond(t *testing.T, response controlledPressureResponse) {
+	t.Helper()
+	select {
+	case <-s.requests:
+	case <-time.After(pressureTestTimeout):
+		t.Fatal("timed out waiting for a pressure source request")
+	}
+	select {
+	case s.responses <- response:
+	case <-time.After(pressureTestTimeout):
+		t.Fatal("timed out sending a pressure source response")
+	}
+}
+
 type scriptedPressureServer struct {
 	server    *httptest.Server
 	requests  chan struct{}

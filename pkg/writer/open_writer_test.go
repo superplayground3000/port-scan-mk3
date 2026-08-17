@@ -54,4 +54,24 @@ func TestOpenOnlyWriter_WhenWriterIsNil_ReturnsNilError(t *testing.T) {
 	if err := w.Write(Record{Status: "open"}); err != nil {
 		t.Fatalf("expected nil inner write, got %v", err)
 	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("expected nil inner flush, got %v", err)
+	}
+}
+
+func TestOpenOnlyWriterFlushPublishesBufferedRows(t *testing.T) {
+	buf := &bytes.Buffer{}
+	w := NewOpenOnlyWriter(NewBufferedCSVWriter(buf))
+	if err := w.Write(Record{IP: "192.0.2.1", Status: "open"}); err != nil {
+		t.Fatalf("write row: %v", err)
+	}
+	if strings.Contains(buf.String(), "192.0.2.1") {
+		t.Fatalf("row became visible before flush: %q", buf.String())
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush row: %v", err)
+	}
+	if !strings.Contains(buf.String(), "192.0.2.1") {
+		t.Fatalf("row is missing after flush: %q", buf.String())
+	}
 }
