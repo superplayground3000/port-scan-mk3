@@ -53,8 +53,35 @@ change.** The object path calls `json.Unmarshal`, which requires the whole input
 to be one JSON value. The legacy path used `json.Decoder`, which reads a stream
 and stops after the first value, so it never saw the trailing bytes.
 
-Cases 2 and 4 green before the change prove the fix does not narrow what the base
-accepted.
+Cases 2 and 4 green before the change demonstrate, on those two inputs, that the
+fix does not narrow what the base accepted. They are spot checks, not a proof.
+The argument that nothing narrowed is mechanical: the added check uses the same
+idiom as the base, so it rejects the same trailing-content set the base rejected,
+and `bytes.TrimSpace` still runs first.
+
+## Second red proof, added after review round 2
+
+Round 2 found that only one branch of the new check was covered. Valid trailing
+JSON makes the second decode return `nil`. Trailing content that is not JSON
+makes it return a syntax error. The committed tests covered the first branch
+only, so a fifth case now covers the second.
+
+The same method proved it red. The worktree held the new test and the reverted
+production hunk:
+
+```text
+git diff HEAD --stat
+ pkg/state/snapshot_trailing_content_test.go | 12 ++++++++++++
+ pkg/state/state.go                          |  8 --------
+```
+
+```text
+=== RUN   TestLoadSnapshot_WhenLegacyArrayHasTrailingGarbage_ReturnsError
+    snapshot_trailing_content_test.go:38: LoadSnapshot() error = nil, want an error for trailing garbage after the legacy array
+--- FAIL: TestLoadSnapshot_WhenLegacyArrayHasTrailingGarbage_ReturnsError (0.00s)
+```
+
+All five cases pass after the change.
 
 ## Round-trip probe
 
@@ -123,9 +150,9 @@ below the 10% block threshold.
 
 ## Independent review
 
-Cross-provider review by Codex, on commit `6967f8c` in a separate worktree.
+**Round 1, cross-provider, Codex**, on commit `6967f8c` in a separate worktree.
 
-First verdict: **BLOCK**, on two process findings and **zero** correctness
+Verdict: **BLOCK**, on two process findings and **zero** correctness
 findings. Codex confirmed the idiom matches the base, that `[] []` and
 `[] garbage` are rejected while trailing whitespace is accepted, that no fixture
 in the repository relies on the loose behavior, that the tests sit at the correct
@@ -144,6 +171,39 @@ Codex could not run `make verify` itself. Its sandbox mounts
 `/home/hp/.cache/go-build` and `/tmp` read-only, so `go vet` and the focused tests
 could not start. That is an environment limit, not a code defect, and Codex
 labelled it as one. The gate result above comes from a normal checkout.
+
+**Round 2 did not use Codex.** The provider hit a usage limit before round 2 ran,
+with credits returning 2026-08-20. Rule G2 ranks reviewers as different provider,
+then different Claude model, then any fresh-context agent. Round 2 therefore used
+the second rank: a different Claude model, with no knowledge of the implementing
+conversation.
+
+**State this plainly when citing this file: the change has one full cross-provider
+round and one same-provider, different-model round, not two cross-provider
+rounds.**
+
+Round 2 verdict: **APPROVE**. It reproduced every claim rather than accepting it,
+including its own throwaway worktree for the red proof and its own six benchmark
+runs. Its independent runs agreed: identical red and green shape, `20047`
+allocations on every run, and `make verify` exit 0 at 85.6% coverage. It also
+confirmed by experiment that `json.Decoder` silently reads a trailing value while
+`json.Unmarshal` rejects one, and it searched the repository for fixtures relying
+on the loose behavior and found none. The only two JSON files that reach the
+loader, `labs/.../resume-mismatch.json` and
+`docs/speed-up-scan-prepare/bucket.json`, are both object envelopes with a
+trailing newline that `bytes.TrimSpace` removes.
+
+Round 2 raised two non-blocking points, and both are fixed in this file and in
+the tests:
+
+1. One sentence overclaimed, saying two green spot checks "prove" nothing
+   narrowed. Reworded, and the mechanical argument now carries that claim.
+2. Only one branch of the new check was covered. A fifth test now covers the
+   other, red-proved above.
+
+Round 2 could not verify the seam agreement, which is a conversation fact rather
+than a repository fact, and it did not re-run the round-trip probe, verifying the
+mechanism by reading `state.go` instead.
 
 ## Deliberate non-change
 

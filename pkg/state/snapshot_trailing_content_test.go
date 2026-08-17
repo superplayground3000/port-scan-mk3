@@ -27,6 +27,18 @@ func TestLoadSnapshot_WhenLegacyArrayHasTrailingContent_ReturnsError(t *testing.
 	}
 }
 
+// Trailing content that is not JSON takes the other branch of the check. Valid
+// trailing JSON makes the second decode return nil. Invalid trailing content
+// makes it return a syntax error. Both must reject the file.
+func TestLoadSnapshot_WhenLegacyArrayHasTrailingGarbage_ReturnsError(t *testing.T) {
+	file := writeSnapshotFile(t, "legacy_garbage.json",
+		`[{"cidr":"10.0.0.0/30","next_index":1,"total_count":4,"status":"paused"}] xyz`)
+
+	if _, err := LoadSnapshot(file); err == nil {
+		t.Fatal("LoadSnapshot() error = nil, want an error for trailing garbage after the legacy array")
+	}
+}
+
 func TestLoadSnapshot_WhenLegacyArrayIsValid_LoadsChunks(t *testing.T) {
 	file := writeSnapshotFile(t, "legacy_valid.json",
 		`[{"cidr":"10.0.0.0/30","next_index":1,"total_count":4,"status":"paused"}]`)
