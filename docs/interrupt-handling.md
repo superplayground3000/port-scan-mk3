@@ -114,6 +114,23 @@ Do not remove this step. Issue #156 records the failure it prevents.
 `ICANON` stays clear, so the space bar still toggles the pause on the first
 byte.
 
+### Ctrl+\ also becomes live again, and it is not graceful
+
+`ISIG` is one flag for all three signal characters. Putting it back therefore
+also restores QUIT (Ctrl+\) and SUSP (Ctrl+Z), not only INTR.
+
+`port-scan` subscribes to `os.Interrupt` alone (`pkg/state/signal.go`). It does
+not trap `SIGQUIT`. So Ctrl+\ takes the default action: the process dumps core
+and stops at once. The scan writes no resume snapshot, and the goroutine that
+restores the terminal never runs, so the console can stay in raw mode. Type
+`reset` to recover it.
+
+Before the `ISIG` fix, Ctrl+\ did nothing at all, because the keyboard loop read
+the byte and discarded it. This is a deliberate trade. Ctrl+C is the documented
+way to stop a scan, and one flag controls all three characters.
+
+Use Ctrl+C. Read the section below if a run ended without a snapshot.
+
 ## What to do after a non-graceful termination
 
 `port-scan` rewrites the bucket file only at the end of a run
