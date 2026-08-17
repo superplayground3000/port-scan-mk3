@@ -41,6 +41,7 @@ func TestStartKeyboardLoop_WhenSpacePressed_TogglesManualPause(t *testing.T) {
 	oldMakeRaw := keyboardMakeRaw
 	oldRestore := keyboardRestore
 	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
 	oldFD := keyboardFD
 	oldInput := keyboardInput
 	t.Cleanup(func() {
@@ -48,6 +49,7 @@ func TestStartKeyboardLoop_WhenSpacePressed_TogglesManualPause(t *testing.T) {
 		keyboardMakeRaw = oldMakeRaw
 		keyboardRestore = oldRestore
 		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
 		keyboardFD = oldFD
 		keyboardInput = oldInput
 	})
@@ -56,6 +58,7 @@ func TestStartKeyboardLoop_WhenSpacePressed_TogglesManualPause(t *testing.T) {
 	keyboardMakeRaw = func(fd int) (*term.State, error) { return &term.State{}, nil }
 	keyboardRestore = func(fd int, state *term.State) error { return nil }
 	keyboardEnableOutputPostProcessing = func(fd int) error { return nil }
+	keyboardEnableSignalCharacters = func(fd int) error { return nil }
 	keyboardFD = func() int { return 0 }
 	keyboardInput = bytes.NewBuffer([]byte{' '})
 
@@ -75,17 +78,20 @@ func TestStartKeyboardLoop_WhenMakeRawFails_ReturnsError(t *testing.T) {
 	oldIsTerminal := keyboardIsTerminal
 	oldMakeRaw := keyboardMakeRaw
 	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
 	oldFD := keyboardFD
 	t.Cleanup(func() {
 		keyboardIsTerminal = oldIsTerminal
 		keyboardMakeRaw = oldMakeRaw
 		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
 		keyboardFD = oldFD
 	})
 
 	keyboardIsTerminal = func(fd int) bool { return true }
 	keyboardMakeRaw = func(fd int) (*term.State, error) { return nil, errors.New("raw failed") }
 	keyboardEnableOutputPostProcessing = func(fd int) error { return nil }
+	keyboardEnableSignalCharacters = func(fd int) error { return nil }
 	keyboardFD = func() int { return 0 }
 
 	err := StartKeyboardLoop(context.Background(), NewController())
@@ -99,6 +105,7 @@ func TestStartKeyboardLoop_WhenRawModeEnabled_EnablesOutputPostProcessing(t *tes
 	oldMakeRaw := keyboardMakeRaw
 	oldRestore := keyboardRestore
 	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
 	oldFD := keyboardFD
 	oldInput := keyboardInput
 	t.Cleanup(func() {
@@ -106,6 +113,7 @@ func TestStartKeyboardLoop_WhenRawModeEnabled_EnablesOutputPostProcessing(t *tes
 		keyboardMakeRaw = oldMakeRaw
 		keyboardRestore = oldRestore
 		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
 		keyboardFD = oldFD
 		keyboardInput = oldInput
 	})
@@ -113,6 +121,7 @@ func TestStartKeyboardLoop_WhenRawModeEnabled_EnablesOutputPostProcessing(t *tes
 	keyboardIsTerminal = func(fd int) bool { return true }
 	keyboardMakeRaw = func(fd int) (*term.State, error) { return &term.State{}, nil }
 	keyboardRestore = func(fd int, state *term.State) error { return nil }
+	keyboardEnableSignalCharacters = func(fd int) error { return nil }
 	keyboardFD = func() int { return 123 }
 	keyboardInput = bytes.NewBuffer(nil)
 
@@ -135,16 +144,19 @@ func TestStartKeyboardLoop_WhenEnableOutputPostProcessingFails_RestoresStateAndR
 	oldMakeRaw := keyboardMakeRaw
 	oldRestore := keyboardRestore
 	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
 	oldFD := keyboardFD
 	t.Cleanup(func() {
 		keyboardIsTerminal = oldIsTerminal
 		keyboardMakeRaw = oldMakeRaw
 		keyboardRestore = oldRestore
 		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
 		keyboardFD = oldFD
 	})
 
 	keyboardIsTerminal = func(fd int) bool { return true }
+	keyboardEnableSignalCharacters = func(fd int) error { return nil }
 	keyboardFD = func() int { return 7 }
 	rawState := &term.State{}
 	keyboardMakeRaw = func(fd int) (*term.State, error) { return rawState, nil }
@@ -164,6 +176,85 @@ func TestStartKeyboardLoop_WhenEnableOutputPostProcessingFails_RestoresStateAndR
 	}
 	if !restoreCalled {
 		t.Fatal("expected restore to be called when output post-processing setup fails")
+	}
+}
+
+func TestStartKeyboardLoop_WhenRawModeEnabled_EnablesSignalCharacters(t *testing.T) {
+	oldIsTerminal := keyboardIsTerminal
+	oldMakeRaw := keyboardMakeRaw
+	oldRestore := keyboardRestore
+	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
+	oldFD := keyboardFD
+	oldInput := keyboardInput
+	t.Cleanup(func() {
+		keyboardIsTerminal = oldIsTerminal
+		keyboardMakeRaw = oldMakeRaw
+		keyboardRestore = oldRestore
+		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
+		keyboardFD = oldFD
+		keyboardInput = oldInput
+	})
+
+	keyboardIsTerminal = func(fd int) bool { return true }
+	keyboardMakeRaw = func(fd int) (*term.State, error) { return &term.State{}, nil }
+	keyboardRestore = func(fd int, state *term.State) error { return nil }
+	keyboardEnableOutputPostProcessing = func(fd int) error { return nil }
+	keyboardFD = func() int { return 321 }
+	keyboardInput = bytes.NewBuffer(nil)
+
+	enabledFD := -1
+	keyboardEnableSignalCharacters = func(fd int) error {
+		enabledFD = fd
+		return nil
+	}
+
+	if err := StartKeyboardLoop(context.Background(), NewController()); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if enabledFD != 321 {
+		t.Fatalf("expected signal characters to be enabled on fd=321, got %d", enabledFD)
+	}
+}
+
+func TestStartKeyboardLoop_WhenEnableSignalCharactersFails_RestoresStateAndReturnsError(t *testing.T) {
+	oldIsTerminal := keyboardIsTerminal
+	oldMakeRaw := keyboardMakeRaw
+	oldRestore := keyboardRestore
+	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
+	oldFD := keyboardFD
+	t.Cleanup(func() {
+		keyboardIsTerminal = oldIsTerminal
+		keyboardMakeRaw = oldMakeRaw
+		keyboardRestore = oldRestore
+		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
+		keyboardFD = oldFD
+	})
+
+	keyboardIsTerminal = func(fd int) bool { return true }
+	keyboardFD = func() int { return 11 }
+	rawState := &term.State{}
+	keyboardMakeRaw = func(fd int) (*term.State, error) { return rawState, nil }
+	keyboardEnableOutputPostProcessing = func(fd int) error { return nil }
+
+	restoreCalled := false
+	keyboardRestore = func(fd int, state *term.State) error {
+		if fd == 11 && state == rawState {
+			restoreCalled = true
+		}
+		return nil
+	}
+	keyboardEnableSignalCharacters = func(fd int) error { return errors.New("signal flags failed") }
+
+	err := StartKeyboardLoop(context.Background(), NewController())
+	if err == nil {
+		t.Fatal("expected signal character error")
+	}
+	if !restoreCalled {
+		t.Fatal("expected restore to be called when signal character setup fails")
 	}
 }
 
@@ -187,6 +278,7 @@ func TestStartKeyboardLoop_WhenContextCanceledDuringBlockingRead_RestoresTermina
 	oldMakeRaw := keyboardMakeRaw
 	oldRestore := keyboardRestore
 	oldEnableOutputPostProcessing := keyboardEnableOutputPostProcessing
+	oldEnableSignalCharacters := keyboardEnableSignalCharacters
 	oldFD := keyboardFD
 	oldInput := keyboardInput
 	t.Cleanup(func() {
@@ -194,6 +286,7 @@ func TestStartKeyboardLoop_WhenContextCanceledDuringBlockingRead_RestoresTermina
 		keyboardMakeRaw = oldMakeRaw
 		keyboardRestore = oldRestore
 		keyboardEnableOutputPostProcessing = oldEnableOutputPostProcessing
+		keyboardEnableSignalCharacters = oldEnableSignalCharacters
 		keyboardFD = oldFD
 		keyboardInput = oldInput
 	})
@@ -201,6 +294,7 @@ func TestStartKeyboardLoop_WhenContextCanceledDuringBlockingRead_RestoresTermina
 	keyboardIsTerminal = func(fd int) bool { return true }
 	keyboardMakeRaw = func(fd int) (*term.State, error) { return &term.State{}, nil }
 	keyboardEnableOutputPostProcessing = func(fd int) error { return nil }
+	keyboardEnableSignalCharacters = func(fd int) error { return nil }
 	keyboardFD = func() int { return 9 }
 
 	reader := &blockingReader{

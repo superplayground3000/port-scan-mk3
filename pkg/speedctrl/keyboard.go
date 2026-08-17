@@ -15,6 +15,7 @@ var (
 	keyboardMakeRaw                              = term.MakeRaw
 	keyboardRestore                              = term.Restore
 	keyboardEnableOutputPostProcessing           = enableOutputPostProcessing
+	keyboardEnableSignalCharacters               = enableSignalCharacters
 	keyboardFD                                   = func() int { return int(os.Stdin.Fd()) }
 	keyboardInput                      io.Reader = os.Stdin
 )
@@ -59,6 +60,16 @@ func StartKeyboardLoop(ctx context.Context, c *Controller) error {
 		return err
 	}
 	if err := keyboardEnableOutputPostProcessing(fd); err != nil {
+		if err := restore(fd, oldState); err != nil {
+			fmt.Fprintf(os.Stderr, "speedctrl: failed to restore terminal state: %v\n", err)
+		}
+		return err
+	}
+	// MakeRaw also clears ISIG, so the terminal stops turning the INTR
+	// character (Ctrl+C, byte 0x03) into SIGINT. The keyboard loop reads only
+	// the space bar and discards that byte, so the operator loses the only way
+	// to cancel a scan from the console. Put ISIG back.
+	if err := keyboardEnableSignalCharacters(fd); err != nil {
 		if err := restore(fd, oldState); err != nil {
 			fmt.Fprintf(os.Stderr, "speedctrl: failed to restore terminal state: %v\n", err)
 		}

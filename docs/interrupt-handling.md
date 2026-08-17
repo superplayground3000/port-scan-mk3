@@ -97,6 +97,23 @@ decision here and tests on both platforms.
 isolated e2e suite exercises the graceful path with `timeout -s INT`
 (`e2e/run_e2e.sh`).
 
+## The raw keyboard mode must keep the signal characters
+
+Every graceful path on this page starts with a signal. The signal exists only
+because the terminal makes it. An interactive `scan` puts the terminal into raw
+mode for the space-bar pause (`pkg/speedctrl/keyboard.go`), and `term.MakeRaw`
+clears the `ISIG` flag. A terminal without `ISIG` does not make `SIGINT` from
+the INTR character (Ctrl+C, byte `0x03`). It sends the byte to the program, the
+keyboard loop discards it, and the operator cannot stop the scan.
+
+`StartKeyboardLoop` therefore calls `enableSignalCharacters` immediately after
+`term.MakeRaw` and puts `ISIG` back. Windows has the same problem with the
+console flag `ENABLE_PROCESSED_INPUT`, and the same call puts that flag back.
+Do not remove this step. Issue #156 records the failure it prevents.
+
+`ICANON` stays clear, so the space bar still toggles the pause on the first
+byte.
+
 ## What to do after a non-graceful termination
 
 `port-scan` rewrites the bucket file only at the end of a run
@@ -133,6 +150,14 @@ before it saves the snapshot.
   makes sure that the first message and the second exit request are correct.
 - `pkg/state/interrupt_escalation_test.go` makes sure that the platform-neutral
   first and second interrupt state is correct.
+- `pkg/speedctrl/terminal_signal_linux_test.go` opens a real pseudo-terminal,
+  applies `term.MakeRaw`, and asserts that `ISIG` is clear before
+  `enableSignalCharacters` and set after it. It also asserts that a space byte
+  is still readable at once.
+- `pkg/speedctrl/terminal_signal_windows_test.go` asserts that the console keeps
+  its other raw-mode flags and gains `ENABLE_PROCESSED_INPUT`. It runs on the
+  native Windows CI gate. Nobody has yet pressed Ctrl+C on a Windows console to
+  confirm the result; issue #99 tracks that check.
 - `pkg/state/signal_test.go` pins the subscription list itself. It covers the
   `signal.Notify` trap: an *empty* list subscribes to every signal.
 
