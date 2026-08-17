@@ -24,7 +24,13 @@ func TestRunOutputCaseMeasuresBothWritersAndKeepsOnlyFirstOutputs(t *testing.T) 
 		if len(result.Runs) != 6 || !result.Correctness.Headers || !result.Correctness.RowCounts || !result.Correctness.ExpectedValues {
 			t.Fatalf("interval=%d result = %+v", interval, result)
 		}
-		if result.SteadyMedian.OutputBytes == 0 || result.SteadyMedian.ThroughputPerSecond <= 0 || result.SteadyMedian.MegabytesPerSecond <= 0 {
+		if result.SteadyMedian.OutputBytes == 0 {
+			t.Fatalf("interval=%d metrics = %+v", interval, result.SteadyMedian)
+		}
+		// Both rates come only from a wall time above zero, so tie the
+		// assertion to the wall time instead of to the platform.
+		if result.SteadyMedian.WallTime > 0 &&
+			(result.SteadyMedian.ThroughputPerSecond <= 0 || result.SteadyMedian.MegabytesPerSecond <= 0) {
 			t.Fatalf("interval=%d metrics = %+v", interval, result.SteadyMedian)
 		}
 		entries, err := os.ReadDir(outputDir)

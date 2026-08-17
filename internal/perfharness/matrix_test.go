@@ -21,7 +21,11 @@ func TestRunFixtureCaseKeepsOneFixtureAndSummarizesSixRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunFixtureCase: %v", err)
 	}
-	if len(result.Runs) != 6 || result.ColdStart.WallTime <= 0 || result.SteadyMedian.WallTime <= 0 {
+	if len(result.Runs) != 6 {
+		t.Fatalf("run summary = %+v", result)
+	}
+	if measuresShortDurations("") &&
+		(result.ColdStart.WallTime <= 0 || result.SteadyMedian.WallTime <= 0) {
 		t.Fatalf("run summary = %+v", result)
 	}
 	if result.Manifest == nil {

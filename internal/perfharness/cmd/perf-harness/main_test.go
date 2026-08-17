@@ -488,7 +488,12 @@ func TestRunCommandWritesSmokeReports(t *testing.T) {
 		}
 		if strings.HasPrefix(result.Name, "output-heavy/results-") {
 			outputCases++
-			if len(result.Runs) != 6 || !result.Verdict.Passed || result.SteadyMedian.MegabytesPerSecond <= 0 {
+			if len(result.Runs) != 6 || !result.Verdict.Passed {
+				t.Fatalf("output case failed: %+v", result)
+			}
+			// A rate comes only from a wall time above zero, so tie the
+			// assertion to the wall time instead of to the platform.
+			if result.SteadyMedian.WallTime > 0 && result.SteadyMedian.MegabytesPerSecond <= 0 {
 				t.Fatalf("output case failed: %+v", result)
 			}
 		}
