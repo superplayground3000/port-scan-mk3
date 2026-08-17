@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -58,13 +57,8 @@ func TestRunCancellationSmokeInjectsEveryProductionStage(t *testing.T) {
 				if !result.Injected || result.StopDuration > contract.StopWithin {
 					t.Fatalf("result=%+v", result)
 				}
-				// The Go monotonic clock on Windows reads the shared
-				// interrupt-time counter. That counter advances in coarse
-				// steps. A finalization inside one step therefore measures
-				// exactly zero, and only Windows loses the lower bound.
-				measuresShortDurations := runtime.GOOS != "windows"
 				if result.FinalizationDuration < result.StopDuration ||
-					(measuresShortDurations && result.FinalizationDuration <= 0) {
+					(measuresShortDurations("") && result.FinalizationDuration <= 0) {
 					t.Fatalf("stage=%s percent=%d finalization evidence=%+v", stage, percent, result)
 				}
 				wantThreshold := (items*uint64(percent) + 99) / 100
@@ -72,7 +66,8 @@ func TestRunCancellationSmokeInjectsEveryProductionStage(t *testing.T) {
 					result.CompletedAtInjection < wantThreshold || result.ProgressUnit == "" || !result.ContextCanceled {
 					t.Fatalf("stage=%s percent=%d evidence=%+v", stage, percent, result)
 				}
-				if result.Preparation.WallTime <= 0 || result.StageObservation.WallTime <= 0 {
+				if measuresShortDurations("") &&
+					(result.Preparation.WallTime <= 0 || result.StageObservation.WallTime <= 0) {
 					t.Fatalf("stage=%s percent=%d observations=%+v", stage, percent, result)
 				}
 				if result.ProbeStartsAfterCancel != 0 {
@@ -144,7 +139,8 @@ func TestRunCancellationSmokeReportsInputParsingEvidence(t *testing.T) {
 	if result.ProbeStarts != 0 || result.ProbeStartsAfterCancel != 0 {
 		t.Fatalf("input parsing started probes: %+v", result)
 	}
-	if result.Preparation.WallTime <= 0 || result.StageObservation.WallTime <= 0 {
+	if measuresShortDurations("") &&
+		(result.Preparation.WallTime <= 0 || result.StageObservation.WallTime <= 0) {
 		t.Fatalf("input parsing observations=%+v", result)
 	}
 }
