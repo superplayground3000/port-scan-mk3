@@ -415,6 +415,14 @@ func LoadSnapshotWithLimits(path string, limits SnapshotLimits) (Snapshot, error
 		if err := decoder.Decode(&chunks); err != nil {
 			return Snapshot{}, err
 		}
+		// The decoder reads a stream, so it stops after the array. Decode again
+		// and require io.EOF, or the file keeps unread content nobody intended.
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			if err == nil {
+				return Snapshot{}, errors.New("unexpected trailing JSON content")
+			}
+			return Snapshot{}, err
+		}
 		snap := Snapshot{Chunks: chunks}
 		if err := validateSnapshotLimits(path, snap, limits); err != nil {
 			return Snapshot{}, err
