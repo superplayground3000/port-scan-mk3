@@ -122,6 +122,32 @@ func runResultLoop(cancel context.CancelFunc, dispatchDone bool, chans resultLoo
 			deps.runtimes[abandoned.chunkIdx].tracker.MarkUnwritten(abandoned.taskIdx)
 		}
 	}
+	// apiErrCh is selected above but is deliberately NOT part of the exit
+	// condition, so the loop can stop while a fatal pressure error still sits in
+	// its buffer. Draining it here is what stops that error from being lost, and
+	// it is the same defect class as issue #59: a select whose termination is
+	// decided by a subset of its cases can drop any error-bearing case outside
+	// that subset.
+	//
+	// It cannot be solved the way #59 was, by adding the channel to the exit
+	// condition. pollPressureAPI never closes apiErrCh, and it returns on
+	// ctx.Done, which for a successful scan happens only after this function has
+	// already returned. Waiting for apiErrCh to drain to nil would therefore
+	// deadlock every successful run.
+	//
+	// One receive is enough: pollPressureAPI sends at most once, through a
+	// non-blocking send, and returns immediately afterwards. The receive is
+	// non-blocking so a run with no pressure error is unaffected.
+	if runErr == nil && apiErrCh != nil {
+		select {
+		case apiErr := <-apiErrCh:
+			if apiErr != nil {
+				runErr = apiErr
+				cancel()
+			}
+		default:
+		}
+	}
 	if committer != nil {
 		if err := committer.Finish(); err != nil {
 			runErr = err
