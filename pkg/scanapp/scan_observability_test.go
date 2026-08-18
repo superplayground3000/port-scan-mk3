@@ -156,22 +156,23 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsProgressAndCompletionEvents(t *te
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:       cidrFile,
-		PortFile:       portFile,
-		Output:         outFile,
-		Timeout:        100 * time.Millisecond,
-		Delay:          0,
-		BucketRate:     100,
-		BucketCapacity: 100,
-		Workers:        1,
-		Pressure:       pressureConfigFixture{Disabled: true},
-		LogLevel:       "info",
-		Format:         "json",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          100 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		Pressure:         pressureConfigFixture{Disabled: true},
+		LogLevel:         "info",
+		Format:           "json",
+		ProgressInterval: 1,
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cfg.Resume = generateBucketFile(t, cfg, filepath.Join(tmp, "buckets.json"), "")
-	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
+	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), stdout, stderr, RunOptions{DisableKeyboard: true}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 
@@ -208,17 +209,18 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:       cidrFile,
-		PortFile:       portFile,
-		Output:         outFile,
-		Timeout:        50 * time.Millisecond,
-		Delay:          0,
-		BucketRate:     100,
-		BucketCapacity: 100,
-		Workers:        1,
-		Pressure:       pressureConfigFixture{Disabled: true},
-		LogLevel:       "info",
-		Format:         "json",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          50 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		Pressure:         pressureConfigFixture{Disabled: true},
+		LogLevel:         "info",
+		Format:           "json",
+		ProgressInterval: 1,
 	}
 
 	stderr := &bytes.Buffer{}
@@ -228,7 +230,6 @@ func TestRun_WhenObservabilityJSONEnabled_EmitsSingleScanResultEventPerTask(t *t
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, errors.New("dial failed for observability test")
 		},
-		ProgressInterval: 1,
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
@@ -254,17 +255,18 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:       cidrFile,
-		PortFile:       portFile,
-		Output:         outFile,
-		Timeout:        50 * time.Millisecond,
-		Delay:          0,
-		BucketRate:     100,
-		BucketCapacity: 100,
-		Workers:        1,
-		Pressure:       pressureConfigFixture{Disabled: true},
-		LogLevel:       "info",
-		Format:         "json",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          50 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		Pressure:         pressureConfigFixture{Disabled: true},
+		LogLevel:         "info",
+		Format:           "json",
+		ProgressInterval: 1,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -277,7 +279,6 @@ func TestRun_WhenExecutorWorkerPanics_ReturnsRuntimeError(t *testing.T) {
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			panic("boom in dial")
 		},
-		ProgressInterval: 1,
 	})
 	if err == nil {
 		t.Fatal("expected runtime error when executor worker panics")
@@ -304,17 +305,18 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:       cidrFile,
-		PortFile:       portFile,
-		Output:         outFile,
-		Timeout:        100 * time.Millisecond,
-		Delay:          10 * time.Millisecond,
-		BucketRate:     100,
-		BucketCapacity: 100,
-		Workers:        1,
-		Pressure:       pressureConfigFixture{Interval: 10 * time.Millisecond},
-		LogLevel:       "error",
-		Format:         "human",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          100 * time.Millisecond,
+		Delay:            10 * time.Millisecond,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		Pressure:         pressureConfigFixture{Interval: 10 * time.Millisecond},
+		LogLevel:         "error",
+		Format:           "human",
+		ProgressInterval: 1,
 	}
 
 	recorder := &dashboardSnapshotRecorder{}
@@ -352,7 +354,6 @@ func TestRun_WhenRichDashboardEnabled_ReceivesLiveTelemetryState(t *testing.T) {
 		dashboardTerminalDetector: func(io.Writer) bool { return true },
 		dashboardRefreshInterval:  10 * time.Millisecond,
 		dashboardRenderer:         recorder,
-		ProgressInterval:          1,
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
@@ -454,18 +455,19 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 	}
 
 	cfg := scanConfigFixture{
-		CIDRFile:       cidrFile,
-		PortFile:       portFile,
-		Output:         outFile,
-		Timeout:        100 * time.Millisecond,
-		Delay:          0,
-		BucketRate:     100,
-		BucketCapacity: 100,
-		Workers:        1,
-		Pressure:       pressureConfigFixture{Disabled: true},
-		Resume:         resumeFile,
-		LogLevel:       "error",
-		Format:         "human",
+		CIDRFile:         cidrFile,
+		PortFile:         portFile,
+		Output:           outFile,
+		Timeout:          100 * time.Millisecond,
+		Delay:            0,
+		BucketRate:       100,
+		BucketCapacity:   100,
+		Workers:          1,
+		Pressure:         pressureConfigFixture{Disabled: true},
+		Resume:           resumeFile,
+		LogLevel:         "error",
+		Format:           "human",
+		ProgressInterval: 1,
 	}
 
 	firstSnapshotSeen := make(chan struct{})
@@ -493,7 +495,6 @@ func TestRun_WhenResumeAndRichDashboardEnabled_ProgressStartsFromResume(t *testi
 		dashboardTerminalDetector: func(io.Writer) bool { return true },
 		dashboardRefreshInterval:  10 * time.Millisecond,
 		dashboardRenderer:         recorder,
-		ProgressInterval:          1,
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)

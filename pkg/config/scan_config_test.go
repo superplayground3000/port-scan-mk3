@@ -43,6 +43,7 @@ func TestParseScanReturnsDefaults(t *testing.T) {
 		BucketCapacity:     100,
 		LogLevel:           "info",
 		Format:             "human",
+		ProgressInterval:   100,
 	}
 	wantPressure := config.PressureValues{
 		Kind:     config.PressureKindSimple,
@@ -308,6 +309,7 @@ func TestParseScanReturnsAcceptedFlagsAndAuthenticatedPolicy(t *testing.T) {
 		LogLevel:           "debug",
 		Format:             "json",
 		Quiet:              true,
+		ProgressInterval:   17,
 	}
 	wantPressure := config.PressureValues{
 		Kind:          config.PressureKindAuthenticated,
@@ -323,6 +325,36 @@ func TestParseScanReturnsAcceptedFlagsAndAuthenticatedPolicy(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotPressure, wantPressure) {
 		t.Fatalf("Pressure.Resolve() = %#v, want %#v", gotPressure, wantPressure)
+	}
+}
+
+// TestParseScanAcceptsNonPositiveProgressInterval pins the agreed contract: the
+// scan parser does not reject a progress interval that is not positive, the
+// same as the pre-ping and generate-buckets parsers. The scan runtime replaces
+// such a value with the built-in cadence (see scanapp.Run).
+func TestParseScanAcceptsNonPositiveProgressInterval(t *testing.T) {
+	for _, testCase := range []struct {
+		raw  string
+		want int
+	}{
+		{raw: "0", want: 0},
+		{raw: "-5", want: -5},
+	} {
+		cfg, err := config.ParseScan([]string{
+			"-cidr-file", "targets.csv",
+			"-resume", "buckets.json",
+			"-progress-interval", testCase.raw,
+		})
+		if err != nil {
+			t.Fatalf("ParseScan() with -progress-interval %s error = %v", testCase.raw, err)
+		}
+		got, err := cfg.Resolve()
+		if err != nil {
+			t.Fatalf("Resolve() with -progress-interval %s error = %v", testCase.raw, err)
+		}
+		if got.ProgressInterval != testCase.want {
+			t.Fatalf("ProgressInterval = %d, want %d", got.ProgressInterval, testCase.want)
+		}
 	}
 }
 

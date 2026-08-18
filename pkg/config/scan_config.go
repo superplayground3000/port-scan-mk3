@@ -123,7 +123,10 @@ type ScanValues struct {
 	LogLevel           string
 	Format             string
 	Quiet              bool
-	Pressure           PressurePolicy
+	// ProgressInterval is the count of processed units between progress lines.
+	// A value that is not positive selects the built-in cadence.
+	ProgressInterval int
+	Pressure         PressurePolicy
 }
 
 type scanState struct {
@@ -219,7 +222,7 @@ func ParseScan(args []string) (ScanConfig, error) {
 	registerSnapshotLimitFlags(fs, &snapshotLimitFlags)
 	registerPressureLimitFlags(fs, &pressureLimitFlags)
 	fs.IntVar(&values.Workers, "workers", 10, fmt.Sprintf("worker count (1-%d)", MaxWorkers))
-	fs.Int("progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
+	fs.IntVar(&values.ProgressInterval, "progress-interval", defaultProgressInterval, "progress line cadence (count of processed units)")
 	fs.StringVar(&values.PortFile, "port-file", "", "Port CSV path (optional fallback; chunks carry ports)")
 	fs.StringVar(&values.Output, "output", "scan_results.csv", "output csv")
 	fs.IntVar(&values.OutputFlushResults, "output-flush-results", 1000, "result count between output flushes (0 disables periodic flushes)")
