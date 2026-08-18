@@ -248,3 +248,65 @@ the separate ISIG defect (#156, also post-tag). The `f6c3204` sentence already
 states this correctly and does not overclaim.
 
 **Both reviews are now clear: facts APPROVE, spec no-blockers.**
+
+## 13. The `--fab-name` correction (#165 items 7-8)
+
+Added at the user's instruction, after the reviews cleared. This is the half of
+#165 that section 12 recorded as out of scope.
+
+### What shipped, verified from source rather than from the issue
+
+The issue named the eight values but not the commit. `git log -S 'conin$' --
+pkg/preprocess/fabname.go` gives exactly one: **`fae49bf fix(preprocess): reject
+remaining Windows device names (#88) (#102)`**, dated 2026-08-09.
+
+- `git merge-base --is-ancestor fae49bf v4.0.0` → yes. It shipped in 4.0.0.
+- `git merge-base --is-ancestor f6ab106 fae49bf` → yes, where `f6ab106` is the
+  3.0.1 release-note commit. So it landed after 3.0.1 shipped.
+
+Reserved set at `fae49bf^`, which is 3.0.1 as released:
+
+```
+"con", "prn", "aux", "nul", plus com0-com9 and lpt0-lpt9
+```
+
+The commit adds exactly eight: `conin$`, `conout$`, `com¹`, `com²`, `com³`,
+`lpt¹`, `lpt²`, `lpt³`.
+
+**One correction to the issue's own wording.** #165 says the rule "ignores letter
+case and covers the extension form and the padded stem form of each name", which
+reads as if 4.0.0 introduced that rule. It did not. `fae49bf`'s diff contains no
+change to the stem logic, and `fae49bf^:pkg/preprocess/fabname.go:88-93` already
+had the extension strip, the `TrimRight(stem, " .")`, and the `strings.ToLower`
+lookup. Only the name SET grew. The note says so explicitly, so a reader does not
+conclude the matching became stricter.
+
+### Error text
+
+`pkg/preprocess/fabname.go:12` defines `ErrInvalidFabName` as `invalid fab
+name`, wrapped at the reserved-name branch and again by `cmd/preprocess/main.go:62`
+with `--fab-name: %w`. The note quotes the assembled string.
+
+Flag spelling is `--fab-name`: `main.go:44` registers `fab-name`, and the repo
+documents the double-dash form in all 26 doc occurrences, including the command's
+own error text at `main.go:53`.
+
+### Two further false lines this exposed
+
+Correcting the summary claim alone would have left two others standing:
+
+1. Compatibility said "Existing CLI invocations do not need migration." Now
+   carries the `preprocess` exception.
+2. Rollback said 3.0.1 is suitable "because the CLI, CSV, and snapshot contracts
+   are unchanged". The CLI contract IS changed. Rewritten to state the fact that
+   actually makes rollback safe: 3.0.1's accepted fab-name set is a superset of
+   4.0.0's, so a name that works on 4.0.0 always works on 3.0.1.
+
+### Not verified
+
+The live binary A/B measurement in #165's table was not reproduced. `preprocess`
+requires `--input`, `--cleaned-cidrs`, and `--output-dir` as well, so a bare
+`--fab-name` run prints usage and exits 0. There is no `v3.0.1` tag in this
+repository, so a 3.0.1 binary cannot be built from a tag here. The claim rests on
+the source-level diff above, which is unambiguous, plus the issue's recorded
+measurement.
