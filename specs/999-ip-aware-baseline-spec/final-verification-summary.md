@@ -35,3 +35,9 @@ Sample structured events:
 ```
 
 (Events captured from a local sample run using `scanapp.Run` with `ProgressInterval=1`.)
+
+> Note added 2026-08-18: this record is kept as written. The capture used
+> `RunOptions.ProgressInterval`, which no longer exists — issue #158 deleted it
+> and made the resolved configuration the only source of the cadence. To
+> reproduce this capture today, set `ProgressInterval` on the scan configuration
+> instead. See `.agent-evidence/issue-158.md`.

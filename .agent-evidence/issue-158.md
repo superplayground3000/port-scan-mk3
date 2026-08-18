@@ -284,7 +284,8 @@ Two statements were made false by this change and are corrected:
 and the stream, matching the `pre-ping` and `generate-buckets` rows at lines 56
 and 84. It states stdout for the human line and stderr for the structured event,
 which is what `emitCommittedProgress` does at
-`pkg/scanapp/result_aggregator.go:131` and `:137`.
+`pkg/scanapp/result_aggregator.go:131` (the stdout line) and `:136` (the
+structured event).
 
 An earlier version cited `result_aggregator.go:108` and `:113` instead. Those
 lines are inside `emitScanResultEvents`, which **production never calls** — its
