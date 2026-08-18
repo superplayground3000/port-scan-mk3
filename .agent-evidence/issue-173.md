@@ -152,3 +152,66 @@ to PRs #172, #174, and #176 in this session.
   untouched. It must change when `v5.0.0` is tagged.
 - #165 acceptance items 1-4 are met. Item 1's other half, the `--fab-name`
   narrowing tracked in #160, is untouched and stays open.
+
+## 10. Review outcomes
+
+Both reviewers ran fresh-context on `sonnet` (G2 rank 2 — Codex rate-limited
+until 2026-08-20).
+
+**Facts against code — APPROVE at `f6c3204`.** Rebuilt the binary, checked all
+four subcommands' usage, traced all 13 defaults, the estimate formula, the
+`RunOptions` field set (`scan.go:63-98`), the exit codes, and `-quiet`
+(`scan_logger.go:114-119`, `result_aggregator.go:94-136`) to source. Its reverse
+check walked all 52 production commits in `v4.0.0..master` and found no
+user-visible change the note omits. `0ec8bd5` is error-message wrapping with no
+schema or exit-code effect.
+
+It added one fact the commander had not verified: at `v4.0.0`,
+`resume_manager.go` called `RewindUnwritten()` only inside
+`if errors.Is(runErr, errScanOutputWrite)`, so a plain cancellation never
+rewound. Current `resume_manager.go:31-34` calls it unconditionally. The
+"chunk rewind is new" claim is true in a stronger sense than first checked.
+
+It declined to verify two things: the "exit 130 within 0.1 seconds" pty
+measurement (taken from `0b2b8f7`'s evidence, not re-run here) and the full
+`docs/cli/flags.md` cross-reference.
+
+**Spec and writing standard — BLOCK, then fixed.** Four STE Section-7
+violations, all CAUTION ordering (rule 7.2 wants the command or condition
+first, 7.3 the risk second):
+
+1. blocker — rollback CAUTION led with "Version 4.0.0 can scan a rich deny row"
+2. blocker — rollback CAUTION led with "Version 4.0.0 cannot cancel..."
+3. should-fix — the disabled-limit CAUTION had no command or condition at all
+4. should-fix — the pressure exit-code CAUTION was purely retrospective
+
+All four rewritten. Items 1 and 3 were inherited verbatim from the `4.0.0.md`
+text being moved, so the defect predates this change. All seven CAUTIONs in the
+file now lead with a command or condition.
+
+It independently confirmed the honesty check by a different method than the
+commander used: `git merge-base --is-ancestor` on `4923b8d`, `e0b53b2`,
+`f6f7f9b`, `6eeab46`, and `299ef4b` against the `v4.0.0` tag — all post-tag. And
+`diff <(git show v4.0.0:docs/release-notes/4.0.0.md) docs/release-notes/4.0.0.md`
+is empty.
+
+### Correction to section 9 of this file
+
+Section 9 said #160 is "untouched and stays open". That is wrong. **#160 is
+CLOSED and folded into #165** as its items 7-8, because both defects live in the
+same file. The folded-in defect: `docs/release-notes/4.0.0.md:8-9` says
+"Commands, accepted flags, default values, output schemas, exit classes, and
+snapshot formats stay compatible". That is false. 4.0.0 narrowed the accepted
+`--fab-name` set — `pkg/preprocess/fabname.go` gained `CONIN$`, `CONOUT$`, and
+six reserved literals, and 3.0.1 accepted names that 4.0.0 rejects with `rc=1`.
+
+Restoring `4.0.0.md` to the tag **re-exposed that false sentence**. PR #152's
+edits had replaced the paragraph, which removed the false line as a side effect
+rather than as a fix. Correcting it is #165's remaining half and is NOT done
+here.
+
+## 11. Not verified
+
+- The pty timing claim, as above.
+- `make verify` was re-run by the commander (exit 0, 85.5%), not by either
+  reviewer. `tests/repohygiene` re-run after the later doc edits: ok.
