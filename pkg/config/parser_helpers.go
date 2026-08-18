@@ -26,7 +26,7 @@ func registerCommonFlags(fs *flag.FlagSet, values *commonCLIValues) {
 	fs.StringVar(&values.cidrIPCidrCol, "cidr-ip-cidr-col", "ip_cidr", "cidr csv ip_cidr column name")
 	fs.StringVar(&values.logLevel, "log-level", "info", "debug|info|error")
 	fs.StringVar(&values.format, "format", "human", "human|json")
-	fs.BoolVar(&values.quiet, "quiet", false, "suppress console logs, keep pressure API logs")
+	fs.BoolVar(&values.quiet, "quiet", false, "suppress progress and per-result console output; use -log-level for log verbosity")
 }
 
 func (v commonCLIValues) validate() error {

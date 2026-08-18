@@ -118,7 +118,7 @@ ip,ip_cidr,port,status,response_time_ms,fab_name,cidr_name,service_label,decisio
 ```
 
 > The open and closed results depend on the services that listen on `127.0.0.1`. To stop the
-> per-probe logs, add `-quiet=true`.
+> per-probe logs, add `-log-level error`. `-quiet=true` stops the progress output only.
 
 ---
 

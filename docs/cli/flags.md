@@ -154,6 +154,10 @@ The command validates input files only. It never scans and never pings.
 
 - `-cidr-file` is required for every subcommand.
 - `-format` accepts `human` or `json` only.
+- `-quiet` suppresses the progress and per-result console output only. It
+  does not filter the logs, so an error-level line still goes to standard
+  error. `-log-level` is the only control for log verbosity. To make a run
+  fully silent, use `-quiet -log-level error`.
 - `-cidr-ip-col` and `-cidr-ip-cidr-col` must not be empty after the command trims them.
 - A target expansion flag must be zero or positive. Zero disables only that limit.
 - A resource-limit flag must be zero or positive. Zero disables only that limit.

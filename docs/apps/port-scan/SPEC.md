@@ -156,7 +156,7 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 | `-pressure-use-auth` | `false` | `scan` only. Use OAuth-authenticated pressure fetcher |
 | `-log-level` | `info` | All commands. Log verbosity: `debug`, `info`, or `error` |
 | `-format` | `human` | All commands. `human` or `json`. |
-| `-quiet` | `false` | All commands. Suppress console logs; keep pressure API logs |
+| `-quiet` | `false` | All commands. Suppress the progress and per-result console output. It does not filter the logs; use `-log-level` for log verbosity |
 
 ## Input Formats
 

@@ -108,7 +108,7 @@ compatibility.
 | `-resume` | (empty) | Path to a resume state JSON file to continue an interrupted scan |
 | `-log-level` | `info` | Log verbosity: `debug`, `info`, or `error` |
 | `-format` | `human` | Output format: `human` (line-oriented) or `json` (structured). Applies to `validate` output only. |
-| `-quiet` | `false` | Suppress the console logs. Keep the pressure API logs |
+| `-quiet` | `false` | Suppress the progress and per-result console output. It does not filter the logs; use `-log-level` for log verbosity |
 | `-cidr-ip-col` | `ip` | Column name for the IP selector in the CIDR CSV |
 | `-cidr-ip-cidr-col` | `ip_cidr` | Column name for the boundary CIDR in the CIDR CSV |
 | `-target-count-limit` | `10000000` | Maximum candidate addresses. Set `0` to disable the count limit. |
@@ -374,10 +374,20 @@ port-scan scan -cidr-file targets.csv -port-file ports.csv -resume ./results/res
 port-scan scan -cidr-file targets.csv -port-file ports.csv -cidr-ip-col source_ip -cidr-ip-cidr-col source_cidr
 ```
 
-### Suppress console logs (keep pressure API logs)
+### Suppress the progress output
+
+`-quiet` stops the progress and per-result console output. The logs are not
+changed. Error-level lines, such as a worker panic or a local resource failure,
+still go to standard error.
 
 ```bash
 port-scan scan -cidr-file targets.csv -port-file ports.csv -quiet
+```
+
+To make the run fully silent, also set the log level to `error`:
+
+```bash
+port-scan scan -cidr-file targets.csv -port-file ports.csv -quiet -log-level error
 ```
 
 ## Exit Codes
