@@ -310,3 +310,37 @@ requires `--input`, `--cleaned-cidrs`, and `--output-dir` as well, so a bare
 repository, so a 3.0.1 binary cannot be built from a tag here. The claim rests on
 the source-level diff above, which is unambiguous, plus the issue's recorded
 measurement.
+
+## 14. Review of the `--fab-name` commit — APPROVE
+
+Fresh-context `sonnet`, reviewing `8cf1ff7` alone. All seven areas verified from
+source. No blockers.
+
+It closed two gaps the commander had left open:
+
+- **The 3.0.1 proxy.** The commit used `f6ab106` as the 3.0.1 boundary because
+  this repo has no `v3.0.1` tag. The reviewer confirmed `f6ab106` is the commit
+  that ADDS `docs/release-notes/3.0.1.md` (`git show f6ab106^:...` fails,
+  `f6ab106:...` succeeds), and that `v4.0.0` itself sits on the same kind of
+  commit, `4febd75 docs: prepare README for v4.0.0`. The docs-commit-as-release-
+  boundary pattern is this repo's own convention, so the proxy is sound.
+- **A second commit touching the file.** `a5061dd` also touched `fabname.go`
+  between `fae49bf` and `v4.0.0`. The reviewer checked it and found it
+  wrapper-only and AST-identical, so the stem/case logic really is byte-identical
+  from `fae49bf^` to HEAD. The commander had checked only `fae49bf`'s own diff.
+
+It also confirmed the superset claim by diffing the whole `ValidateFabName`
+function end to end, not only the reserved-name map: no rule was removed or
+loosened, so 4.0.0 cannot accept anything 3.0.1 rejected.
+
+### The nit, and why it was not fixed the way it was raised
+
+The reviewer noted the edited summary dropped "accepted flags" from the
+compatibility list, and suggested restoring it, since no flag was added or
+removed.
+
+Restoring the original phrase would reintroduce the ambiguity that made the
+line misleading. "Accepted flags" reads either as "the set of flags accepted",
+which is true, or as "the values those flags accept", which is false and is
+exactly what #160 was about. The line now reads "the set of accepted flags",
+which keeps the reviewer's fact and removes the ambiguity.
