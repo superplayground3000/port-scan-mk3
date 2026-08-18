@@ -148,7 +148,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		openOutputs = openBufferedBatchOutputs
 	}
 
-	logger := newLoggerWithQuiet(values.LogLevel, values.Format == "json", stderr, values.Quiet)
+	logger := newLogger(values.LogLevel, values.Format == "json", stderr)
 	saveSnapshot := state.SaveSnapshotWithLimits
 	if opts.SnapshotFailure != nil {
 		injection := *opts.SnapshotFailure

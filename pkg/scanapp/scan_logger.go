@@ -37,7 +37,6 @@ type scanLogger struct {
 	level  int
 	asJSON bool
 	out    io.Writer
-	quiet  bool
 	// mu serializes writes to out. The logger is shared across scan worker
 	// goroutines, and the underlying io.Writer (e.g. bytes.Buffer, os.Stderr)
 	// is not safe for concurrent writes.
@@ -57,12 +56,6 @@ func newLogger(level string, asJSON bool, out io.Writer) *scanLogger {
 	return &scanLogger{level: parsed, asJSON: asJSON, out: out}
 }
 
-func newLoggerWithQuiet(level string, asJSON bool, out io.Writer, quiet bool) *scanLogger {
-	l := newLogger(level, asJSON, out)
-	l.quiet = quiet
-	return l
-}
-
 func (l *scanLogger) debugf(format string, args ...any) {
 	l.logWithFields(0, "debug", fmt.Sprintf(format, args...), nil)
 }
@@ -76,7 +69,7 @@ func (l *scanLogger) errorf(format string, args ...any) {
 }
 
 func (l *scanLogger) eventf(msg, target string, port int, transition, errCause string, extra map[string]any) {
-	if !l.enabledEvent(msg) {
+	if !l.enabledEvent() {
 		return
 	}
 	fields := map[string]any{
@@ -92,7 +85,7 @@ func (l *scanLogger) eventf(msg, target string, port int, transition, errCause s
 }
 
 func (l *scanLogger) logWithFields(level int, levelName, msg string, fields map[string]any) {
-	if !l.enabled(level, msg) {
+	if !l.enabled(level) {
 		return
 	}
 	if fields == nil {
@@ -113,14 +106,18 @@ func (l *scanLogger) logWithFields(level int, levelName, msg string, fields map[
 	_, _ = fmt.Fprintf(l.out, "[%s] %s\n", strings.ToUpper(levelName), msg)
 }
 
-func (l *scanLogger) enabledEvent(msg string) bool {
-	return l.enabled(1, msg)
+func (l *scanLogger) enabledEvent() bool {
+	return l.enabled(1)
 }
 
-func (l *scanLogger) enabled(level int, msg string) bool {
-	return l != nil && level >= l.level && (!l.quiet || isPressureLog(msg))
-}
-
-func isPressureLog(msg string) bool {
-	return strings.Contains(msg, "[API]") || strings.Contains(msg, "pressure")
+// enabled reports whether a message at level survives the configured verbosity.
+// -log-level is the only owner of log verbosity. -quiet never reaches this
+// logger: it gates one emitter, emitCommittedProgress in result_aggregator.go,
+// which drops the periodic stdout progress line and the scan_progress event
+// together. Every other line, including a per-result scan_result event and any
+// error-level line, is decided here by level alone, so an error always reaches
+// stderr under -quiet. A user who wants a fully silent run pairs -quiet with
+// -log-level error. See issue #157.
+func (l *scanLogger) enabled(level int) bool {
+	return l != nil && level >= l.level
 }
