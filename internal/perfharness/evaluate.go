@@ -120,7 +120,7 @@ func (Suite) Evaluate(input EvaluationInput) Verdict {
 	if input.Regression != nil {
 		// A baseline above zero with an after value at zero is an absent
 		// measurement, not a result of zero. Report it as a failure, because a
-		// ratio of zero would pass every regression rule in silence. Each
+		// ratio of zero passes every regression rule in silence. Each
 		// dimension has its own rule name, so the verdict says which dimension
 		// went unmeasured.
 		switch {

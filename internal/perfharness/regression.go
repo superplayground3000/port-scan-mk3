@@ -56,13 +56,17 @@ const (
 //
 // The per-operation figure is a steady-state amortized measurement. It is NOT
 // comparable to a baseline that was recorded one operation per measurement.
-// measure calls runtime.GC and debug.FreeOSMemory before each observation. A
-// batch divides the page-fault cost of that reset across all of its
-// iterations, but a single-operation measurement charges the full cost to the
-// one operation. The batched figure thus reads LOW, and the bias grows with
-// the iteration count. Measurements of the same work gave -16.8 percent at
-// Linux window sizes, which are approximately 20 to 30 iterations, and -28.85
-// percent at Windows window sizes, which are approximately 2000 iterations.
+// measure calls runtime.GC and debug.FreeOSMemory before it starts the clock.
+// The reset itself is outside the measured window, but it releases pages, so
+// the operations just after it pay to fault those pages back in. A batch
+// divides that warm-up cost across all of its iterations, and a
+// single-operation measurement charges the whole cost to the one operation.
+// The batched figure thus reads LOW, and the bias grows with the iteration
+// count. Two machines measured the same work at -17 to -23 percent for the
+// small batches a fine clock needs, and at -28 to -29 percent for the large
+// batches a coarse clock needs. Treat these as the observed direction and
+// order of magnitude. The exact figures and iteration counts belong to the
+// hardware that produced them.
 //
 // The baselines in contract.go were recorded with the single-operation method,
 // so the ratio against them reads optimistically, and it reads most
@@ -130,10 +134,10 @@ func (suite Suite) runRegressionBenchmark(ctx context.Context, spec RegressionBe
 // one snapshot write of the target size.
 //
 // AfterNSPerOp and AfterBPerOp are amortized values. The measurement reset runs
-// once for the whole batch, so its cost divides by the iteration count. Both
-// values read low against a baseline that was recorded one operation per
-// measurement, and the bias grows with the iteration count. See
-// RunRegressionBenchmark and issue #178.
+// once for the whole batch, so the warm-up cost that follows it divides by the
+// iteration count. Both values read low against a baseline that was recorded
+// one operation per measurement, and the bias grows with the iteration count.
+// See RunRegressionBenchmark and issue #178.
 func newRegressionComparison(spec RegressionBenchmarkSpec, after Observation, iterations uint64) RegressionComparison {
 	comparison := RegressionComparison{
 		BeforeNSPerOp: spec.BeforeNSPerOp,
