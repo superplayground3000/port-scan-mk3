@@ -29,7 +29,9 @@ func TestMeasurementWindowHoldsClockQuantizationBelowTheBudget(t *testing.T) {
 		granularity time.Duration
 		want        time.Duration
 	}{
-		{name: "windows interrupt time", granularity: 15_625 * time.Microsecond, want: 1_562_500 * time.Microsecond},
+		// One Windows clock step is 15.625 ms. At a 3 percent budget the window is
+		// 15.625 ms / 0.03, rounded up to the next nanosecond.
+		{name: "windows interrupt time", granularity: 15_625 * time.Microsecond, want: 520_833_334 * time.Nanosecond},
 		{name: "fine clock takes the floor", granularity: 40 * time.Nanosecond, want: regressionMinimumWindow},
 		{name: "unreadable clock takes the floor", granularity: 0, want: regressionMinimumWindow},
 	} {
@@ -105,5 +107,25 @@ func TestNewRegressionComparisonKeepsThePerOperationUnit(t *testing.T) {
 	}
 	if comparison.BeforeNSPerOp != spec.BeforeNSPerOp || comparison.BeforeBPerOp != spec.BeforeBPerOp {
 		t.Errorf("comparison lost the recorded baseline: %+v", comparison)
+	}
+}
+
+func TestObserveClockGranularityReturnsWhenTheClockNeverAdvances(t *testing.T) {
+	t.Parallel()
+
+	// A frozen or virtualized clock always reads the same value. The read loop
+	// must fall through and report zero, because measurementWindow treats a
+	// granularity at or below zero as the minimum window.
+	observed := make(chan time.Duration, 1)
+	go func() {
+		observed <- observeClockGranularityWith(func(time.Time) time.Duration { return 0 })
+	}()
+	select {
+	case granularity := <-observed:
+		if granularity != 0 {
+			t.Fatalf("granularity = %s, want 0 for a clock that never advances", granularity)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("observeClockGranularityWith did not return within 10s: a frozen clock holds the read loop forever")
 	}
 }
