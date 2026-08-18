@@ -6,6 +6,40 @@ them. Keep each entry short and evidence-backed.
 
 ---
 
+## 2026-08-18 — An absolute memory ceiling calibrated on a dev machine failed on the runner
+- Symptom: `TestRichPrecheckWorkflowFitsScaledCommittedMemoryBudget` failed the
+  Linux quality gate on master `161c209` with `committed memory = 2404179968,
+  want at most 2400000000` — over by 0.17%. PR #174 failed the same case by
+  0.002% (47 KB) and passed on re-run of the identical commit. Master was red.
+  The job showed a green `go test -race` above a red `coverage gate (>= 85%)`,
+  so the failure read as a coverage problem when coverage was fine at 85.6%.
+- Root cause: two separate defects. (1) The 2.4 GB ceiling in
+  `internal/perfharness/rich_memory_linux_test.go` was calibrated on a
+  developer machine, where it holds with 3-4% margin. The GitHub runner sits
+  roughly 80-100 MB higher and lands inside 0.2% of the ceiling, so the case
+  decided on run-to-run noise. An absolute committed-bytes ceiling measures the
+  host allocator, page cache, and available RAM as much as the code. (2) The
+  file's `//go:build linux && !race` tag took the case out of the `-race` step
+  but not out of CI: the coverage-gate step builds without `-race`, so it ran
+  there and its failure was reported under a coverage heading.
+- Fix / rule: make the ceiling hardware-qualified — add `&& perfqualified`, so
+  only `scripts/performance_gate.sh full` enforces it — and keep the workflow
+  itself in the correctness gate through a small-scale case that asserts
+  functional results and no byte ceiling. General rule: an absolute resource
+  ceiling is a hardware measurement; calibrate it on certified hardware or do
+  not enforce it on shared hardware. Second rule: `linux && !race` does not
+  retire a case, it relocates it into the coverage-gate step, where a failure
+  is read as a coverage problem — the same relocation trap as the
+  [[50-lessons]] 2026-08-16 entry. Pin the qualification behaviourally: ask the
+  toolchain with `go test -list` which build each case lands in, because a text
+  match cannot prove it. See [[60-development-guidelines]] G3.
+- Evidence: `internal/perfharness/rich_memory_qualification_linux_test.go` was
+  red before the tag ("is in the untagged build, so the correctness gate
+  enforces a hardware-qualified budget on shared CI hardware", both cases) and
+  green after; `go test -tags perfqualified -run 'TestRich.*CommittedMemoryBudget'`
+  passes both cases (2305597440 and 744169472/746373120 bytes locally);
+  `make verify` exit 0, coverage 85.6% before and 85.6% after.
+
 ## 2026-08-16 — A build tag did not take a test out of CI
 - Symptom: `TestSnapshotMixedGrowthThroughHundredMegabytesIsLinear` failed the
   Linux coverage gate on PR #152. The first fix put the case behind a

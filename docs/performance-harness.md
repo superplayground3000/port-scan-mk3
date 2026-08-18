@@ -200,12 +200,21 @@ Paging is permitted, and its time stays in the wall-time result.
 
 These thresholds hold on the qualified hardware profile. A shared CI runner is
 not that profile. Its durable-write latency is not linear in bytes. A wall-time
-ratio measured there records the storage and not the code.
+ratio measured there records the storage and not the code. Its allocator, page
+cache, and available RAM also differ, so an absolute byte ceiling measured
+there records the host and not the code.
 
 The Go cases that assert a growth ratio therefore build under the
-`perfqualified` tag. `make verify` and the CI correctness gate do not build
-them. Only `scripts/performance_gate.sh full` runs them. The `smoke` profile
-runs on shared CI hardware and records the skip instead.
+`perfqualified` tag. The Go cases that assert an absolute committed-memory
+ceiling on a one-million-item workload build under the same tag, for the same
+reason: the runner sat within 0.2% of the 2.4 GB rich precheck ceiling, so the
+case decided on noise (issue 175). `make verify` and the CI correctness gate do
+not build these cases. Only `scripts/performance_gate.sh full` runs them. The
+`smoke` profile runs on shared CI hardware and records the skip instead.
+
+The untagged build still runs both rich memory workflows at a small scale. It
+asserts functional results and that the memory metrics are populated. It
+asserts no byte ceiling.
 
 Both profiles write `hardware-qualified-cases.txt` to the run directory. A
 failure in these cases fails the gate.

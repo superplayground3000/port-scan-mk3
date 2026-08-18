@@ -78,6 +78,23 @@ func TestPerformanceGateEntrypointsKeepOSAdaptersThin(t *testing.T) {
 	}
 }
 
+// The committed-memory budgets are hardware-qualified thresholds. This case
+// runs on every platform, so it holds the build tag even where the behavioural
+// check in rich_memory_qualification_linux_test.go cannot compile the package.
+func TestRichMemoryBudgetsCarryTheHardwareQualifiedBuildTag(t *testing.T) {
+	t.Parallel()
+
+	root := repositoryRoot(t)
+	budgets := readContractFile(t, root, "internal/perfharness/rich_memory_linux_test.go")
+	tag, _, found := strings.Cut(budgets, "\n")
+	if !found || !strings.HasPrefix(tag, "//go:build ") {
+		t.Fatalf("rich memory budgets have no build constraint on the first line: %q", tag)
+	}
+	if !strings.Contains(tag, "perfqualified") {
+		t.Fatalf("rich memory budgets are not hardware-qualified: %q", tag)
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
