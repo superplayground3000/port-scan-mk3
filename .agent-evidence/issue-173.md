@@ -215,3 +215,36 @@ here.
 - The pty timing claim, as above.
 - `make verify` was re-run by the commander (exit 0, 85.5%), not by either
   reviewer. `tests/repohygiene` re-run after the later doc edits: ok.
+
+## 12. Spec review cleared at `b2a4530` — and a stronger reason for the restore
+
+The spec reviewer re-checked at `b2a4530` and lifted its block. No remaining
+ASD-STE100 section 7 order violations across all seven CAUTIONs.
+
+Its line-by-line answer to "did the restore delete a genuine 4.0.0 correction?"
+went past ancestry and into the source, on the one removed section that needed
+it. "Cancellation safety" was inserted atomically by a single commit, and that
+commit is `e0b53b2 fix: preserve resumable progress on cancellation` — a `fix:`,
+not a `docs:` or a `feat:`. It rewrites nine files under `pkg/scanapp/` and adds
+`WithInterruptEscalation` to `pkg/state/signal.go`.
+
+That inverts the reasoning. A `fix:` commit that rewrites the resume and
+chunk-rewind machinery means `v4.0.0` did NOT correctly preserve progress on
+cancellation. The section is not an undocumented 4.0.0 feature. It documents a
+bug that was still open at the tag.
+
+So the pre-restoration text was not merely misfiled. It was **affirmatively
+false about the released version**: it told a 4.0.0 operator that the snapshot
+rewinds each chunk to its lowest unwritten task and that a second interrupt
+forces exit `130`, when 4.0.0 shipped neither. Confirmed at the code level, not
+from the commit message: `v4.0.0:pkg/state/signal.go` has only
+`WithSIGINTCancel`, with no `WithInterruptEscalation` and no `forceExit(130)`,
+and `OutputFailure`/`SnapshotFailure` are absent from `RunOptions` at the tag.
+
+One nuance the reviewer raised and resolved: bullet 1 ("the first Ctrl+C starts
+graceful cancellation") WAS already true at the tag through the single-tier
+`WithSIGINTCancel` — just not reachable from an interactive terminal, because of
+the separate ISIG defect (#156, also post-tag). The `f6c3204` sentence already
+states this correctly and does not overclaim.
+
+**Both reviews are now clear: facts APPROVE, spec no-blockers.**
