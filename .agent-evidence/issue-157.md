@@ -297,3 +297,89 @@ Left alone on purpose:
 - **The release note.** Owed on issue #173, see section 9.
 - **golangci-lint.** Not installed here, so `make lint` falls back to `go vet`,
   which `make verify` already ran.
+
+---
+
+## 11. Commander review round (post-`0f7f077`)
+
+Independent review was obtained from a different Claude model with fresh
+context. Codex was probed live and is rate-limited until 2026-08-20 11:35, so
+this is rank 2 of `60-development-guidelines.md` G2, not a cross-provider round.
+That downgrade is deliberate and recorded.
+
+### Finding A — the docs described behavior the code no longer has (commander)
+
+The reviewer traced the doc claims to the `enabled()`/`errorf` call sites and
+reported them accurate. That check was not sufficient: it confirmed the error
+path but not the *suppression* claim. Four places said `-quiet` suppresses
+"progress and per-result console output".
+
+`quiet` reaches exactly one production emitter, `emitCommittedProgress`
+(`result_aggregator.go:123`). The other quiet-gated emitter,
+`emitScanResultEvents` (`:94`), has **no production caller** — that is the dead
+code tracked by issue #171, so its `quiet` argument never runs in a real scan.
+Per-result output goes through `emitPendingScanResult`
+(`output_committer.go:176`) into the logger, which this change just placed under
+`-log-level` alone. So the phrase described the behavior the fix removes: before
+`0f7f077`, the logger's quiet filter did drop the per-result `scan_result`
+lines.
+
+Measured on a real binary, loopback only (constitution V), with `-quiet`:
+
+```
+scan_result lines on stderr:   4
+scan_progress lines on stderr: 0
+progress cidr= lines on stdout: 0
+```
+
+Two corrections follow, not one. `-quiet` does not suppress per-result output,
+and it is not true that it "does not filter the logs": the `scan_progress`
+event disappears with the stdout progress line, because one emitter writes both.
+A JSON consumer loses that event.
+
+Note the repo already pinned the correct behavior:
+`TestRun_WhenQuiet_LogLevelAloneDecidesWhetherInfoLinesAppear` asserts
+`scan_result` survives `-quiet` at `-log-level info`. The prose contradicted a
+passing test in the same commit.
+
+Fixed in `pkg/config/parser_helpers.go:29`, `cmd/port-scan/README.md:111,377`,
+`docs/apps/port-scan/SPEC.md:159`, `docs/cli/flags.md`, and the `enabled` doc
+comment at `pkg/scanapp/scan_logger.go:112` — the same wrong sentence had been
+written into the code comment that the fix itself added.
+
+Red-first proof for this correction, in a throwaway worktree at `0f7f077` with
+only the new test copied in:
+
+```
+GOTOOLCHAIN=go1.24.4 go test -run 'TestRegisterCommonFlags_QuietUsage' ./pkg/config/
+--- FAIL: TestRegisterCommonFlags_QuietUsageDescribesProgressOnly (0.00s)
+    quiet_flag_usage_test.go:40: -quiet usage claims it suppresses per-result output, which it does not; usage = "suppress progress and per-result console output; use -log-level for log verbosity"
+```
+
+### Finding B — the release-note deferral had no recorded mechanism (reviewer)
+
+The reviewer blocked because no compatibility note exists and `#157` never
+mentions `#173`. The observation is correct and the gap was real. Its
+attribution is not: the deferral was a commander instruction carried over from
+the maintainer's standing decision on `#158`, not something the implementer
+invented. The reviewer only had the GitHub thread and could not see that.
+
+Its suggested fix — append to `docs/release-notes/4.0.0.md`, citing PR #142 as
+precedent — is declined. That precedent is the defect: `4.0.0.md` has been
+edited by 11 commits since `v4.0.0` was tagged at `4febd75`, which is issue
+`#165`. Following it would deepen the bug this repo already has open.
+
+The requirement is instead recorded on `#173` and on `#157`, so the mechanism
+exists. The version decision (constitution VII: a CLI contract change) is the
+maintainer's and is raised explicitly.
+
+### Verified independently by the commander
+
+- `make verify` exit 0, `coverage gate passed: 85.6%` — run twice, before and
+  after the corrections.
+- `GOOS=windows go vet ./pkg/scanapp/` exit 0.
+- `pkg/scanner/dial_error.go:classifyErrno` consults its Unix errno table on
+  every platform, so the injected `syscall.EADDRNOTAVAIL` / `ECONNREFUSED`
+  classify identically on Windows. The new tests are not Linux-only.
+- `emitScanResultEvents` has no production caller (`grep`): only
+  `scan_observability_test.go:631` and a stale comment at `scan_runtime.go:174`.

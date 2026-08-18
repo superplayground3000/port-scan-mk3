@@ -111,10 +111,13 @@ func (l *scanLogger) enabledEvent() bool {
 }
 
 // enabled reports whether a message at level survives the configured verbosity.
-// -log-level is the only owner of log verbosity: -quiet suppresses progress and
-// per-result console output (see result_aggregator.go) and never filters the
-// logger, so an error-level line always reaches stderr under -quiet. A user who
-// wants a fully silent run pairs -quiet with -log-level error. See issue #157.
+// -log-level is the only owner of log verbosity. -quiet never reaches this
+// logger: it gates one emitter, emitCommittedProgress in result_aggregator.go,
+// which drops the periodic stdout progress line and the scan_progress event
+// together. Every other line, including a per-result scan_result event and any
+// error-level line, is decided here by level alone, so an error always reaches
+// stderr under -quiet. A user who wants a fully silent run pairs -quiet with
+// -log-level error. See issue #157.
 func (l *scanLogger) enabled(level int) bool {
 	return l != nil && level >= l.level
 }

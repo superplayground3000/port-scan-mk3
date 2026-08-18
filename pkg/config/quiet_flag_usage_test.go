@@ -32,4 +32,11 @@ func TestRegisterCommonFlags_QuietUsageDescribesProgressOnly(t *testing.T) {
 	if !strings.Contains(usage, "-log-level") {
 		t.Fatalf("-quiet usage must point the reader at -log-level for log verbosity; usage = %q", quiet.Usage)
 	}
+	// -quiet gates only the periodic progress emitter
+	// (scanapp/result_aggregator.go emitCommittedProgress). Per-result
+	// scan_result events run through the logger, which -log-level alone owns,
+	// so a help string that promises to suppress them is false. See issue #157.
+	if strings.Contains(usage, "per-result") {
+		t.Fatalf("-quiet usage claims it suppresses per-result output, which it does not; usage = %q", quiet.Usage)
+	}
 }
