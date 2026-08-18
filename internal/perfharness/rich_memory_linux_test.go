@@ -1,4 +1,18 @@
-//go:build linux && !race
+//go:build linux && !race && perfqualified
+
+// The committed-memory budgets in this file are hardware-qualified thresholds.
+// They are absolute byte ceilings on a one-million-item workload, so they
+// measure the host allocator, page cache, and available RAM as much as the
+// code. A shared CI runner cannot hold them: it sits roughly 80-100 MB above
+// the machine that calibrated the 2.4 GB precheck ceiling, which left it under
+// 0.2% of margin and made the case decide on noise. The build tag keeps the
+// cases in the performance gate, which runs on qualified hardware and records
+// the hardware profile with the result. See docs/performance-harness.md and
+// issue #175.
+//
+// The untagged build still exercises these workflows at a small scale in
+// rich_memory_scale_linux_test.go, which asserts functional results and no
+// absolute ceiling.
 
 package perfharness_test
 
