@@ -199,10 +199,22 @@ flushes and the counter advances per result:
 
 Before this change both rows would read the same, because both would run at 100.
 
-Note one interaction worth knowing: with the default `-output-flush-results
-1000`, the counter only advances at the flush, so a five-target scan emits one
-line at the end whatever the cadence. The cadence counts **written** results,
-not dispatched ones.
+Note one interaction worth knowing: the cadence counts **written** results, not
+dispatched ones. `summary.written` advances only in `outputCommitter.commit`
+(`pkg/scanapp/output_committer.go:118-137`), so `-output-flush-results` bounds
+how often a progress line can appear at all. With its default of `1000`, a
+five-target scan flushes once at the end, and `-progress-interval 1` therefore
+emits one line rather than five.
+
+An earlier version of this paragraph said that scan emits one line "whatever the
+cadence". That is wrong: the emitter fires only when `written/step` crosses a
+boundary (`result_aggregator.go:123`), so at the default cadence of 100 a
+five-target scan emits **zero** lines. The e2e table above shows exactly that.
+One line is what you get for a cadence at or below the written count.
+
+`docs/cli/flags.md` now states this interaction, because a user who sets
+`-progress-interval 1` and sees one line would otherwise reasonably think the
+flag is still broken.
 
 ## Quality gates
 
@@ -228,11 +240,35 @@ Exit code 0, confirmed separately.
 
 ## No gate or assertion was weakened
 
-`git diff -U0 -- '*_test.go' | grep '^-'` returns exactly one removed line, the
-`Run(...)` call that carried the deleted option, replaced by the same call
-without it. No `t.Fatalf`, no condition, no test was removed. Most of the 123
-changed lines in `scan_observability_test.go` are `gofmt` realignment of struct
-literals that gained a longer field name.
+A plain `git diff -U0 -- '*_test.go' | grep '^-'` removes 65 lines, which looks
+alarming and is not the right measurement: `ProgressInterval` is longer than the
+previous longest field name in those struct literals, so `gofmt` rewrote the
+padding on every neighbouring line. Ignore whitespace and the real picture is
+six removals:
+
+```text
+git diff master...HEAD -w --ignore-blank-lines -U0 -- '*_test.go' \
+  ':!pkg/scanapp/scan_progress_interval_test.go' | grep '^-' | grep -v '^---'
+
+-	if err := Run(..., RunOptions{DisableKeyboard: true, ProgressInterval: 1}); err != nil {
+-		ProgressInterval: 1,
+-		ProgressInterval: 1,
+-		ProgressInterval:          1,
+-		ProgressInterval:          1,
+-		ProgressInterval: 1, // tick every chunk/result so progress lines always emit
+```
+
+Every one is a `RunOptions.ProgressInterval` use, and each is replaced by the
+same value set on the configuration fixture. No `t.Fatalf`, no condition, and no
+test was removed or weakened.
+
+One line that looks deleted is not: `cfg.LogLevel = "info" // bucket_parse_* …`
+in `scan_resume_output_test.go:26` survives with only its comment padding
+changed.
+
+An earlier version of this section claimed the plain grep returned "exactly one
+removed line". That was wrong by a factor of 65. The conclusion it supported
+still holds, but the command cited did not support it.
 
 ## Documentation
 
@@ -247,7 +283,13 @@ Two statements were made false by this change and are corrected:
 `docs/cli/flags.md:124` said only "Progress line cadence." It now names the unit
 and the stream, matching the `pre-ping` and `generate-buckets` rows at lines 56
 and 84. It states stdout for the human line and stderr for the structured event,
-which is what `pkg/scanapp/result_aggregator.go:108` and `:113` do.
+which is what `emitCommittedProgress` does at
+`pkg/scanapp/result_aggregator.go:131` and `:137`.
+
+An earlier version cited `result_aggregator.go:108` and `:113` instead. Those
+lines are inside `emitScanResultEvents`, which **production never calls** — its
+only caller is `scan_observability_test.go:631`. The statement about the two
+streams was true, but the lines cited did not support it. See the note below.
 
 `README.md` needed no correction. Lines 420 and 559 already described
 `-progress-interval` as a working cadence flag for all three pipeline steps; the
@@ -289,5 +331,76 @@ No other `fs.Int`/`fs.String`/`fs.Bool`/`fs.Duration`/`fs.Var` call in `pkg/`,
   challenge, not a missing run.
 - **The progress line format is unchanged and untested here.** It was out of
   scope.
-- **Independent review has not happened yet** at the time of writing. Rule G2
-  requires it before this change is complete.
+- **No external importer of `pkg/scanapp` can be checked from here.** Deleting
+  `RunOptions.ProgressInterval` breaks any caller that set it. See the
+  release-notes section below.
+
+## Found during review, deliberately not fixed here
+
+`emitScanResultEvents` (`pkg/scanapp/result_aggregator.go:94`) has **no
+production caller**. The only call is `scan_observability_test.go:631`, and the
+comment at `scan_runtime.go:174` claims the function "keeps the result
+progress", which is false. The live emitter is `emitCommittedProgress`.
+
+This is dead production code carrying test coverage, and it is what made the
+first version of this file cite the wrong lines. It is out of scope for #158 and
+is filed separately rather than fixed here.
+
+## Release notes and the version bump: a maintainer decision, still open
+
+Deleting the public field `scanapp.RunOptions.ProgressInterval` is a breaking Go
+API change. Any external caller that sets it stops compiling.
+
+The repo has a convention for exactly this. `docs/release-notes/4.0.0.md:64` has
+a "Breaking Go API changes" section that records the same class of removal
+(`RunOptions.ResumeStatePath`, `RunOptions.PressureFetcher`,
+`RunOptions.PressureHTTP`). Constitution VII then requires a MAJOR bump.
+
+There is no unreleased notes file: `4.0.0.md` is the newest and `v4.0.0` is
+tagged at `4febd75`. Before that tag, PRs edited the upcoming notes file as they
+merged; after it, PRs (#167, #170) have not created a successor. So current
+practice defers the notes to release preparation.
+
+**This change does not create a release-notes file.** Choosing the next version
+is the maintainer's call, not the implementer's, and nothing here cuts a
+release. What must not happen is the break going unrecorded when the next
+version is prepared.
+
+## Independent review
+
+Cross-provider review was unavailable: Codex is still rate limited, with credits
+returning 2026-08-20 11:35 (verified by a live probe, not assumed). Rule G2 ranks
+reviewers as different provider, then different Claude model, then any
+fresh-context agent, so this used the second rank: a different Claude model with
+no knowledge of the implementing conversation.
+
+**State this plainly when citing this file: the change has one same-provider,
+different-model review round. It has no cross-provider round.**
+
+First verdict: **BLOCK**, with six findings and no defect in the production code
+itself. The reviewer re-ran `make verify` and re-derived both red proofs and the
+discrimination probe in its own throwaway worktree rather than trusting the
+paste above.
+
+What it found, and what changed as a result:
+
+1. `docs/apps/port-scan/DESIGN.md:134` still listed `ProgressInterval` as a
+   `RunOptions` seam that adjusts runtime "without adding CLI flags" — a direct
+   self-contradiction 22 lines below a paragraph this change had edited. Fixed.
+2. `docs/specs/SPEC-06-SCAN-ORCHESTRATION.md:51` reproduced the `RunOptions`
+   struct including the deleted field. Fixed.
+3. The committed version of this file carried the false "exactly one removed
+   line" claim while the correction sat uncommitted. Now committed together.
+4. The breaking-change record was missing. Documented above as an open
+   maintainer decision.
+5. `TestParseScanAcceptsNonPositiveProgressInterval` derived its expected value
+   with `strconv.Atoi(raw)`. The reviewer judged it not tautological in the
+   damning sense, but a literal table is strictly simpler and complies with the
+   TDD skill to the letter. Rewritten as a `{raw, want}` table; the `strconv`
+   import is gone.
+6. The `-progress-interval` row in `docs/cli/flags.md` did not mention that
+   `-output-flush-results` bounds the cadence. Added.
+
+It also caught two more overclaims in this file, both corrected in place above:
+the "whatever the cadence" sentence, and the `result_aggregator.go:108/:113`
+citation into a function production never calls.

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -334,25 +333,27 @@ func TestParseScanReturnsAcceptedFlagsAndAuthenticatedPolicy(t *testing.T) {
 // same as the pre-ping and generate-buckets parsers. The scan runtime replaces
 // such a value with the built-in cadence (see scanapp.Run).
 func TestParseScanAcceptsNonPositiveProgressInterval(t *testing.T) {
-	for _, raw := range []string{"0", "-5"} {
+	for _, testCase := range []struct {
+		raw  string
+		want int
+	}{
+		{raw: "0", want: 0},
+		{raw: "-5", want: -5},
+	} {
 		cfg, err := config.ParseScan([]string{
 			"-cidr-file", "targets.csv",
 			"-resume", "buckets.json",
-			"-progress-interval", raw,
+			"-progress-interval", testCase.raw,
 		})
 		if err != nil {
-			t.Fatalf("ParseScan() with -progress-interval %s error = %v", raw, err)
+			t.Fatalf("ParseScan() with -progress-interval %s error = %v", testCase.raw, err)
 		}
 		got, err := cfg.Resolve()
 		if err != nil {
-			t.Fatalf("Resolve() with -progress-interval %s error = %v", raw, err)
+			t.Fatalf("Resolve() with -progress-interval %s error = %v", testCase.raw, err)
 		}
-		want, err := strconv.Atoi(raw)
-		if err != nil {
-			t.Fatalf("Atoi(%s) error = %v", raw, err)
-		}
-		if got.ProgressInterval != want {
-			t.Fatalf("ProgressInterval = %d, want %d", got.ProgressInterval, want)
+		if got.ProgressInterval != testCase.want {
+			t.Fatalf("ProgressInterval = %d, want %d", got.ProgressInterval, testCase.want)
 		}
 	}
 }

@@ -131,7 +131,7 @@ executor, filesystem, result loop, or output session.
 
 `RunOptions` contains only optional runtime seams. `Dial` replaces TCP dialing.
 `PressureSource` replaces pressure sampling. `ReachabilityChecker` applies only
-to pre-ping. `PressureLimit`, `DisableKeyboard`, and `ProgressInterval` adjust
+to pre-ping. `PressureLimit` and `DisableKeyboard` adjust
 runtime control without adding CLI flags.
 
 ### Stage 1: Input Loading (`input_loader.go`)

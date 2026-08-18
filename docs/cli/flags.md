@@ -121,7 +121,7 @@ All commands also accept `-cidr-input-size-limit-gb` (default `1`) and
 | `-pressure-data-url` | string | empty | Comma-separated pressure data endpoints. Required with `-pressure-use-auth`. All sources must succeed, and the command uses the maximum value. |
 | `-pressure-client-id` / `-pressure-client-secret` | string | empty | OAuth credentials. Required with `-pressure-use-auth`. |
 | `-port-file` | string | optional | A fallback only. The command usually ignores it, because bucket chunks carry the ports. |
-| `-progress-interval` | int | `100` | Progress line cadence (count of written scan results). The command writes these lines to stdout, and a matching structured event to stderr. A value that is not positive selects the default `100`. |
+| `-progress-interval` | int | `100` | Progress line cadence (count of written scan results). The command writes these lines to stdout, and a matching structured event to stderr. A value that is not positive selects the default `100`. The count advances when results are **written**, so `-output-flush-results` bounds how often a line can appear: with its default of `1000`, `-progress-interval 1` still emits one line per flushed batch, not one per result. Set `-output-flush-results 1` to see a line per result. |
 | `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
 
 - **No ping flags.** `scan` does not register `-disable-pre-scan-ping` or

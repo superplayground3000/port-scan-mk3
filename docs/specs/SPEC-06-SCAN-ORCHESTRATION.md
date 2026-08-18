@@ -48,7 +48,6 @@ type RunOptions struct {
     PressureLimit       int
     DisableKeyboard     bool
     PressureSource      PressureSource
-    ProgressInterval    int
     ReachabilityChecker ReachabilityChecker
 }
 ```
