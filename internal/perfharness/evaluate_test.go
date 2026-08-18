@@ -67,3 +67,27 @@ func TestRunRegressionBenchmarkExecutesSixRunsAndEvaluatesBaseline(t *testing.T)
 		t.Fatalf("blocked regression result = %+v", blocked)
 	}
 }
+
+func TestEvaluateBlocksAnUnmeasuredRegressionInsteadOfPassingZero(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	verdict := harness.Evaluate(perfharness.EvaluationInput{
+		Regression: &perfharness.RegressionComparison{
+			BeforeNSPerOp: 7_762_347,
+			AfterNSPerOp:  0,
+			BeforeBPerOp:  1_134_359,
+			AfterBPerOp:   0,
+		},
+	})
+
+	if verdict.Passed {
+		t.Fatalf("verdict passed on an unmeasured regression: %+v", verdict)
+	}
+	if !verdict.HasFailure("regression-unmeasured") {
+		t.Fatalf("missing failure for %q: %+v", "regression-unmeasured", verdict.Failures)
+	}
+	if verdict.HasFailure("regression-ns-per-op") || verdict.HasFailure("regression-bytes-per-op") {
+		t.Fatalf("an unmeasured value must not report a ratio rule: %+v", verdict.Failures)
+	}
+}

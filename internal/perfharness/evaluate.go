@@ -48,6 +48,7 @@ type RegressionComparison struct {
 	AfterNSPerOp  float64 `json:"after_ns_per_op"`
 	BeforeBPerOp  float64 `json:"before_bytes_per_op"`
 	AfterBPerOp   float64 `json:"after_bytes_per_op"`
+	Iterations    uint64  `json:"iterations,omitempty"`
 }
 
 // WorkerComparison compares the committed memory of two worker profiles.
@@ -113,10 +114,19 @@ func (Suite) Evaluate(input EvaluationInput) Verdict {
 		}
 	}
 	if input.Regression != nil {
-		if ratioFloat(input.Regression.AfterNSPerOp, input.Regression.BeforeNSPerOp) > 1+MaxRegression {
+		// A baseline above zero with an after value at zero is an absent
+		// measurement, not a result of zero. Report it as a failure, because a
+		// ratio of zero would pass every regression rule in silence.
+		switch {
+		case input.Regression.BeforeNSPerOp > 0 && input.Regression.AfterNSPerOp <= 0:
+			fail("regression-unmeasured", "ns/op after value is not above zero, so the benchmark did not measure one operation")
+		case ratioFloat(input.Regression.AfterNSPerOp, input.Regression.BeforeNSPerOp) > 1+MaxRegression:
 			fail("regression-ns-per-op", "ns/op regression exceeds 10 percent")
 		}
-		if ratioFloat(input.Regression.AfterBPerOp, input.Regression.BeforeBPerOp) > 1+MaxRegression {
+		switch {
+		case input.Regression.BeforeBPerOp > 0 && input.Regression.AfterBPerOp <= 0:
+			fail("regression-unmeasured", "B/op after value is not above zero, so the benchmark did not measure one operation")
+		case ratioFloat(input.Regression.AfterBPerOp, input.Regression.BeforeBPerOp) > 1+MaxRegression:
 			fail("regression-bytes-per-op", "B/op regression exceeds 10 percent")
 		}
 	}
