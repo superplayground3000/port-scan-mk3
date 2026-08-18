@@ -137,7 +137,7 @@ listed flags except `-progress-interval`, `-unreachable-file`, and
 | `-unreachable-file` | (empty) | `generate-buckets` only, optional. Blocklist CSV (a `pre-ping` output) whose `ip` column is subtracted. |
 | `-buckets-out` | (required) | `generate-buckets` only. Output path for the bucket snapshot. |
 | `-resume` | (required) | `scan` only. Bucket snapshot to scan; updated in place on cancel/error. |
-| `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. The scan parser accepts this compatibility flag but does not use its value. |
+| `-progress-interval` | `100` | `pre-ping`, `generate-buckets`, `scan`. Count of processed units between progress lines. A value that is not positive selects the default cadence of `100`. |
 | `-port-file` | (basic mode) | `generate-buckets` (primary; required in basic mode, ignored in rich mode) and `scan` (fallback, normally ignored — chunks carry ports). |
 | `-output` | `scan_results.csv` | `pre-ping` (unreachable CSV dir/anchor) and `scan` (`scan_results-<ts>.csv` / `opened_results-<ts>.csv` dir/anchor). `generate-buckets` uses `-buckets-out`. |
 | `-output-flush-results` | `1000` | `scan` only. Probe results per output batch. `1` flushes each result. `0` disables periodic flushes. Positive values have no fixed maximum. |

@@ -41,6 +41,9 @@ type scanConfigFixture struct {
 	Format             string
 	Quiet              bool
 	OutputFlushResults int
+	// ProgressInterval passes through unchanged. A zero value keeps the
+	// built-in cadence, which is what a test that does not set it expects.
+	ProgressInterval int
 }
 
 func (c testScanConfiguration) Resolve() (config.ScanValues, error) {
@@ -113,6 +116,7 @@ func scanConfigurationFromFixture(t *testing.T, fixture scanConfigFixture) testS
 		Format:             format,
 		Quiet:              fixture.Quiet,
 		OutputFlushResults: outputFlushResults,
+		ProgressInterval:   fixture.ProgressInterval,
 		Pressure:           policy,
 	}}
 }

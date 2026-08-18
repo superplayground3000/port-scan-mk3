@@ -23,7 +23,8 @@ import (
 // events still appear afterward (result_aggregator.go is untouched).
 func TestRun_WhenResumed_EmitsBucketParsePhaseLogs(t *testing.T) {
 	cfg, _, _ := newInterruptibleScanConfig(t)
-	cfg.LogLevel = "info" // bucket_parse_* / scan_* are info-level structured events
+	cfg.LogLevel = "info"    // bucket_parse_* / scan_* are info-level structured events
+	cfg.ProgressInterval = 1 // tick every chunk/result so progress lines always emit
 
 	var stderr bytes.Buffer
 	// Every dial fails "closed" so the scan runs to completion (no cancel), which
@@ -32,9 +33,8 @@ func TestRun_WhenResumed_EmitsBucketParsePhaseLogs(t *testing.T) {
 		return nil, errors.New("connection refused")
 	}
 	if err := Run(context.Background(), scanConfigurationFromFixture(t, cfg), &bytes.Buffer{}, &stderr, RunOptions{
-		DisableKeyboard:  true,
-		Dial:             dial,
-		ProgressInterval: 1, // tick every chunk/result so progress lines always emit
+		DisableKeyboard: true,
+		Dial:            dial,
 	}); err != nil {
 		t.Fatalf("resume run: %v", err)
 	}

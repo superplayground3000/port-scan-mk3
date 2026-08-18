@@ -79,7 +79,6 @@ type RunOptions struct {
 	PressureLimit             int
 	DisableKeyboard           bool
 	PressureSource            PressureSource
-	ProgressInterval          int
 	ReachabilityChecker       ReachabilityChecker
 	OutputFailure             *OutputFailureInjection
 	SnapshotFailure           *state.SaveFailureInjection
@@ -166,7 +165,7 @@ func Run(ctx context.Context, configuration ScanConfiguration, stdout, stderr io
 		stderr:                   stderr,
 		pressureLimit:            opts.PressureLimit,
 		disableKeyboard:          opts.DisableKeyboard,
-		progressInterval:         opts.ProgressInterval,
+		progressInterval:         values.ProgressInterval,
 		outputFlushResults:       values.OutputFlushResults,
 		disableRateLimit:         opts.DisableRateLimit,
 		dashboardRefreshInterval: opts.dashboardRefreshInterval,

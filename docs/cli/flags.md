@@ -121,7 +121,7 @@ All commands also accept `-cidr-input-size-limit-gb` (default `1`) and
 | `-pressure-data-url` | string | empty | Comma-separated pressure data endpoints. Required with `-pressure-use-auth`. All sources must succeed, and the command uses the maximum value. |
 | `-pressure-client-id` / `-pressure-client-secret` | string | empty | OAuth credentials. Required with `-pressure-use-auth`. |
 | `-port-file` | string | optional | A fallback only. The command usually ignores it, because bucket chunks carry the ports. |
-| `-progress-interval` | int | `100` | Progress line cadence. |
+| `-progress-interval` | int | `100` | Progress line cadence (count of written scan results). The command writes these lines to stdout, and a matching structured event to stderr. A value that is not positive selects the default `100`. |
 | `-log-level` / `-format` / `-quiet` | — | — | Shared observability flags. |
 
 - **No ping flags.** `scan` does not register `-disable-pre-scan-ping` or

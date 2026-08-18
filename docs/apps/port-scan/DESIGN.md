@@ -109,8 +109,11 @@ The scan configuration contains one opaque `PressurePolicy`. This policy has a
 disabled, simple HTTP, or authenticated OAuth variant. Partial OAuth values
 cannot leave `pkg/config`.
 
-The scan parser accepts `-progress-interval` for compatibility. The parsed
-value does not cross the scan configuration seam and does not change behavior.
+The scan parser puts `-progress-interval` into `ScanValues.ProgressInterval`.
+The resolved configuration is the only source of this cadence: `scanapp.Run`
+reads it from the configuration, not from `RunOptions`. This matches the
+`pre-ping` and `generate-buckets` parsers. A value that is not positive
+selects the default cadence of 100 in the scan runtime.
 
 ### Scan runtime
 
