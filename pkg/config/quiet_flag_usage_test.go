@@ -8,9 +8,9 @@ import (
 )
 
 // TestRegisterCommonFlags_QuietUsageDescribesProgressOnly pins the -quiet help
-// text against the meaning the flag actually has. -quiet suppresses progress and
-// per-result console output; -log-level owns log verbosity on its own. See
-// issue #157.
+// text against the meaning the flag actually has. -quiet suppresses only the
+// periodic progress line and its scan_progress event; -log-level owns log
+// verbosity on its own. See issue #157.
 func TestRegisterCommonFlags_QuietUsageDescribesProgressOnly(t *testing.T) {
 	t.Parallel()
 

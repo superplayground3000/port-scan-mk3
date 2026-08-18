@@ -383,3 +383,28 @@ maintainer's and is raised explicitly.
   classify identically on Windows. The new tests are not Linux-only.
 - `emitScanResultEvents` has no production caller (`grep`): only
   `scan_observability_test.go:631` and a stale comment at `scan_runtime.go:174`.
+
+### Round 2 (fresh reviewer, delta `0f7f077..d261f89`)
+
+Verdict: block on one finding, everything else independently reproduced with a
+real loopback run rather than code reading.
+
+The finding was correct and is fixed: the doc comment on
+`TestRegisterCommonFlags_QuietUsageDescribesProgressOnly`
+(`pkg/config/quiet_flag_usage_test.go:10`) still carried the false sentence —
+five lines above the new assertion that refutes it. The correction sweep missed
+the inside of the very file it edited. Reworded to match the assertion.
+
+The reviewer confirmed, by scanning 127.0.0.1 with in-process listeners on
+8001-8003 and closed ports on 8004-8005:
+
+- `emitScanResultEvents` has no production caller.
+- `scan_result` and `scan_probe_result` events appear with AND without `-quiet`.
+- the `progress cidr=` line and the `scan_progress` event appear only without
+  `-quiet`, and disappear together.
+- `-quiet -log-level error` produces zero output on a clean run.
+
+It also judged the `strings.Contains(usage, "per-result")` pin sound rather than
+brittle, and judged the G3 e2e trigger not to fire for this delta (docs, one
+comment, one assertion, one usage string). `make verify` exit 0 at 85.6%,
+`GOOS=windows go vet` exit 0.
