@@ -91,34 +91,6 @@ func applyScanResult(runtimes []*chunkRuntime, res scanResult, summary *resultSu
 	return summary
 }
 
-func emitScanResultEvents(stdout io.Writer, logger *scanLogger, ctrl *speedctrl.Controller, progressStep int, runtimes []*chunkRuntime, res scanResult, summary *resultSummary, quiet bool) {
-	logger.eventf("scan_result", res.record.IP, res.record.Port, "scanned", statusErrorCause(res.record.Status), map[string]any{
-		"status":           res.record.Status,
-		"response_time_ms": res.record.ResponseMS,
-		"cidr":             res.record.IPCidr,
-	})
-	if summary == nil || progressStep <= 0 || summary.written%progressStep != 0 || quiet {
-		return
-	}
-
-	rt := runtimes[res.chunkIdx]
-	cidr := rt.tracker.CIDR()
-	scanned := rt.tracker.ScannedCount()
-	total := rt.tracker.TotalCount()
-	_, _ = fmt.Fprintf(stdout, "progress cidr=%s scanned=%d/%d paused=%t\n", cidr, scanned, total, ctrl.IsPaused())
-	completionRate := 0.0
-	if total > 0 {
-		completionRate = float64(scanned) / float64(total)
-	}
-	logger.eventf("scan_progress", "", 0, "progress", "none", map[string]any{
-		"cidr":            cidr,
-		"scanned_count":   scanned,
-		"total_count":     total,
-		"completion_rate": completionRate,
-		"paused":          ctrl.IsPaused(),
-	})
-}
-
 func emitCommittedProgress(stdout io.Writer, logger *scanLogger, ctrl *speedctrl.Controller, progressStep int, runtimes []*chunkRuntime, chunkIndex, previousWritten int, summary *resultSummary, quiet bool) {
 	if summary == nil || progressStep <= 0 || quiet || summary.written/progressStep == previousWritten/progressStep {
 		return
