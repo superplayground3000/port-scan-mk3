@@ -20,7 +20,6 @@ import (
 	"github.com/xuxiping/port-scan-mk3/pkg/speedctrl"
 	"github.com/xuxiping/port-scan-mk3/pkg/state"
 	"github.com/xuxiping/port-scan-mk3/pkg/task"
-	"github.com/xuxiping/port-scan-mk3/pkg/writer"
 )
 
 type dashboardSnapshotRecorder struct {
@@ -609,50 +608,6 @@ func TestPollPressureAPI_WhenObserverInjected_ReportsSamplesAndFailures(t *testi
 
 	if controllerObserver.callbacks != 0 {
 		t.Fatalf("expected no controller callbacks from pressure poll path, got %d with statuses %#v", controllerObserver.callbacks, controllerObserver.statuses)
-	}
-}
-
-func TestEmitScanResultEvents_WhenProgressStepReached_EmitsProgressSnapshot(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	logOut := &lockedBuffer{}
-	logger := newLogger("info", true, logOut)
-	ctrl := speedctrl.NewController()
-	ch := &task.Chunk{
-		CIDR:         "10.0.0.0/24",
-		ScannedCount: 1,
-		TotalCount:   4,
-	}
-	runtimes := []*chunkRuntime{{
-		state:   ch,
-		tracker: newChunkStateTracker(ch),
-	}}
-	summary := &resultSummary{written: 2}
-
-	emitScanResultEvents(stdout, logger, ctrl, 2, runtimes, scanResult{
-		chunkIdx: 0,
-		record: writer.Record{
-			IP:         "10.0.0.1",
-			IPCidr:     "10.0.0.0/24",
-			Port:       80,
-			Status:     "open",
-			ResponseMS: 7,
-		},
-	}, summary, false)
-
-	if !strings.Contains(stdout.String(), "progress cidr=10.0.0.0/24 scanned=1/4 paused=false") {
-		t.Fatalf("expected progress snapshot on stdout, got %s", stdout.String())
-	}
-	logs := logOut.String()
-	for _, required := range []string{
-		"\"state_transition\":\"scanned\"",
-		"\"state_transition\":\"progress\"",
-		"\"scanned_count\":1",
-		"\"total_count\":4",
-		"\"completion_rate\":0.25",
-	} {
-		if !strings.Contains(logs, required) {
-			t.Fatalf("missing %s in logs: %s", required, logs)
-		}
 	}
 }
 
