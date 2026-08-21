@@ -11,10 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/xuxiping/port-scan-mk3/pkg/state"
 )
 
 const interruptProcessHelper = "PORT_SCAN_INTERRUPT_PROCESS_HELPER"
@@ -128,5 +131,81 @@ func TestScanInterruptContext_OnLinux_FirstSIGINTExplainsGracefulStopAndSecondEx
 		}
 	case <-time.After(time.Second):
 		t.Fatal("second SIGINT did not request exit 130")
+	}
+}
+
+// TestRunScan_OnLinux_ProcessFirstSIGINTSavesResumeStateAndExits130 covers the
+// graceful branch at process level: one real interrupt to a real child process.
+//
+// The forced branch, which the second interrupt takes, exits 130 from the signal
+// handler. This case sends one signal only, so the code must come from the run
+// itself: scanapp.Run returns context.Canceled, runScan maps it to 130, and it
+// prints "scan canceled" first. The message is what tells the two branches
+// apart, because both exit with 130.
+func TestRunScan_OnLinux_ProcessFirstSIGINTSavesResumeStateAndExits130(t *testing.T) {
+	if os.Getenv(gracefulInterruptProcessHelper) == "1" {
+		os.Exit(runScan(gracefulInterruptScanArgs(os.Getenv(gracefulInterruptProcessDir)), os.Stdout, os.Stderr))
+	}
+
+	dir := t.TempDir()
+	cidrFile := filepath.Join(dir, "cidr.csv")
+	portFile := filepath.Join(dir, "ports.csv")
+	// Loopback only, and no listener: every probe is refused locally
+	// (constitution V). The /24 gives the run more targets than one interrupt
+	// window can consume, so the child is always still scanning when it stops.
+	if err := os.WriteFile(cidrFile, []byte("fab_name,ip,ip_cidr,cidr_name\nfab1,127.0.0.1/24,127.0.0.1/24,loopback\n"), 0o644); err != nil {
+		t.Fatalf("write cidr file: %v", err)
+	}
+	if err := os.WriteFile(portFile, []byte("1/tcp\n2/tcp\n3/tcp\n"), 0o644); err != nil {
+		t.Fatalf("write port file: %v", err)
+	}
+	snapshotPath := mustGenerateBucketSnapshot(t, dir, cidrFile, portFile)
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("find test executable: %v", err)
+	}
+	child := exec.Command(executable, "-test.run=^TestRunScan_OnLinux_ProcessFirstSIGINTSavesResumeStateAndExits130$")
+	child.Env = append(os.Environ(), gracefulInterruptProcessHelper+"=1", gracefulInterruptProcessDir+"="+dir)
+	var childStderr bytes.Buffer
+	child.Stdout = &bytes.Buffer{}
+	child.Stderr = &childStderr
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	killed := false
+	defer func() {
+		if !killed {
+			_ = child.Process.Kill()
+		}
+	}()
+
+	// A written result row proves the scan loop is running, so the interrupt
+	// handler is installed and the run has progress worth saving.
+	waitForScanResultRow(t, dir)
+	if err := child.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("send the only SIGINT: %v", err)
+	}
+
+	err = waitForGracefulInterruptExit(t, child)
+	killed = true
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 130 {
+		t.Fatalf("child exit error = %v, want exit code 130; stderr:\n%s", err, childStderr.String())
+	}
+	if !strings.Contains(childStderr.String(), "scan canceled") {
+		t.Fatalf("child did not take the graceful branch; stderr:\n%s", childStderr.String())
+	}
+
+	snapshot, loadErr := state.LoadSnapshot(snapshotPath)
+	if loadErr != nil {
+		t.Fatalf("load resume snapshot: %v", loadErr)
+	}
+	scanned := 0
+	for _, chunk := range snapshot.Chunks {
+		scanned += chunk.ScannedCount
+	}
+	if scanned == 0 {
+		t.Fatalf("resume snapshot saved no scanned targets over %d chunks", len(snapshot.Chunks))
 	}
 }

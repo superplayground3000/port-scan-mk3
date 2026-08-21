@@ -561,3 +561,127 @@ func TestRunResultLoop_WhenFatalErrorStopsDispatch_PersistsLateInFlightResult(t 
 		t.Fatalf("persisted summary = %d and scanned count = %d, want 1 and 1", summary.written, runtime.tracker.ScannedCount())
 	}
 }
+
+// TestScanExecutorTelemetry_WhenWorkerContextIsCanceledBeforeTheStopFlag_RefusesTheProbe
+// pins the guard that keeps a queued task off the network after cancellation.
+//
+// The executor has two independent stop signals. A worker that finishes a probe
+// calls finishProbe, which sets the stop flag. A separate goroutine sets the
+// same flag when the run context is done. Neither signal is set yet in the
+// window between the cancellation and the first of those two calls. Only the
+// context check in startProbe closes that window, so this case sets the context
+// and leaves the stop flag unset.
+func TestScanExecutorTelemetry_WhenWorkerContextIsCanceledBeforeTheStopFlag_RefusesTheProbe(t *testing.T) {
+	telemetry := &scanExecutorTelemetry{}
+	live, stopLive := context.WithCancel(context.Background())
+	defer stopLive()
+
+	if !telemetry.startProbe(live) {
+		t.Fatal("a live worker context refused a probe, so this case cannot prove the cancellation refusal")
+	}
+	telemetry.inFlight.Add(-1)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if telemetry.startProbe(canceled) {
+		t.Fatal("a queued task started a probe on a canceled worker context while the stop flag was still unset")
+	}
+	if got := telemetry.inFlight.Load(); got != 0 {
+		t.Fatalf("in-flight probes = %d, want 0", got)
+	}
+	_, _, _, totalStarted, _ := telemetry.snapshot()
+	if totalStarted != 1 {
+		t.Fatalf("total probe starts = %d, want 1 (only the live-context probe)", totalStarted)
+	}
+}
+
+// TestScanExecutor_WithIdleWorkers_WhenCanceled_StartsNoProbeForTasksQueuedAfterCancellation
+// is the multi-worker form of the same promise: after cancellation, a task that
+// reaches the queue must never reach the dial function.
+//
+// The interleaving is forced with channels only. One task goes in first, so one
+// worker holds an in-flight probe that blocks in dial. The other workers have no
+// task, so they can only wait in the queue select. Every later task is queued
+// AFTER cancel returns, so a dial for any of them is a probe that started after
+// cancellation. The dial function records that directly, so the assertion does
+// not depend on timing.
+//
+// This case cannot force the window in which the stop flag is still unset,
+// because the executor sets that flag from its own goroutine as soon as the run
+// context is done. It therefore catches a removed context check in startProbe
+// only some of the time (7 of 60 measured runs). Keep
+// TestScanExecutorTelemetry_WhenWorkerContextIsCanceledBeforeTheStopFlag_RefusesTheProbe
+// as the deterministic proof of that guard.
+func TestScanExecutor_WithIdleWorkers_WhenCanceled_StartsNoProbeForTasksQueuedAfterCancellation(t *testing.T) {
+	const workers = 4
+	const queuedAfterCancel = 8
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tasks := make(chan scanTask, queuedAfterCancel+1)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var dialCount atomic.Int32
+	var dialsAfterCancel atomic.Int32
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		if dialCount.Add(1) == 1 {
+			close(started)
+			<-release
+			return nil, errors.New("connection refused")
+		}
+		if ctx.Err() != nil {
+			dialsAfterCancel.Add(1)
+		}
+		return nil, errors.New("connection refused")
+	}
+
+	results, executorErrors, abandoned, telemetry := startCancellableScanExecutor(ctx, workers, time.Minute, dial, newLogger("error", false, io.Discard), tasks)
+	tasks <- scanTask{chunkIdx: 0, taskIdx: 0, ip: "127.0.0.1", port: 80}
+	<-started
+
+	cancel()
+	for i := 1; i <= queuedAfterCancel; i++ {
+		tasks <- scanTask{chunkIdx: 0, taskIdx: i, ip: "127.0.0.1", port: 80}
+	}
+	close(tasks)
+	close(release)
+
+	var resultCount int
+	for range results {
+		resultCount++
+	}
+	for err := range executorErrors {
+		if err != nil {
+			t.Fatalf("executor error = %v", err)
+		}
+	}
+	var abandonedIndexes []int
+	for abandonedTask := range abandoned {
+		abandonedIndexes = append(abandonedIndexes, abandonedTask.taskIdx)
+	}
+	slices.Sort(abandonedIndexes)
+
+	if got := dialsAfterCancel.Load(); got != 0 {
+		t.Fatalf("dials for tasks queued after cancellation = %d, want 0", got)
+	}
+	if got := dialCount.Load(); got != 1 {
+		t.Fatalf("dial count = %d, want 1 (only the in-flight probe)", got)
+	}
+	if resultCount != 1 {
+		t.Fatalf("result count = %d, want 1", resultCount)
+	}
+	want := make([]int, queuedAfterCancel)
+	for i := range want {
+		want[i] = i + 1
+	}
+	if !slices.Equal(abandonedIndexes, want) {
+		t.Fatalf("abandoned task indexes = %v, want %v", abandonedIndexes, want)
+	}
+	_, abandonedCount, stopStarted, totalStarted, startsAfterStop := telemetry.snapshot()
+	if abandonedCount != queuedAfterCancel || stopStarted.IsZero() {
+		t.Fatalf("executor telemetry = (abandoned %d, stop %v), want (%d, non-zero)", abandonedCount, stopStarted, queuedAfterCancel)
+	}
+	if totalStarted != 1 || startsAfterStop != 0 {
+		t.Fatalf("probe starts = total %d, after stop %d; want 1 and 0", totalStarted, startsAfterStop)
+	}
+}
