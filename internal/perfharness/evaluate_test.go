@@ -67,3 +67,41 @@ func TestRunRegressionBenchmarkExecutesSixRunsAndEvaluatesBaseline(t *testing.T)
 		t.Fatalf("blocked regression result = %+v", blocked)
 	}
 }
+
+func TestEvaluateBlocksAnUnmeasuredRegressionInsteadOfPassingZero(t *testing.T) {
+	t.Parallel()
+
+	harness := perfharness.New()
+	verdict := harness.Evaluate(perfharness.EvaluationInput{
+		Regression: &perfharness.RegressionComparison{
+			BeforeNSPerOp: 7_762_347,
+			AfterNSPerOp:  0,
+			BeforeBPerOp:  1_134_359,
+			AfterBPerOp:   0,
+		},
+	})
+
+	if verdict.Passed {
+		t.Fatalf("verdict passed on an unmeasured regression: %+v", verdict)
+	}
+	// Each rule name identifies one failed threshold rule, so the two
+	// dimensions report under separate names. The name then says which
+	// dimension went unmeasured.
+	for _, rule := range []string{"regression-unmeasured-ns-per-op", "regression-unmeasured-bytes-per-op"} {
+		if !verdict.HasFailure(rule) {
+			t.Fatalf("missing failure for %q: %+v", rule, verdict.Failures)
+		}
+	}
+	seen := make(map[string]int, len(verdict.Failures))
+	for _, failure := range verdict.Failures {
+		seen[failure.Rule]++
+	}
+	for rule, count := range seen {
+		if count > 1 {
+			t.Fatalf("rule %q reported %d times, want one entry for each rule: %+v", rule, count, verdict.Failures)
+		}
+	}
+	if verdict.HasFailure("regression-ns-per-op") || verdict.HasFailure("regression-bytes-per-op") {
+		t.Fatalf("an unmeasured value must not report a ratio rule: %+v", verdict.Failures)
+	}
+}
