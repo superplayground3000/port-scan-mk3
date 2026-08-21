@@ -134,11 +134,6 @@ func TestScanInterruptContext_OnLinux_FirstSIGINTExplainsGracefulStopAndSecondEx
 	}
 }
 
-const (
-	gracefulInterruptProcessHelper = "PORT_SCAN_GRACEFUL_INTERRUPT_PROCESS_HELPER"
-	gracefulInterruptProcessDir    = "PORT_SCAN_GRACEFUL_INTERRUPT_PROCESS_DIR"
-)
-
 // TestRunScan_OnLinux_ProcessFirstSIGINTSavesResumeStateAndExits130 covers the
 // graceful branch at process level: one real interrupt to a real child process.
 //
@@ -213,40 +208,4 @@ func TestRunScan_OnLinux_ProcessFirstSIGINTSavesResumeStateAndExits130(t *testin
 	if scanned == 0 {
 		t.Fatalf("resume snapshot saved no scanned targets over %d chunks", len(snapshot.Chunks))
 	}
-}
-
-func gracefulInterruptScanArgs(dir string) []string {
-	return []string{
-		"-cidr-file", filepath.Join(dir, "cidr.csv"),
-		"-port-file", filepath.Join(dir, "ports.csv"),
-		"-resume", filepath.Join(dir, "buckets.json"),
-		"-output", filepath.Join(dir, "scan_results.csv"),
-		"-output-flush-results", "1",
-		"-workers", "1",
-		"-delay", "20ms",
-		"-timeout", "100ms",
-		"-disable-api=true",
-	}
-}
-
-func waitForScanResultRow(t *testing.T, dir string) {
-	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		matches, globErr := filepath.Glob(filepath.Join(dir, "scan_results-*.csv"))
-		if globErr != nil {
-			t.Fatalf("find the scan output: %v", globErr)
-		}
-		for _, match := range matches {
-			data, readErr := os.ReadFile(match)
-			if readErr != nil {
-				continue
-			}
-			if len(bytes.Split(bytes.TrimSpace(data), []byte("\n"))) >= 2 {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("the scan child wrote no result row")
 }
