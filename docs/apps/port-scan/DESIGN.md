@@ -220,15 +220,21 @@ result, error, and abandoned-task channels after all workers stop.
 The runtime starts dispatch in one goroutine. This goroutine closes the task
 channel after `dispatchTasks` returns.
 
-### Stage 6: Result Aggregation (`result_aggregator.go`)
+### Stage 6: Result Aggregation (`scan_result_loop.go`, `output_committer.go`)
 
 `runResultLoop` receives from the result, executor-error, dispatcher-error, and
 pressure-error channels. It continues required channel drain after
-cancellation.
+cancellation. It gives each result to an `outputCommitter`, which batches the
+writes.
 
-- `writeScanRecord()` — writes to both all-results and open-only CSV writers
-- `applyScanResult()` — updates runtime tracker and summary counters
-- `emitScanResultEvents()` — logs to stdout/logger at progress intervals
+- `outputCommitter.Accept()` — holds the result as pending and writes the row
+  through `batchOutputs.write`. It commits when the flush interval is reached
+- `emitPendingScanResult()` — logs one `scan_result` event for each accepted
+  result
+- `outputCommitter.commit()` — flushes the writers, then advances the runtime
+  trackers and the summary counters for the whole batch
+- `emitCommittedProgress()` — writes the progress line and the `scan_progress`
+  event when a commit crosses a progress step
 
 A result is committed only after all required writes succeed. The loop writes
 late in-flight results after cancellation or a non-output runtime error.

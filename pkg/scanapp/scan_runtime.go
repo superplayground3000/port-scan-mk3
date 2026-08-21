@@ -172,7 +172,8 @@ func (r *scanRuntime) execute(ctx context.Context) error {
 	// the number of incomplete chunks. A pkg/progress reporter emits a throttled
 	// bucket_parse_progress tick for each chunk. bucket_parse_complete reports
 	// the totals and elapsed time. emitPendingScanResult logs each scan result.
-	// emitCommittedProgress emits the result progress after each committed batch.
+	// emitCommittedProgress emits the result progress when a commit crosses a
+	// progress step.
 	incompleteChunks := countIncompleteChunks(snapshot.Chunks)
 	logger.eventf("bucket_parse_start", "", 0, "bucket_parse_start", LogEventNone, map[string]any{
 		"incomplete_chunks": incompleteChunks,
